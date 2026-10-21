@@ -24,7 +24,10 @@ bash scripts/preflight.sh
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build -V -d
 
 # Backend only (from backend_v2/)
-.venv/bin/pip install -r requirements.txt && .venv/bin/uvicorn api.main:app --host 0.0.0.0 --port 8002 --reload
+# Bind to loopback, not 0.0.0.0: the API is unauthenticated, so a wildcard
+# publish exposes every route (including DELETE /api/jobs) to the LAN.
+# Use COMFY_BACKEND_BIND=<address> to publish on one named address.
+.venv/bin/pip install -r requirements.txt && .venv/bin/uvicorn api.main:app --host 127.0.0.1 --port 8002 --reload
 .venv/bin/pytest
 
 # Frontend only (from frontend_v2/)

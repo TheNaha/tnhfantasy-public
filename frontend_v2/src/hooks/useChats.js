@@ -20,7 +20,7 @@ const MESSAGES_ROOT_KEY = buildQueryKey(QUERY_KEYS.MESSAGES);
 const CHAT_LIST_KEY = [...CHATS_ROOT_KEY, 'list'];
 const CHAT_DETAIL_KEY = (chatId) => [...CHATS_ROOT_KEY, chatId];
 
-export { CHATS_ROOT_KEY, CHAT_LIST_KEY };
+export { CHATS_ROOT_KEY, CHAT_LIST_KEY, CHAT_DETAIL_KEY };
 
 /**
  * The one key factory for every chat-list query.

@@ -188,7 +188,14 @@ export default function UnifiedGeneratorLayout({
                                 capabilities={capabilities}
                                 modelType={modelType}
                                 hiresFix={mode === 't2i' ? hiresFix : undefined}
-                                setHiresFix={setHiresFix}
+                                // The Hi-Res Fix card is only offered where it
+                                // can work. It used to be rendered on every
+                                // mode, with the VALUE suppressed outside t2i
+                                // but the setter passed - so the card was
+                                // there, it looked live, and clicking it wrote
+                                // to the shared store: turning Hi-Res Fix ON
+                                // for the Simple page from the Img2Img page.
+                                setHiresFix={mode === 't2i' ? setHiresFix : undefined}
                                 hiresUpscaler={hiresUpscaler}
                                 setHiresUpscaler={setHiresUpscaler}
                                 hiresDenoise={hiresDenoise}

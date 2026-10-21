@@ -5,9 +5,12 @@ class TestModelsV2Extended:
     """Extended tests for V2 models routes."""
 
     def test_list_all_models(self, client):
+        """`GET /api/v2/models/all` returned a 1.5 MB dump of the whole model
+        library to a caller that did not exist — four endpoints served the same
+        payload and none had a frontend caller. It is gone; the scoped,
+        paginated listing is what the UI reads."""
         response = client.get("/api/v2/models/all")
-        assert response.status_code == 200
-        assert isinstance(response.json(), list)
+        assert response.status_code in (404, 405)
 
     def test_check_installed_not_found(self, client):
         response = client.get("/api/v2/models/check-installed/99999")

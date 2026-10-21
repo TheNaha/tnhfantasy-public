@@ -767,6 +767,17 @@ def build_system_prompt_sections(
                 "source": "config",
             })
 
+    # The one embedding for this turn, shared by the lorebook retrieval and
+    # the character-memory retrieval.
+    #
+    # It is computed inside the `if lorebook_ids:` block below, but it is READ
+    # by the character-memory block further down, which runs whenever the chat
+    # has a character - and a chat with a character and no lorebook is the
+    # default case. So the name used to be unbound there, the `NameError` was
+    # swallowed by the `except Exception` around the memory block, and the
+    # entire long-term-memory feature was dead for every ordinary chat.
+    _q_vec = None
+
     if lorebook_ids:
         # Build a query string from the most recent context for semantic matching.
         # We use this to find the most relevant lorebook entries rather than

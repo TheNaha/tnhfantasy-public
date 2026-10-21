@@ -67,9 +67,11 @@ class TestModelCatalogAndRegistry:
         assert "roles" in data
         assert "active" in data
         assert "shared_weights" in data
-        assert "tokens" in data
-        assert "hf_token" in data["tokens"]
-        assert "civitai_token" in data["tokens"]
+        # The route is unauthenticated, so it must never answer with a
+        # credential. It used to carry a `tokens` block holding the plaintext
+        # HF_TOKEN / CIVITAI_TOKEN, falling back to the decrypted per-provider
+        # credentials.
+        assert "tokens" not in data
         assert "artemis_31b" in data["catalog"]
         assert "sompoa_26b_a4b" in data["catalog"]
         assert len(data["roles"]["rp"]["chain"]) >= 10

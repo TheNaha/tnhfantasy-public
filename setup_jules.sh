@@ -28,7 +28,19 @@ if [ -f "$ROOT_DIR/.env" ]; then
     set +a
 fi
 
-UVICORN_ARGS=(--host 0.0.0.0 --port 8002)
+# The backend's bind.
+#
+# It used to be a hard-coded `0.0.0.0`, which publishes the ENTIRE
+# unauthenticated API - every route, `DELETE /api/jobs`,
+# `PATCH /api/v2/providers/{id}` - on every interface the host has. Nothing
+# in front of it authenticates. On 2026-10-01 an ordinary audit probe called
+# `DELETE /api/jobs` from the LAN and destroyed 154 rows of job history.
+#
+# Loopback is the safe default, and the same knob the compose stack uses:
+# `COMFY_BACKEND_BIND` in `.env` names one address to publish on. The
+# frontend is a reverse proxy to this API, so whatever reaches the frontend
+# reaches the API.
+UVICORN_ARGS=(--host "${COMFY_BACKEND_BIND:-127.0.0.1}" --port 8002)
 if [ "${COMFY_UVICORN_RELOAD:-1}" = "1" ]; then
     # Keep the reload watcher off the test suite and the one-off scripts. The
     # watcher follows the whole backend_v2 tree, so touching a test otherwise

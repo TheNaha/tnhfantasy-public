@@ -225,8 +225,14 @@ async def cancel_job(sid, data):
     logger.info(f"[WebSocket] Job cancellation requested: {job_id} by {sid}")
     
     try:
-        # Check if job is active in queue
-        if queue_manager.image.is_job_active(job_id) or queue_manager.llm.is_job_active(job_id):
+        # Check if job is active in queue.
+        #
+        # ANY pool: the TTS pool used to be left out of this test, so a
+        # running TTS generation fell into the "still queued" branch, whose
+        # status check is false for a running job - the client was told
+        # "cannot cancel" and the provider was never signalled, so the
+        # generation kept running and billing.
+        if queue_manager.is_job_active_anywhere(job_id):
             # Job is currently being processed - signal cancellation to worker
             async with get_session_context() as session:
                 job_service = get_job_service(session)

@@ -76,8 +76,16 @@ DEFAULT_CONFIG = {
         "poll_limit": 50
     },
     "jobs": {
-        "default_limit": 20,
-        "max_in_memory": 100,
+        # `default_limit` and `max_in_memory` are GONE (2026-10-21).
+        #
+        # They were user-editable settings with a description and a validation
+        # rule, and nothing read them: the job list limit is the hardcoded
+        # `limit: int = 20` on `GET /api/jobs`, and the in-process queue is an
+        # unbounded `asyncio.Queue()`. A settings page that offered them
+        # promised an effect that never happened.
+        #
+        # A config.json that still carries them keeps working: the loader
+        # deep-merges the file over the defaults and nothing reads the keys.
         "max_concurrent": 5,
         # Client-side stream timeout for image jobs, so the backend never gives
         # up on a workflow the worker is still legally running.
@@ -920,10 +928,6 @@ def _validate_config(config: dict[str, Any]) -> None:
     # Jobs validations
     if "jobs" in config:
         jobs = config["jobs"]
-        if "default_limit" in jobs and jobs["default_limit"] <= 0:
-            raise ValueError("jobs.default_limit must be > 0")
-        if "max_in_memory" in jobs and jobs["max_in_memory"] <= 0:
-            raise ValueError("jobs.max_in_memory must be > 0")
         if "max_concurrent" in jobs and jobs["max_concurrent"] <= 0:
             raise ValueError("jobs.max_concurrent must be > 0")
         if "timeout" in jobs and jobs["timeout"] <= 0:
@@ -1114,21 +1118,16 @@ def get_worker_poll_limit() -> int:
 
 
 # Jobs settings
-def get_default_jobs_limit() -> int:
-    """Get default jobs limit."""
-    return get_config()["jobs"]["default_limit"]
-
-
-def get_max_jobs_in_memory() -> int:
-    """Get max jobs in memory."""
-    return get_config()["jobs"]["max_in_memory"]
-
-
-def get_max_concurrent_jobs() -> int:
-    """Get max concurrent jobs."""
-    return get_config()["jobs"]["max_concurrent"]
-
-
+#
+# `get_default_jobs_limit()` and `get_max_jobs_in_memory()` are GONE
+# (2026-10-21). They read `jobs.default_limit` and `jobs.max_in_memory`,
+# which nothing else read: the job list limit is the hardcoded
+# `limit: int = 20` on `GET /api/jobs`, and the in-process queue is an
+# unbounded `asyncio.Queue()`.
+#
+# `get_max_concurrent_jobs()` is gone for the same reason from the other
+# direction: the queue reads `jobs.max_concurrent` straight out of the config
+# dict, so this accessor had no callers at all.
 def _env_var_is_set(env_name: str) -> bool:
     """Check if an environment variable is explicitly set (with COMFY_ prefix)."""
     return os.environ.get(f"COMFY_{env_name}") is not None

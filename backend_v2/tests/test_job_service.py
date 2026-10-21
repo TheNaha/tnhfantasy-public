@@ -322,14 +322,27 @@ class TestJobServiceFsm:
             assert mock_emit.call_args[0][0] == EventType.JOB_COMPLETED
 
     @pytest.mark.asyncio
-    async def test_generating_cannot_reset_to_pending(self, session: Session, sample_workflow):
+    async def test_generating_can_reset_to_pending_for_a_failover(self, session: Session, sample_workflow):
+        """GENERATING -> PENDING is the provider-failover edge.
+
+        `mark_provider_exhausted` always writes PENDING, and a provider that
+        dies after its first progress frame leaves the job in GENERATING - the
+        provider client writes CONNECTED / PRE_GENERATION / GENERATING during
+        the call. The edge was missing from all of them, so the failover write
+        was rejected by the FSM: the job kept its old status through the whole
+        failover, and every such failover logged a WARNING that looked like a
+        bug.
+
+        This test used to assert the opposite - that the write was REJECTED -
+        which is what pinned the defect.
+        """
         service = JobService(session)
         job = await service.create_job(workflow=sample_workflow, metadata={})
         await service.update_job(job.id, status=JobStatus.SENT_TO_PROVIDER)
         await service.update_job(job.id, status=JobStatus.CONNECTED)
         await service.update_job(job.id, status=JobStatus.GENERATING)
         updated = await service.update_job(job.id, status=JobStatus.PENDING)
-        assert updated.status == JobStatus.GENERATING
+        assert updated.status == JobStatus.PENDING
 
     @pytest.mark.asyncio
     async def test_pending_can_fail_when_no_provider_is_available(self, session: Session, sample_workflow):

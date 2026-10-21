@@ -7,14 +7,13 @@ from core.exceptions import NotFoundError
 from core.workflow_parser import extract_models_from_workflow
 from infrastructure.logging import get_logger
 from services.job_processing import finalize_successful_job
-# Imported for its side effect of being reachable as `services.job_runner
-# .ProviderService`, which is the `monkeypatch.setattr` target the job-processing
-# tests use. Nothing in this module references the name, so F401 fires; removing
-# the import breaks every one of those tests with
-# "No module named 'services.job_runner.ProviderService'". That is exactly the
-# failure mode of blanket-ignoring F401, which is why the rule is on globally and
-# genuine re-exports are marked individually instead.
-from services.provider_service import ProviderService  # noqa: F401
+# `ProviderService` is the accessor the load-balancing configuration is read
+# through (`ProviderService.get_load_balancing_config`), and it is also the
+# `monkeypatch.setattr` target the job-processing tests use. It used to be
+# imported under a blanket F401 suppression because nothing in this module
+# referenced the name; it is referenced now, and the suppression is gone with
+# it.
+from services.provider_service import ProviderService
 from services.job_service import (
     FAILURE_UNEXPECTED,
     JobService,
@@ -79,6 +78,22 @@ async def mark_provider_exhausted(
     )
 
 
+def read_fallback_enabled(session) -> bool:
+    """Is provider failover allowed for jobs dispatched in this session?
+
+    The flag lives in the `load_balancing_config` table and is read through
+    the one accessor that already exists for it — `ProviderService.
+    get_load_balancing_config` — rather than a second one, so the API route
+    and the job path can never disagree about what the setting says.
+
+    A missing attribute means "enabled": the setting has always defaulted to
+    on, and a config object that cannot answer the question must not be read
+    as "do not fail over".
+    """
+    config = ProviderService(session).get_load_balancing_config()
+    return bool(getattr(config, "fallback_enabled", True))
+
+
 async def select_next_provider(
     *,
     load_balancer: LoadBalancer,
@@ -88,8 +103,38 @@ async def select_next_provider(
     preferred_provider_id: str | None,
     required_models: dict | None = None,
     task_type: str = "image",
+    fallback_enabled: bool = True,
 ) -> Provider | None:
-    """Select the next provider or fail the job when no providers remain."""
+    """Select the next provider or fail the job when no providers remain.
+
+    `fallback_enabled` is the user's "fail over to another provider" switch.
+    It used to be a column nobody read: the balancer moved to the next
+    candidate whatever it said, so turning it off persisted, the API
+    answered "success", and the job still failed over. When it is off, the
+    first provider that fails ends the job — with a diagnostic that says why
+    — instead of silently trying the next one.
+    """
+    if exhausted_providers and not fallback_enabled:
+        tried = ", ".join(sorted(exhausted_providers))
+        logger.warning(
+            "provider_failover_disabled",
+            job_id=job_id,
+            tried=sorted(exhausted_providers),
+        )
+        await job_service.update_job(
+            job_id,
+            status=JobStatus.FAILED,
+            message=(
+                f"Provider {tried} failed and fallback is disabled — the job was "
+                "not retried on another provider"
+            ),
+            error=(
+                f"Provider {tried} failed and fallback is disabled, so the job "
+                "was not retried on another provider"
+            ),
+        )
+        return None
+
     provider = await load_balancer.get_next_provider(
         preferred_provider_id=preferred_provider_id,
         required_models=required_models,
@@ -311,6 +356,10 @@ async def execute_job(
 
             retry_count = 0
             required_models = extract_models_from_workflow(job.workflow) if isinstance(job.workflow, dict) else {}
+            # Read once per job: the setting is a user preference, not
+            # something that changes mid-job, and the accessor is the same one
+            # the settings API writes through.
+            fallback_enabled = read_fallback_enabled(session)
 
             while True:
                 if current_provider is None or current_provider.id in exhausted_providers:
@@ -332,6 +381,7 @@ async def execute_job(
                         preferred_provider_id=preferred_provider_id,
                         required_models=required_models,
                         task_type=task_type,
+                        fallback_enabled=fallback_enabled,
                     )
 
                     if not current_provider:

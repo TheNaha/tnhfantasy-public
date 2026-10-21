@@ -4,6 +4,7 @@
  */
 
 import api from './client';
+import { GUIDED, resolveGenerationKind, stripGenerationKind } from './generate';
 
 /**
  * Every read takes a trailing `options` and forwards it to the client, so a
@@ -116,9 +117,21 @@ export const jobsApi = {
     /**
      * Validate workflow model availability before submission.
      * Returns info about which providers can run this workflow.
-     * 
-     * @param {object} workflow - ComfyUI workflow object
+     *
+     * The payload goes into the field that matches its shape: `options` for a
+     * guided request (the backend compiles it and checks the models it names)
+     * and `workflow` for a graph.
+     *
+     * The shape is stated, not sniffed. It used to be read off the payload -
+     * "an object with a `mode` or a `prompt` key is options" - so a ComfyUI
+     * graph in API format, whose top-level key IS `prompt`, was sent as
+     * options: the backend tried to compile it as generator options and
+     * answered 422 for a request that was perfectly valid as a graph.
+     *
+     * @param {object} payload - The generator options (guided) or the ComfyUI graph.
      * @param {string|null} preferredProviderId - Optional preferred provider
+     * @param {string|null} [kind] - `'guided'` or `'graph'`. Defaults to the
+     *   kind the payload declares, and to `'graph'` when it declares none.
      * @returns {Promise<{
      *   valid: boolean,
      *   eligible_providers: string[],
@@ -128,14 +141,15 @@ export const jobsApi = {
      *   required_models: Object
      * }>}
      */
-    validate: (workflowOrOptions, preferredProviderId = null) => {
-        const payload = { preferred_provider_id: preferredProviderId };
-        if (workflowOrOptions?.mode !== undefined || workflowOrOptions?.prompt !== undefined) {
-            payload.options = workflowOrOptions;
+    validate: (payload, preferredProviderId = null, kind = null) => {
+        const resolved = resolveGenerationKind(payload, kind);
+        const body = { preferred_provider_id: preferredProviderId };
+        if (resolved === GUIDED) {
+            body.options = stripGenerationKind(payload);
         } else {
-            payload.workflow = workflowOrOptions;
+            body.workflow = payload;
         }
-        return api.post('/api/jobs/validate', payload);
+        return api.post('/api/jobs/validate', body);
     },
 };
 

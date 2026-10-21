@@ -1,13 +1,17 @@
 # Model API V2 tests
 
 def test_list_models_empty(client):
-    """Test listing models when empty."""
-    response = client.get("/api/v2/models")
+    """Test listing models when empty.
+
+    The grouped listing (`GET /api/v2/models/`) is gone — see
+    `test_audit_2026_10_21_dead_routes.py`. The scoped listing that replaced
+    it is the search endpoint, which the model manager actually reads.
+    """
+    response = client.get("/api/v2/models/search")
     assert response.status_code == 200
     data = response.json()
-    assert "models" in data
-    assert isinstance(data["models"], dict)
-    assert len(data["models"]) == 0
+    assert isinstance(data, list)
+    assert len(data) == 0
 
 
 def test_add_model(client, sample_model_v2_data):
@@ -20,31 +24,29 @@ def test_add_model(client, sample_model_v2_data):
 
 
 def test_list_models(client, sample_model_v2_data):
+    """Test listing models."""
+    # Add a model
+    client.post("/api/v2/models", json=sample_model_v2_data)
+
+    # List models
+    response = client.get("/api/v2/models/search?q=Test+Model")
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 1
+    assert data[0]["name"] == "Test Model V2"
+
+
+def test_list_models_by_directory(client, sample_model_v2_data):
     """Test listing models grouped by directory."""
     # Add a model
     client.post("/api/v2/models", json=sample_model_v2_data)
-    
+
     # List models
-    response = client.get("/api/v2/models")
+    response = client.get("/api/v2/models/directory/checkpoints")
     assert response.status_code == 200
     data = response.json()
-    assert "models" in data
 
     # Checkpoints should be present (based on type "Checkpoint")
-    assert "checkpoints" in data["models"]
-    assert len(data["models"]["checkpoints"]) == 1
-    assert data["models"]["checkpoints"][0]["name"] == "Test Model V2"
-
-
-def test_list_all_models(client, sample_model_v2_data):
-    """Test listing all models."""
-    # Add a model
-    client.post("/api/v2/models", json=sample_model_v2_data)
-    
-    # List all
-    response = client.get("/api/v2/models/all")
-    assert response.status_code == 200
-    data = response.json()
     assert len(data) == 1
     assert data[0]["name"] == "Test Model V2"
 

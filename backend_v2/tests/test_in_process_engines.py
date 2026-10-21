@@ -2233,8 +2233,14 @@ class TestResolveProviderType:
             ({"provider_id": "remote-comfy-1"}, "remote_comfy"),
             ({"provider_id": "llm-foo"}, "openai_compat"),
             ({"provider_id": "tts-foo"}, "modal_tts"),
-            # vllm-in-id wins over a generic llm type.
-            ({"provider_id": "llm-vllm-1", "provider_type": "openai_compat"}, "modal_llm"),
+            # vllm-in-id does NOT hijack a transport type. A self-hosted vLLM
+            # provider (openai_compat / ollama) says exactly what it is, and
+            # "vllm" in its id must not re-label it modal_llm - that sends the
+            # request to a Modal llama.cpp app instead of the operator's box.
+            # The legacy rescue still fires for ids that ALSO say Modal.
+            ({"provider_id": "llm-vllm-1", "provider_type": "openai_compat"}, "openai_compat"),
+            ({"provider_id": "llm-vllm-1", "provider_type": "ollama"}, "ollama"),
+            ({"provider_id": "modal-vllm-legacy", "provider_type": "openai_compat"}, "modal_llm"),
             ({"capabilities": ["tts"]}, "modal_tts"),
             ({"capabilities": ["llm"]}, "openai_compat"),
             ({"worker_type": "llm"}, "openai_compat"),
@@ -2959,7 +2965,7 @@ class TestEngineAuthAndCaps:
 class TestModelDirectoryContract:
     """The three model-directory enumerations must be the same list.
 
-    `services/engines/base.py` defines the canonical `MODEL_DIRECTORIES` (16
+    `services/engines/base.py` defines the canonical `MODEL_DIRECTORIES` (17
     entries) that every engine reconciles. The maintenance scan used to
     re-derive its list from `model_reconciliation._DIRECTORY_TO_MODEL_TYPE` — a
     directory -> model *type* map with 14 entries — so `models/clip_vision` and
@@ -2981,7 +2987,7 @@ class TestModelDirectoryContract:
         # itself is still used for what it is for — resolving a directory to
         # a model type — so only the derivation is forbidden.
         assert "for d in _DIRECTORY_TO_MODEL_TYPE" not in src
-        assert len(MODEL_DIRECTORIES) == 16
+        assert len(MODEL_DIRECTORIES) == 17
 
     def test_the_directory_type_map_covers_every_directory(self):
         """A directory with no type is one the sweep cannot classify.

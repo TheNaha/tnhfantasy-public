@@ -178,7 +178,7 @@ def test_tag_endpoint_404s_on_an_unknown_model(client):
 
 def test_tag_endpoint_404s_when_removing_a_civitai_tag(client, model, sample_model_v2_data):
     client.post("/api/v2/models", json=sample_model_v2_data)
-    models = client.get("/api/v2/models/all").json()
+    models = client.get("/api/v2/models/search?q=Test+Model").json()
     civitai_model = next(m for m in models if m["civitai_model_id"] == 12345)
 
     # "anime" came from the import, so it is civitai-sourced and not removable.

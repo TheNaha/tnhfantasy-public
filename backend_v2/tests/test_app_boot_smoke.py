@@ -85,7 +85,7 @@ EXPECTED_SHUTDOWN_PHASES = [
 # deliberately absent: it is only added when COMFY_IDLE_SIM_ENABLED or
 # config ai.idleSimEnabled is set, and neither is set under test, so its absence
 # is the assertion that the opt-in branch was not taken by accident.
-from api.lifecycle import PROVIDER_HOST_REFRESH_SECONDS
+from api.lifecycle import JOB_REAPER_INTERVAL_SECONDS, PROVIDER_HOST_REFRESH_SECONDS
 from services.in_process_reconciliation import IN_PROCESS_RECONCILE_INTERVAL_SECONDS
 
 EXPECTED_SCHEDULED_JOBS = {
@@ -101,6 +101,11 @@ EXPECTED_SCHEDULED_JOBS = {
     # worker token and came back 401 — reported as "the provider rejected or
     # crashed on this job", with nothing pointing at auth.
     "provider_host_refresh": PROVIDER_HOST_REFRESH_SECONDS,
+    # Fails the jobs that are wedged - a job whose own failure-recording
+    # failed used to stay non-terminal until somebody restarted the process
+    # or clicked Recover, and the dashboard showed it as permanently
+    # "generating".
+    "job_reaper": JOB_REAPER_INTERVAL_SECONDS,
 }
 
 # Topics the broadcast listener and the provider monitor subscribe to.
@@ -518,10 +523,18 @@ async def test_app_serves_requests_after_boot(client, boot):
     # target provider can actually do instead of hardcoding its node
     # vocabulary in Python and offering a FreeU toggle to a provider with
     # no FreeU node).
-    assert len(spec["paths"]) == 297, (
+    #
+    # 297 -> 286 for the dead API surface removed on 2026-10-21: the four
+    # implementations of the 1.53 MB model dump (`GET /api/v2/models/`,
+    # `GET /api/v2/models/all`, `GET /api/v2/providers/model-cache`,
+    # `GET /api/v2/providers/model-cache/{directory}`), the two provider
+    # status-card routes, the three load-balancer aliases, the `/api/v2/gallery`
+    # alias, the two worker status routes and `POST /api/v2/voices/speak`.
+    # Every one of them had zero callers.
+    assert len(spec["paths"]) == 286, (
         "route count changed; if routes were added deliberately, bump this"
     )
-    assert sum(len(ops) for ops in spec["paths"].values()) == 387
+    assert sum(len(ops) for ops in spec["paths"].values()) == 374
     assert "/api/ready" in spec["paths"]
     assert not any(path.startswith("/socket.io") for path in spec["paths"])
 

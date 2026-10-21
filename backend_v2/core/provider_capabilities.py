@@ -34,8 +34,18 @@ ENHANCEMENT_NODE_CLASSES: dict[str, tuple[str, ...]] = {
     "adetailer": ("FaceDetailer",),
     "detector": ("UltralyticsDetectorProvider",),
     "upscale_model": ("UpscaleModelLoader",),
-    "latent_upscale": ("LatentUpscale",),
+    # The builder emits `LatentUpscaleBy` (core/workflow_builder.py:318). The
+    # probe looked for `LatentUpscale`, which is a DIFFERENT node - the
+    # one that takes an explicit upscale model rather than a multiplier. So
+    # the key was never True for any provider, and the panel's "latent
+    # upscale" support was reported as unsupported everywhere.
+    "latent_upscale": ("LatentUpscaleBy", "LatentUpscale"),
     "controlnet": ("ControlNetApply", "ControlNetApplyAdvanced"),
+    # The IPAdapter chain the builder emits: `IPAdapterModelLoader`,
+    # `CLIPVisionLoader` and `IPAdapterApply`. There was no key for it at
+    # all, so the IPAdapter section was offered to every provider and the
+    # request failed at dispatch on a provider without the pack.
+    "ipadapter": ("IPAdapterApply", "IPAdapterModelLoader"),
 }
 
 # The inputs whose option list is a list of FILE NAMES.

@@ -183,7 +183,7 @@ const assertWired = async (key, expectedNavigate = false) => {
     expect(mocks.workflow).toHaveBeenCalledWith(
         expect.any(Object),
         expect.any(Object),
-        { idempotencyKey: key },
+        { idempotencyKey: key, kind: 'guided' },
     );
     if (expectedNavigate) {
         // Not synchronous any more, and that is the point of the change: the

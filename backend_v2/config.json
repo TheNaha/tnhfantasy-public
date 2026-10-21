@@ -5,8 +5,6 @@
     "poll_limit": 30
   },
   "jobs": {
-    "default_limit": 30,
-    "max_in_memory": 100,
     "max_concurrent": 5,
     "timeout": 3600,
     "max_retries": 3,

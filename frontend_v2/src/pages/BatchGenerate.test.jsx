@@ -2,11 +2,14 @@ import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import BatchGenerate from './BatchGenerate';
+import { useGeneratorStore } from '../store/generatorStore';
 
 const mockToast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
 const fetchMock = vi.hoisted(() => vi.fn());
 
 vi.mock('react-hot-toast', () => ({ default: mockToast }));
+
+const INITIAL_GENERATOR_STATE = { ...useGeneratorStore.getState() };
 
 const createdJobs = [
     { id: 'j1', status: 'queued', metadata: { prompt: 'prompt-1', batch_index: 0, batch_total: 4, batch_preset: 'character_sheet' } },
@@ -31,6 +34,14 @@ describe('BatchGenerate page', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         globalThis.fetch = fetchMock;
+        // A batch names a model. The page refuses to submit a request that
+        // names none - "Auto (default)" resolves to the server's default
+        // checkpoint - so the store starts with one selected, the way the
+        // generator pages' own tests do.
+        useGeneratorStore.setState({
+            ...INITIAL_GENERATOR_STATE,
+            selectedCheckpoint: { name: 'ckpt.safetensors', display_name: 'ckpt.safetensors' },
+        });
         const jsonHeaders = new Headers({ 'content-type': 'application/json' });
         fetchMock.mockImplementation((url, init = {}) => {
             if ((init.method || 'GET') !== 'POST') {

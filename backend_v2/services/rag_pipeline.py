@@ -9,6 +9,7 @@ exist for CRUD, but search semantics live here.
 from __future__ import annotations
 
 import asyncio
+import random
 from datetime import datetime, timezone
 
 from sqlmodel import Session, func, select
@@ -252,6 +253,14 @@ def search_lorebook_entries(
                     .where(
                         LorebookEntry.lorebook_id == lb_id,
                         LorebookEntry.embedding.is_not(None),
+                        # A DISABLED entry never activates. The keyword path
+                        # checks it (`entry_matches_keys`) and the always-on
+                        # path checks it (`_append_keyless`), but the semantic
+                        # path selected by embedding distance alone, so a
+                        # disabled entry was injected into the PAID prompt
+                        # while the other two paths skipped it. The three paths
+                        # have to agree on what "disabled" means.
+                        LorebookEntry.enabled.is_(True),
                         # Same cutoff as the memory search, and for the same
                         # reason. Without it every story turn and every chat turn
                         # received `[World Information]` holding the N nearest
@@ -323,7 +332,14 @@ def search_lorebook_entries(
 
         if not query:
             for e in entries[:limit]:
-                if e.id not in seen and len(results) < limit:
+                # A DISABLED entry never reaches the prompt — not even
+                # through the blank-query path, which returns entries by
+                # recency rather than by relevance.
+                if (
+                    e.id not in seen
+                    and len(results) < limit
+                    and entry_is_enabled(e)
+                ):
                     seen.add(e.id)
                     results.append(e)
             _append_keyless(session, lb_id, seen, results, limit, len(results))
@@ -348,8 +364,21 @@ def search_lorebook_entries(
                     break
 
         if not matched:
+            # Nothing matched the query, so the caller's context would be
+            # empty. The fallback fills it with the book's newest entries.
+            #
+            # A DISABLED entry is not one of them: the user turned it off, and
+            # "never leave the prompt empty" is not a licence to switch it
+            # back on. The keyword path checked `enabled` through
+            # `entry_matches_keys`, so before this the two paths disagreed —
+            # and the semantic path, which is the one that runs in production,
+            # did not check it at all.
             for e in entries[:limit]:
-                if e.id not in seen and len(results) + len(matched) < limit:
+                if (
+                    e.id not in seen
+                    and len(results) + len(matched) < limit
+                    and entry_is_enabled(e)
+                ):
                     seen.add(e.id)
                     matched.append(e)
 
@@ -361,7 +390,20 @@ def search_lorebook_entries(
         # first so age does not decide visibility.
         _append_keyless(session, lb_id, seen, results, limit, len(results))
 
-    return results[:limit]
+    # The probability gate, applied ONCE, here.
+    #
+    # It is a dice roll, so it must not be applied twice to the same entry:
+    # the keyword path below already asked `entry_matches_keys` whether the
+    # KEYS matched, and asking again here would square the probability (an
+    # entry at 50% would fire a quarter of the time). The gate lives here
+    # because this is the one place every path — semantic and keyword —
+    # passes through on its way into the prompt.
+    #
+    # An entry that fails the roll still consumed a slot of the caller's
+    # `limit`, so a caller may receive fewer entries than it asked for. That
+    # is the same trade the distance cutoff makes: fewer, correct entries
+    # beat a full list that includes one the user asked not to see.
+    return [e for e in results[:limit] if entry_passes_probability(e)]
 
 
 def entry_is_enabled(entry: LorebookEntry) -> bool:
@@ -372,6 +414,38 @@ def entry_is_enabled(entry: LorebookEntry) -> bool:
     disabled entry activated anyway.
     """
     return bool(getattr(entry, "enabled", True))
+
+
+def entry_passes_probability(entry: LorebookEntry, *, roll: float | None = None) -> bool:
+    """Whether this entry's dice roll lets it activate.
+
+    SillyTavern's `probability` is a PERCENTAGE chance that the entry
+    activates once its keys have matched. The column was imported, exported
+    and then never consulted, so an entry set to `probability: 10` fired on
+    every single turn.
+
+    `None` means "always" — the vault's default, and what an ST entry with
+    `useProbability: false` is imported as. `0` means "never" and `100`
+    means "always".
+
+    `roll` is the number the roll produced, in `[0, 1)`. It is a parameter so
+    a caller — and a test — can decide the outcome instead of leaving it to
+    chance.
+    """
+    raw = getattr(entry, "probability", None)
+    if raw is None:
+        return True
+    try:
+        percent = int(raw)
+    except (TypeError, ValueError):
+        return True
+    if percent >= 100:
+        return True
+    if percent <= 0:
+        return False
+    if roll is None:
+        roll = random.random()
+    return roll * 100.0 < percent
 
 
 def entry_matches_keys(entry: LorebookEntry, query: str) -> bool:
@@ -386,6 +460,17 @@ def entry_matches_keys(entry: LorebookEntry, query: str) -> bool:
       `secondary_keys` set, a SECONDARY key must match too, which is
       SillyTavern's `selective` matching — its `secondary_keys` were dropped
       on import along with the flag.
+    * `selective_logic` chooses HOW the primary and the secondary keys are
+      combined: `0` is AND (both must match — the rule above) and `1` is OR
+      (either will do). The column is free text, so the digit and the word
+      are both accepted.
+
+      SillyTavern's `2` (NOT AND) and `3` (NOT OR) are accepted but NOT
+      acted on: a "not both" rule fires on every query that does not match,
+      which in a paid prompt is the opposite of what the rule is for. They
+      fall back to AND. `depth` is likewise accepted and not acted on: it is
+      an INSERTION position in SillyTavern, and this vault's prompt
+      assembly does not read it.
     """
     if not entry_is_enabled(entry):
         return False
@@ -400,13 +485,16 @@ def entry_matches_keys(entry: LorebookEntry, query: str) -> bool:
     def _hits(words: list[str]) -> bool:
         return any((w if case_sensitive else w.lower()) in haystack for w in words)
 
-    if not _hits(keys):
-        return False
-
+    primary_hit = _hits(keys)
     secondary = [k for k in (getattr(entry, "secondary_keys", None) or []) if k]
-    if secondary and not _hits(secondary):
-        return False
-    return True
+    if not secondary:
+        return primary_hit
+
+    secondary_hit = _hits(secondary)
+    logic = str(getattr(entry, "selective_logic", None) or "").strip().lower()
+    if logic in ("1", "or"):
+        return primary_hit or secondary_hit
+    return primary_hit and secondary_hit
 
 
 def _append_keyless(

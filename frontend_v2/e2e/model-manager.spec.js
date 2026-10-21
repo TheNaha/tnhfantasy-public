@@ -161,7 +161,10 @@ test.describe('Model manager — Installed', () => {
     await expectToast(page, /Deleted .* and synced providers/);
     await expect.poll(() => page.getByTitle(seed.name).count()).toBe(0);
 
-    const all = await apiGet(page, '/models/all');
+    // `GET /api/v2/models/all` is gone — it was one of four implementations
+    // of the same 1.53 MB model dump and had no caller. The scoped search
+    // endpoint answers the same question.
+    const all = await apiGet(page, `/models/search?q=${encodeURIComponent(seed.name)}`);
     expect(all.some((m) => m.name === seed.name), 'model should be gone via API').toBe(false);
   });
 

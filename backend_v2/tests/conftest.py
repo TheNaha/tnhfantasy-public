@@ -1,5 +1,6 @@
 # Pytest configuration and fixtures
 
+import json
 import os
 import sys
 
@@ -18,6 +19,50 @@ os.environ.setdefault("COMFY_LB_HEALTH_CHECKS_ENABLED", "0")
 
 
 # Need to import all models so SQLModel metadata is complete
+
+
+@pytest.fixture(autouse=True)
+def _isolate_config_file(tmp_path_factory):
+    """Point every test at its OWN config.json, never the live one.
+
+    `PUT /api/settings` persists, and it persists to `config._config_path` -
+    which, in the test suite, is the operator's real `backend_v2/config.json`.
+    So the suite was rewriting the live configuration.
+
+    Two per-file fixtures tried to compensate by restoring the file
+    afterwards, and both are defeated by the suite's parallelism:
+
+      - `test_settings_route.py` restores the file at teardown, so the live
+        config is wrong for the whole run;
+      - with eight xdist workers, worker A's restore can land BEFORE worker
+        B's write, and the file is left with worker B's value.
+
+    That is not hypothetical: running the suite left the live
+    `jobs.max_concurrent` at 3 instead of the operator's 5, and rewrote the
+    whole file from the defaults - which is how a setting nobody touched
+    changed.
+
+    The fix is not another restore. It is to make the write go somewhere
+    else: every test gets a private copy of the operator's config, and the
+    live path is restored on the way out.
+    """
+    import shutil
+
+    import config as cfg
+
+    original_path = cfg._config_path
+    target = tmp_path_factory.mktemp("config") / "config.json"
+    try:
+        shutil.copyfile(original_path, target)
+    except OSError:
+        target.write_text(
+            json.dumps(cfg.DEFAULT_CONFIG, indent=2), encoding="utf-8"
+        )
+    cfg._config_path = str(target)
+    try:
+        yield str(target)
+    finally:
+        cfg._config_path = original_path
 
 
 @pytest.fixture(name="engine")

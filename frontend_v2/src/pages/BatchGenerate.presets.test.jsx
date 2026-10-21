@@ -96,7 +96,14 @@ describe('BatchGenerate presets and control parity', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         window.localStorage.clear();
-        useGeneratorStore.setState({ ...INITIAL_GENERATOR_STATE });
+        // A batch names a model: the page resolves "Auto (default)" to the
+        // server's default checkpoint and refuses to submit a request that
+        // names none. The store starts with one selected, the way the
+        // generator pages' own tests do.
+        useGeneratorStore.setState({
+            ...INITIAL_GENERATOR_STATE,
+            selectedCheckpoint: { name: 'dreamer.safetensors', display_name: 'Dreamer' },
+        });
         useSettingsStore.getState().resetSettings();
         globalThis.fetch = fetchMock;
 

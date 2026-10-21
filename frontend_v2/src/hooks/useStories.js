@@ -112,8 +112,13 @@ export const useAdoptWorldbuilding = () => {
         mutationFn: ({ storyId, data }) =>
             api.post(`/api/v2/stories/${storyId}/adopt-worldbuilding`, data),
         onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: QUERY_KEYS.LOCATIONS });
-            queryClient.invalidateQueries({ queryKey: QUERY_KEYS.LOREBOOKS });
+            // These must be ARRAY keys. React Query prefix-matches, and a
+            // bare string never prefix-matches an array key - so the bare
+            // `QUERY_KEYS.LOCATIONS` this used to pass invalidated NOTHING,
+            // and the Locations and Lorebooks lists kept their pre-adopt
+            // contents for the whole global staleTime.
+            queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.LOCATIONS) });
+            queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.LOREBOOKS) });
             invalidateVaultAggregates(queryClient);
         },
     });

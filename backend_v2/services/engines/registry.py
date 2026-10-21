@@ -602,6 +602,27 @@ def matrix_cells() -> List[Dict[str, Any]]:
 #: absent because it is an alias now, and an alias never reaches this check.
 _LEGACY_VLLM_MISTYPED = frozenset({"openai_compat", "ollama"})
 
+#: The id has to name MODAL for the legacy rescue to apply.
+#:
+#: The rescue existed for a row whose generic hosted type was a mis-typed
+#: Modal vLLM pod - the pod speaks the OpenAI API, so the row said
+#: `openai_compat`, and the id said `vllm`.
+#:
+#: But `openai_compat` and `ollama` are ALSO what a legitimate SELF-HOSTED
+#: vLLM says - that is what those types are for ("a local vLLM, Ollama,
+#: OpenRouter"). So the rescue, as it stood, took every self-hosted vLLM
+#: provider and re-labelled it `modal_llm`: the request went to a Modal
+#: llama.cpp app instead of the operator's own box, at a different cost,
+#: with no error and no log line. Measured on the resolver:
+#:
+#:     type='openai_compat'  id='selfhost-vllm'  ->  modal_llm   (wrong)
+#:     type='ollama'         id='local-vllm'     ->  modal_llm   (wrong)
+#:
+#: So the id must ALSO say Modal for the rescue to fire. A self-hosted
+#: provider's id says where it lives, and that is the only thing that
+#: distinguishes the two cases.
+_LEGACY_VLLM_MISTYPED_ID_MARKER = "modal"
+
 _TYPE_ALIASES: Dict[str, str] = {
     # The direction of this alias was flipped on 2026-10-15. `modal_vllm` used
     # to be canonical with `modal_llm` folded into it, because the engine was a
@@ -686,14 +707,24 @@ def resolve_provider_type(
     # An explicit type that is a spec wins outright.
     #
     # One legacy rescue survives: a row whose *generic hosted* type was a
-    # mis-typed Modal vLLM pod, recoverable because the id says "vllm" and the
-    # pod owns the `models/` volume tree. It is scoped to
-    # `_LEGACY_VLLM_MISTYPED` and nothing else, because the new transports
-    # legitimately contain "vllm" — a `beam_llm` or `remote_llm` row must never
-    # be re-labelled `modal_llm`, which is the mistake an unscoped override
-    # would make.
+    # mis-typed Modal vLLM pod, recoverable because the id says "vllm" AND
+    # says "modal" - the pod speaks the OpenAI API, so the row said
+    # `openai_compat`, and the id said `modal-vllm`.
+    #
+    # It is scoped to `_LEGACY_VLLM_MISTYPED` and to ids that name Modal,
+    # because the new transports legitimately contain "vllm" — a `beam_llm`
+    # or `remote_llm` row must never be re-labelled `modal_llm`, and a
+    # SELF-HOSTED vLLM provider (`openai_compat` with "vllm" in its id) must
+    # not be re-labelled either: that is what those types are for, and
+    # re-labelling it sent the request to a Modal app instead of the
+    # operator's own box.
     if provider_type in ENGINE_SPECS:
-        if "vllm" in (provider_id or "") and provider_type in _LEGACY_VLLM_MISTYPED:
+        provider_id_l = (provider_id or "").lower()
+        if (
+            "vllm" in provider_id_l
+            and provider_type in _LEGACY_VLLM_MISTYPED
+            and _LEGACY_VLLM_MISTYPED_ID_MARKER in provider_id_l
+        ):
             return "modal_llm"
         return provider_type
     if provider_type in _TYPE_ALIASES:
@@ -709,7 +740,11 @@ def resolve_provider_type(
         return "remote_comfy"
     if "direct" in lowered:
         return "direct_url"
-    if "vllm" in pid:
+    # Same rule as the legacy rescue above: the id has to name Modal.
+    # A provider whose type is unknown and whose id merely says "vllm" is
+    # not thereby a Modal pod - it is far more likely to be somebody's own
+    # vLLM box, which is exactly what the previous rule mis-routed.
+    if "vllm" in lowered and _LEGACY_VLLM_MISTYPED_ID_MARKER in lowered:
         return "modal_llm"
     return _capability_fallback(capabilities, worker_type)
 

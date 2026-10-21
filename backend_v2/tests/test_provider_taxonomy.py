@@ -141,9 +141,17 @@ class TestTypeResolutionCannotBeHijacked:
         assert resolve_provider_type("", "beam-tts-main") == "beam_tts"
 
     def test_the_legacy_rescue_still_works_for_a_mistyped_row(self):
-        """A row whose generic hosted type was a mis-typed Modal vLLM pod."""
-        assert resolve_provider_type("openai_compat", "vllm-pod") == "modal_llm"
-        assert resolve_provider_type("", "vllm-pod") == "modal_llm"
+        """A row whose generic hosted type was a mis-typed Modal vLLM pod.
+
+        The rescue now also requires the id to name Modal, so a legitimate
+        self-hosted vLLM provider (openai_compat / ollama) whose id merely
+        says "vllm" keeps its identity instead of being re-labelled modal_llm
+        and routed to a Modal llama.cpp app.
+        """
+        assert resolve_provider_type("openai_compat", "svc-modal-vllm-3") == "modal_llm"
+        assert resolve_provider_type("", "svc-modal-vllm-3") == "modal_llm"
+        assert resolve_provider_type("openai_compat", "selfhost-vllm") == "openai_compat"
+        assert resolve_provider_type("ollama", "local-vllm") == "ollama"
 
     def test_modal_llm_is_one_type_not_two(self):
         """`modal_llm` is canonical and `modal_vllm` is the legacy spelling.

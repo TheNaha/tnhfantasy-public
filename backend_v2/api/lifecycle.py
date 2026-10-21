@@ -49,6 +49,13 @@ logger = get_logger("lifecycle")
 # timer instead of going back onto the request path.
 PROVIDER_HOST_REFRESH_SECONDS = 60
 
+# How often the job reaper sweeps for jobs that are wedged.
+#
+# Five minutes is short enough that a wedged job does not sit on the
+# dashboard saying "generating" for an hour, and long enough that the sweep
+# is noise next to the generation traffic.
+JOB_REAPER_INTERVAL_SECONDS = 300
+
 
 async def _process_image_background_for_recovery(image_path: str, job_id: str) -> None:
     """Apply thumbnail/metadata post-processing when recovering post-processing jobs.
@@ -125,6 +132,12 @@ def requeue_inflight_jobs_for_shutdown() -> int:
             job.status = JobStatus.PENDING
             job.started_at = None
             job.completed_at = None
+            # The claim marker too. PENDING-WITH-claim is not claimable -
+            # the claim predicate is `status = 'PENDING' AND claimed_at IS
+            # NULL` - so a requeued row that kept its claim sat in the queue
+            # and was never picked up, until the next boot's claim reset
+            # cleared it.
+            job.claimed_at = None
             job.progress = 0.0
             job.overall_progress = 0.0
             job.message = "Requeued after server shutdown"
@@ -141,6 +154,37 @@ def requeue_inflight_jobs_for_shutdown() -> int:
         session.close()
 
 
+
+
+async def _reap_wedged_jobs() -> None:
+    """Fail the jobs that are wedged.
+
+    A job that is legitimately running is not touched: the window is that
+    job's OWN task-type timeout, so a healthy 40-minute image generation is
+    left alone.
+
+    What this catches is the job whose own failure-recording failed. The
+    runner's fallback when `mark_failed` raises is a log line and nothing
+    else, so such a job stayed non-terminal until somebody restarted the
+    process or clicked Recover - and the dashboard showed it as permanently
+    "generating" in the meantime.
+    """
+    try:
+        session = get_session_sync()
+        try:
+            service = JobService(session)
+            stale = await service.fail_stale_running_jobs(timeout_seconds=None)
+            stranded = await service.fail_stranded_pending_jobs()
+        finally:
+            session.close()
+        if stale or stranded:
+            logger.info(
+                "job_reaper_failed_wedged_jobs",
+                stale=len(stale),
+                stranded=len(stranded),
+            )
+    except Exception as exc:
+        logger.warning("job_reaper_failed", error=str(exc))
 
 
 async def run_data_cleanup() -> None:
@@ -328,6 +372,26 @@ async def startup_application(process_job, ws_manager):
 
     logger.info("startup_init", phase="data_cleanup")
     schedule_cleanup(run_data_cleanup, interval_seconds=3600)
+
+    # The job reaper.
+    #
+    # `fail_stale_running_jobs` and `fail_stranded_pending_jobs` used to run
+    # ONLY at boot and on a manual `POST /api/jobs/recover`. A job whose own
+    # failure-recording failed - the runner's fallback is a log line and
+    # nothing else - therefore stayed non-terminal until somebody restarted
+    # the process or clicked Recover, and the dashboard showed it as
+    # permanently "generating".
+    #
+    # Both sweeps are idempotent and use the atomic `update_where_status`
+    # guard, so running them on a timer is safe: a job that is still
+    # legitimately running is not touched, because the window is that job's
+    # OWN task-type timeout.
+    add_interval_job(
+        _reap_wedged_jobs,
+        interval_seconds=JOB_REAPER_INTERVAL_SECONDS,
+        job_id="job_reaper",
+        start_immediately=False,
+    )
 
     from config import get_config
     idle_sim_env = os.getenv("COMFY_IDLE_SIM_ENABLED", "").strip().lower()

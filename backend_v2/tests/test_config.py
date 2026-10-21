@@ -15,7 +15,6 @@ from config import (
     get_blurhash_resize_max,
     get_config,
     get_cors_origins,
-    get_default_jobs_limit,
     get_download_auto_remove_delay,
     get_download_chunk_size,
     get_embed_metadata_in_png,
@@ -27,8 +26,6 @@ from config import (
     get_jobs_cleanup_auto,
     get_jobs_cleanup_interval,
     get_jobs_cleanup_max_age,
-    get_max_concurrent_jobs,
-    get_max_jobs_in_memory,
     get_modal_max_containers,
     get_modal_scaledown_window,
     get_modal_timeout,
@@ -166,10 +163,6 @@ class TestValidateConfig:
     def test_invalid_timeout(self):
         with pytest.raises(ValueError):
             _validate_config({"jobs": {"timeout": 0}})
-
-    def test_invalid_default_limit(self):
-        with pytest.raises(ValueError):
-            _validate_config({"jobs": {"default_limit": 0}})
 
     def test_invalid_gzip_size(self):
         with pytest.raises(ValueError):
@@ -352,14 +345,24 @@ class TestConvenienceFunctions:
     def test_get_worker_poll_limit(self):
         assert get_worker_poll_limit() == 50
 
-    def test_get_default_jobs_limit(self):
-        assert get_default_jobs_limit() == 20
+    def test_the_dead_job_accessors_are_gone(self):
+        """`get_default_jobs_limit`, `get_max_jobs_in_memory` and
+        `get_max_concurrent_jobs` read config keys nothing else read: the job
+        list limit is the hardcoded `limit: int = 20` on `GET /api/jobs`, the
+        in-process queue is an unbounded `asyncio.Queue()`, and the queue reads
+        `jobs.max_concurrent` straight out of the config dict."""
+        import config as config_module
 
-    def test_get_max_jobs_in_memory(self):
-        assert get_max_jobs_in_memory() == 100
+        for name in (
+            "get_default_jobs_limit",
+            "get_max_jobs_in_memory",
+            "get_max_concurrent_jobs",
+        ):
+            assert not hasattr(config_module, name), f"{name} is still there"
 
-    def test_get_max_concurrent_jobs(self):
-        assert get_max_concurrent_jobs() == 5
+    def test_the_removed_job_settings_are_not_in_the_defaults(self):
+        assert "default_limit" not in DEFAULT_CONFIG["jobs"]
+        assert "max_in_memory" not in DEFAULT_CONFIG["jobs"]
 
     def test_get_job_timeout(self):
         assert isinstance(get_job_timeout(), int)

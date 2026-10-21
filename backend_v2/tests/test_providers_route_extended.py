@@ -72,13 +72,16 @@ class TestProvidersRouteUpdate:
 
 
 class TestProvidersRouteModelCache:
+    """The two model-cache routes served the same 1.5 MB dump as two other
+    routes and had no caller. They are gone."""
+
     def test_get_model_cache_empty(self, client):
         response = client.get("/api/v2/providers/model-cache")
-        assert response.status_code == 200
+        assert response.status_code in (404, 405)
 
     def test_get_model_cache_by_directory(self, client):
         response = client.get("/api/v2/providers/model-cache/checkpoints")
-        assert response.status_code == 200
+        assert response.status_code in (404, 405)
 
 
 class TestProvidersRouteLoadBalancing:
@@ -93,20 +96,20 @@ class TestProvidersRouteLoadBalancing:
         )
         assert response.status_code in (200, 422)
 
-    def test_get_load_balancing_legacy(self, client):
+    def test_get_load_balancing_legacy_is_gone(self, client):
         response = client.get("/api/v2/providers/load-balancing")
-        assert response.status_code == 200
+        assert response.status_code in (404, 405)
 
-    def test_put_load_balancing_legacy(self, client):
+    def test_put_load_balancing_legacy_is_gone(self, client):
         response = client.put(
             "/api/v2/providers/load-balancing",
             json={"strategy": "least-loaded"}
         )
-        assert response.status_code in (200, 422)
+        assert response.status_code in (404, 405)
 
-    def test_get_load_balancer_stats(self, client):
+    def test_get_load_balancer_stats_is_gone(self, client):
         response = client.get("/api/v2/providers/load-balancer/stats")
-        assert response.status_code == 200
+        assert response.status_code in (404, 405)
 
 
 class TestProvidersRouteContainers:
@@ -277,7 +280,9 @@ class TestProvidersRouteReconcile:
         )
         assert first_event.status_code == 200
 
-        first_card = client.get(f"/api/v2/providers/{provider_id}/status-card")
+        # The dedicated `/status-card` route is gone; the provider record
+        # carries the same payload.
+        first_card = client.get(f"/api/v2/providers/{provider_id}")
         assert first_card.status_code == 200
         assert first_card.json()["storage"]["total"] == 6
 
@@ -290,7 +295,7 @@ class TestProvidersRouteReconcile:
         )
         assert second_event.status_code == 200
 
-        second_card = client.get(f"/api/v2/providers/{provider_id}/status-card")
+        second_card = client.get(f"/api/v2/providers/{provider_id}")
         assert second_card.status_code == 200
         assert second_card.json()["storage"]["total"] == 6
 
@@ -310,6 +315,9 @@ class TestProvidersRouteReconcile:
         assert response.status_code == 404
 
     def test_get_provider_status_card_route(self, client):
+        """The dedicated `/status-card` route is gone; the provider record
+        (`GET /api/v2/providers/{id}`) is what the UI reads, and it carries
+        the same payload."""
         payload = {
             "id": "status-card-provider",
             "type": "modal",
@@ -346,15 +354,14 @@ class TestProvidersRouteReconcile:
                  "services.provider_status_service.ProviderStatusService.get_provider_storage_stats",
                  new=AsyncMock(return_value=storage_payload),
              ):
-            response = client.get("/api/v2/providers/status-card-provider/status-card")
+            response = client.get("/api/v2/providers/status-card-provider")
 
         assert response.status_code == 200
         data = response.json()
-        assert data["provider_id"] == "status-card-provider"
-        assert data["model_sync"]["total_models"] == 3
+        assert data["id"] == "status-card-provider"
         assert data["model_sync"]["total_models"] == 3
         assert data["storage"]["total"] == 2
-        assert data["reconciliation"]["status"] in {"idle", "reconciling", "completed", "failed"}
+        assert data["reconciliation_state"]["status"] in {"idle", "reconciling", "completed", "failed"}
         assert "diagnostics" in data
 
     def test_get_provider_status_cards_batch_route(self, client):
@@ -396,16 +403,16 @@ class TestProvidersRouteReconcile:
                  "services.provider_status_service.ProviderStatusService.get_provider_storage_stats",
                  new=AsyncMock(return_value=storage_payload),
              ):
-            response = client.get("/api/v2/providers/status-cards")
+            response = client.get("/api/v2/providers/")
 
         assert response.status_code == 200
         data = response.json()
+        records = {record["id"]: record for record in data["providers"]}
         assert data["count"] >= len(provider_ids)
         for provider_id in provider_ids:
-            assert provider_id in data["status_cards"]
-        for provider_id in provider_ids:
-            card = data["status_cards"][provider_id]
-            assert card["provider_id"] == provider_id
+            assert provider_id in records
+            card = records[provider_id]
+            assert card["id"] == provider_id
             assert "model_sync" in card
             assert "storage" in card
             assert "diagnostics" in card

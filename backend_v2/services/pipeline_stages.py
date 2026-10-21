@@ -31,6 +31,7 @@ from infrastructure.logging import get_logger
 
 from core.pipeline_limits import (
     AUTONOMY_CHAIN_THRESHOLDS,
+    MAX_AGENTIC_IMAGES,
     MAX_AUTONOMOUS_TURNS,
     MAX_CONTINUATION_ATTEMPTS,
 )
@@ -311,11 +312,36 @@ async def illustrate_stage(ctx: dict[str, Any]) -> str | None:
     if audit_decision is None:
         return None
 
-    max_images = getattr(chat_obj, "max_agentic_images", 2) or 2
+    from services.orchestrator_service import (
+        IMAGE_TOOL_NAME,
+        get_agentic_image_count,
+        tool_counter_key,
+    )
+
+    # The budget is "how many images ONE exchange may spend", and the running
+    # total is the job metadata key the budget table declares
+    # (`agentic_image_jobs`) — the same counter the agentic `generate_image`
+    # tool spends, so an exchange cannot pay for images twice over.
+    #
+    # The stage used to read `job_meta.get("agentic_image_count", 0)` — a key
+    # NOTHING wrote, so the running total was always 0 and the budget never
+    # tripped: the Illustrator ran on every chained turn whatever the slider
+    # said.
+    #
+    # The cap is the chat's own budget, or the global default. An explicit 0
+    # means 0 — the slider's "0 disables autonomous illustration" — so the
+    # test is `is None`, not falsiness. The old expression,
+    # `getattr(chat, "max_agentic_images", 2) or 2`, turned that 0 straight
+    # back into 2.
+    max_images = getattr(chat_obj, "max_agentic_images", None)
+    if max_images is None:
+        max_images = MAX_AGENTIC_IMAGES
+    max_images = int(max_images)
+    spent = get_agentic_image_count(job_meta)
     if not (
         audit_decision.should_trigger_image
         and getattr(chat_obj, "allow_image_generation", True)
-        and job_meta.get("agentic_image_count", 0) < max_images
+        and spent < max_images
     ):
         return None
 
@@ -335,10 +361,21 @@ async def illustrate_stage(ctx: dict[str, Any]) -> str | None:
         return None
 
     if illustrator_job_id:
+        # The image is spent, so the running total goes up — on the job's own
+        # metadata (which the next stage reads) and in the context, so the
+        # chain can carry it onto the next turn of THIS exchange. Without
+        # this the budget was consulted with a total that never moved.
+        counter_key = tool_counter_key(IMAGE_TOOL_NAME)
+        spent += 1
+        job_meta[counter_key] = spent
+        ctx["job_meta"] = job_meta
+        ctx[counter_key] = spent
         logger.info(
             "illustrator_agent_image_triggered",
             chat_id=ctx["chat_id"],
             job_id=illustrator_job_id,
+            images_spent=spent,
+            max_images=max_images,
         )
     return illustrator_job_id
 
@@ -357,6 +394,7 @@ async def update_stage(ctx: dict[str, Any]) -> str | None:
     pre-update snapshot.
     """
     from services.updater_service import enqueue_state_updater_if_needed
+    from services.orchestrator_service import IMAGE_TOOL_NAME, tool_counter_key
 
     session = ctx["session"]
     chat_obj = ctx["chat"]
@@ -369,6 +407,12 @@ async def update_stage(ctx: dict[str, Any]) -> str | None:
     max_turns = getattr(chat_obj, "max_autonomous_turns", MAX_AUTONOMOUS_TURNS) or MAX_AUTONOMOUS_TURNS
     current_turns = int(ctx.get("current_turns", 1))
     job_meta = ctx.get("job_meta") or {}
+    # The images this exchange has already spent. The deferred chain runs in
+    # the Statekeeper's completion hook, with a context of its own, so the
+    # running total has to travel with the payload — otherwise the next turn
+    # starts the budget from zero and the cap never bites.
+    image_counter_key = tool_counter_key(IMAGE_TOOL_NAME)
+    images_spent = int(ctx.get(image_counter_key) or 0)
 
     should_chain = (autonomy_level != "strict" and current_turns < max_turns)
     # `turn` is the turn that JUST RAN, not the turn to create.
@@ -388,6 +432,7 @@ async def update_stage(ctx: dict[str, Any]) -> str | None:
         "autonomy_level": autonomy_level,
         "branch_id": job_meta.get("branch_id"),
         "last_speaker": ctx.get("last_speaker"),
+        image_counter_key: images_spent,
     } if should_chain else None
 
     updater_job_id = None
@@ -440,7 +485,11 @@ async def chain_stage(ctx: dict[str, Any]) -> str | None:
     from services.llm_config import model_for_kind
     from services.context_builder import build_context
     from config import get_system_prompt_blocks
-    from services.orchestrator_service import NARRATOR_SYSTEM_PROMPT
+    from services.orchestrator_service import (
+        IMAGE_TOOL_NAME,
+        NARRATOR_SYSTEM_PROMPT,
+        tool_counter_key,
+    )
     from services.job_queue import queue_manager
 
     session = ctx["session"]
@@ -501,6 +550,13 @@ async def chain_stage(ctx: dict[str, Any]) -> str | None:
     min_chain_prob = AUTONOMY_CHAIN_THRESHOLDS.get(
         autonomy_level, AUTONOMY_CHAIN_THRESHOLDS["balanced"]
     )
+
+    # The images THIS exchange has already spent. The counter is the key the
+    # budget table declares, and it travels onto the follow-up job so the next
+    # turn of the same exchange continues the same running total instead of
+    # starting the budget again from zero.
+    image_counter_key = tool_counter_key(IMAGE_TOOL_NAME)
+    images_spent = int(ctx.get(image_counter_key) or 0)
 
     chain_decision = await DecisionService(session).evaluate_turn_chaining(
         last_speaker=last_speaker,
@@ -613,6 +669,7 @@ async def chain_stage(ctx: dict[str, Any]) -> str | None:
                 "max_autonomous_turns": max_turns,
                 "branch_id": branch_id,
                 "selected_variant": triage_decision.selected_variant,
+                image_counter_key: images_spent,
             },
         )
         followup_job = await job_service.create_job(task_type="llm", workflow=workflow, metadata=metadata)
@@ -620,8 +677,33 @@ async def chain_stage(ctx: dict[str, Any]) -> str | None:
         logger.info("laya_conductor_narrator_chained", chat_id=chat_id, job_id=followup_job.id, turn=next_turn, variant=triage_decision.selected_variant)
     elif target_speaker == "secondary_character" and getattr(chat_obj, "additional_character_ids", None):
         secondary_id = chat_obj.additional_character_ids[0]
+        secondary_char = session.get(Character, secondary_id)
+        # The variant Laya selected is an OVERLAY on the secondary's card, the
+        # same way it is on the primary's.
+        #
+        # This branch used to drop it entirely: no `agent_variant_prompt`, no
+        # `resolved_agent.sampler_overrides()` and no `selected_variant` in the
+        # metadata. The `narrator` and `character` branches did all three, so
+        # in a group chat the secondary spoke with the base card every single
+        # time, however Laya had routed the turn.
+        variant_overlay = None
+        if resolved_agent is not None and resolved_agent.prompt_template:
+            variant_overlay = render_agent_template(
+                resolved_agent.prompt_template,
+                character_name=(
+                    secondary_char.name
+                    if secondary_char
+                    else (char_obj.name if char_obj else "Character")
+                ),
+                user_name=chat_obj.persona_name or "User",
+                story_location=chat_obj.story_location or "",
+                story_time=chat_obj.story_time or "",
+            )
+        build_kwargs: dict[str, Any] = {"active_character_id": secondary_id}
+        if variant_overlay:
+            build_kwargs["agent_variant_prompt"] = variant_overlay
         system_prompt, context, _sections = await asyncio.to_thread(
-            build_context, session, "chat", chat_obj, recent_msgs_objs, active_character_id=secondary_id,
+            build_context, session, "chat", chat_obj, recent_msgs_objs, **build_kwargs,
         )
         instruction_content = (
             f"[Scene Direction] {directive_str}: react to the situation."
@@ -637,16 +719,20 @@ async def chain_stage(ctx: dict[str, Any]) -> str | None:
             character_id=secondary_id,
             # The character card is the first system message in `messages`.
             model=model_for_kind("chat_reply", chat_obj.llm_model, session),
-            samplers=sampler_overrides(chat_obj),
+            samplers={**sampler_overrides(chat_obj), **(resolved_agent.sampler_overrides() if resolved_agent else {})},
+            type_="chat_reply",
+            source="character",
             extra_metadata={
                 "autonomous_turn_count": next_turn,
                 "max_autonomous_turns": max_turns,
                 "branch_id": branch_id,
+                "selected_variant": triage_decision.selected_variant,
+                image_counter_key: images_spent,
             },
         )
         followup_job = await job_service.create_job(task_type="llm", workflow=workflow, metadata=metadata)
         await queue_manager.enqueue(followup_job.id, task_type="llm")
-        logger.info("laya_conductor_secondary_char_chained", chat_id=chat_id, secondary_id=secondary_id, job_id=followup_job.id, turn=next_turn)
+        logger.info("laya_conductor_secondary_char_chained", chat_id=chat_id, secondary_id=secondary_id, job_id=followup_job.id, turn=next_turn, variant=triage_decision.selected_variant)
     elif target_speaker == "character" and char_obj is not None:
         # The character agent speaks as the character card, so its variant is
         # an OVERLAY on that card. It used to be passed as `system_prompt=`,
@@ -688,6 +774,7 @@ async def chain_stage(ctx: dict[str, Any]) -> str | None:
                 "max_autonomous_turns": max_turns,
                 "branch_id": branch_id,
                 "selected_variant": triage_decision.selected_variant,
+                image_counter_key: images_spent,
             },
         )
         followup_job = await job_service.create_job(task_type="llm", workflow=workflow, metadata=metadata)
@@ -731,6 +818,7 @@ async def chain_stage(ctx: dict[str, Any]) -> str | None:
                 "branch_id": branch_id,
                 "agent_slug": target_speaker,
                 "selected_variant": triage_decision.selected_variant,
+                image_counter_key: images_spent,
             },
         )
         followup_job = await job_service.create_job(task_type="llm", workflow=workflow, metadata=metadata)

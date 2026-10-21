@@ -34,6 +34,25 @@ function UnsupportedHint({ children }) {
     );
 }
 
+/**
+ * A detector model NAME, without the directory it lives in.
+ *
+ * The provider's own list is directory-prefixed - `detection/bbox/face_yolov8n.pt`
+ * - and the backend prefixes it AGAIN (`f"bbox/{options.adetailerModel}"`,
+ * `backend_v2/core/workflow_builder.py`), so the model that was loaded was
+ * `bbox/bbox/face_yolov8n.pt`, which does not exist. The bare-name list
+ * from the local `models/ultralytics/bbox` scan is what the backend
+ * expects, so the capabilities list is reduced to bare names here - the
+ * same thing `utils/reuseParameters.js` does when it reads a detector out
+ * of a graph.
+ */
+function bareModelName(name) {
+    if (typeof name !== 'string') return null;
+    const trimmed = name.trim();
+    if (!trimmed) return null;
+    return trimmed.split('/').pop();
+}
+
 const EnhancementsSection = memo(function EnhancementsSection({
     capabilities = null,
     modelType = 'sd15',
@@ -114,7 +133,10 @@ const EnhancementsSection = memo(function EnhancementsSection({
             ? providerUpscalerModels.map((name) => ({ name }))
             : (upscalerModels || []));
     const detectorChoices = providerDetectorModels
-        ? providerDetectorModels.map((name) => ({ name }))
+        ? providerDetectorModels
+            .map((name) => bareModelName(name))
+            .filter(Boolean)
+            .map((name) => ({ name }))
         : (adetailerModels || []);
 
     return (

@@ -138,17 +138,6 @@ class TestModelServiceV2GetModel:
         with pytest.raises(NotFoundError):
             service.get_model(99999)
 
-    async def test_list_models_empty(self, service):
-        result = await service.list_models()
-        assert result == []
-
-    async def test_list_models(self, service, civitai_data):
-        with patch.object(service.downloader, "trigger_download_to_providers", new=AsyncMock()):
-            with patch.object(service.downloader, "check_and_trigger_dependencies", new=AsyncMock()):
-                await service.add_model_from_civitai(civitai_data, [67890])
-        result = await service.list_models()
-        assert len(result) == 1
-
     async def test_list_models_by_directory(self, service, civitai_data):
         with patch.object(service.downloader, "trigger_download_to_providers", new=AsyncMock()):
             with patch.object(service.downloader, "check_and_trigger_dependencies", new=AsyncMock()):
@@ -156,12 +145,12 @@ class TestModelServiceV2GetModel:
         result = await service.list_models_by_directory("checkpoints")
         assert len(result) >= 1
 
-    async def test_get_models_grouped(self, service, civitai_data):
-        with patch.object(service.downloader, "trigger_download_to_providers", new=AsyncMock()):
-            with patch.object(service.downloader, "check_and_trigger_dependencies", new=AsyncMock()):
-                await service.add_model_from_civitai(civitai_data, [67890])
-        result = service.get_models_grouped()
-        assert "checkpoints" in result
+    def test_the_bulk_dump_accessors_are_gone(self, service):
+        """`get_models_grouped` and `get_full_cache` served the 1.5 MB dump
+        that the dead `/api/v2/models/` and `/api/v2/providers/model-cache`
+        routes returned. With those routes gone, the accessors had no caller."""
+        assert not hasattr(service, "get_models_grouped")
+        assert not hasattr(service, "get_full_cache")
 
 
 class TestModelServiceV2DeleteModel:
@@ -196,13 +185,6 @@ class TestModelServiceV2Versions:
 
 
 class TestModelServiceV2Cache:
-    async def test_get_full_cache(self, service, civitai_data):
-        with patch.object(service.downloader, "trigger_download_to_providers", new=AsyncMock()):
-            with patch.object(service.downloader, "check_and_trigger_dependencies", new=AsyncMock()):
-                await service.add_model_from_civitai(civitai_data, [67890])
-        cache = service.get_full_cache()
-        assert isinstance(cache, dict)
-
     async def test_get_pending_downloads(self, service):
         result = service.get_pending_downloads("modal-primary")
         assert isinstance(result, list)

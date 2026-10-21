@@ -485,17 +485,6 @@ class ProviderService:
             ),
         }
     
-    def get_model_cache(self) -> dict[str, Any]:
-        from services.model_service import ModelServiceV2
-        model_service = ModelServiceV2(self.session)
-        return model_service.get_full_cache()
-    
-    def get_model_cache_for_directory(self, directory: str) -> list[dict[str, Any]]:
-        from services.model_service import ModelServiceV2
-        model_service = ModelServiceV2(self.session)
-        cache = model_service.get_full_cache()
-        return cache.get(directory, [])
-    
     async def get_load_balancer_stats(self) -> dict[str, Any]:
         from services.load_balancer_factory import create_load_balancer
         config = self.get_load_balancing_config()

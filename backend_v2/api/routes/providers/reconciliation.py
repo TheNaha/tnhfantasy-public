@@ -15,13 +15,11 @@ from typing import Any
 import httpx
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
-from sqlmodel import Session
 
 from api.deps import (
     get_event_bus,
     get_provider_lifecycle_service,
     get_provider_service,
-    get_session,
 )
 from core.events import Event, EventType, emit_provider_stats
 from core.exceptions import ComfyError, ProviderError, ValidationError
@@ -38,32 +36,12 @@ logger = api_logger()
 router = APIRouter()
 
 
-# ============================================================================
-# MODEL CACHE ENDPOINTS
-# ============================================================================
-
-
-@router.get("/model-cache")
-def get_full_model_cache(session: Session = Depends(get_session)):
-    """Get all model metadata from the backend cache."""
-    service = get_provider_service(session)
-    return {"models": service.get_model_cache()}
-
-
-@router.get("/model-cache/{directory:path}")
-def get_model_cache_for_directory(
-    directory: str,
-    session: Session = Depends(get_session)
-):
-    """Get model metadata for a specific directory."""
-    service = get_provider_service(session)
-    models = service.get_model_cache_for_directory(directory)
-    return {
-        "directory": directory,
-        "models": models,
-        "count": len(models)
-    }
-
+# `GET /api/v2/providers/model-cache` and
+# `GET /api/v2/providers/model-cache/{directory}` are GONE (2026-10-21).
+#
+# They were two of the four implementations of the same 1.53 MB model dump
+# (`/api/v2/models/` and `/api/v2/providers/model-cache` were byte-identical),
+# and all four had zero callers.
 
 
 # ============================================================================

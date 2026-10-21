@@ -149,29 +149,12 @@ async def update_load_balancing_config(
     }
 
 
-@router.get("/load-balancer/stats")
-async def get_load_balancer_stats(session: Session = Depends(get_session)):
-    """Get load balancer statistics."""
-    service = get_provider_service(session)
-    stats = await service.get_load_balancer_stats()
-    return stats
-
-
-# Alias paths for frontend compatibility
-@router.get("/load-balancing")
-async def get_load_balancing_alias(session: Session = Depends(get_session)):
-    """Alias for /config/load-balancing."""
-    return await get_load_balancing_config(session)
-
-
-@router.put("/load-balancing")
-async def update_load_balancing_alias(
-    request: LoadBalancingConfigRequest,
-    session: Session = Depends(get_session)
-):
-    """Alias for /config/load-balancing."""
-    return await update_load_balancing_config(request, session)
-
+# `GET /api/v2/providers/load-balancer/stats`,
+# `GET /api/v2/providers/load-balancing` and
+# `PUT /api/v2/providers/load-balancing` are GONE (2026-10-21).
+#
+# They were aliases of the canonical pair above, which the frontend uses
+# (`frontend_v2/src/api/providers.js`), and nothing called the aliases.
 
 
 # ============================================================================
@@ -657,12 +640,35 @@ async def update_provider(
     # cleared through the one invalidation entry point.
     if "enabled" in updates or "capabilities" in updates:
         LoadBalancer.invalidate_model_availability_cache(provider_id=provider_id)
+    # A provider edit can change what its worker exposes, so the cached
+    # ComfyUI node graph has to go with it.
+    #
+    # This used to import `services.nodes`, which does not exist — the real
+    # module is `api.routes.nodes` — and swallow the resulting
+    # `ModuleNotFoundError` in a bare `except Exception: pass`. The invalidation
+    # therefore never happened, on any provider edit, for as long as the typo
+    # stood: the cache kept serving the pre-edit graph for its whole TTL.
+    #
+    # The import is inside the function (as it is in
+    # `services/engines/engine_factory.py`) because `api.routes.nodes` imports
+    # `api.deps`, and a module-level import here would make the provider
+    # router depend on the nodes router's import graph.
     try:
-        from services.nodes import invalidate_object_info_cache
-
+        from api.routes.nodes import invalidate_object_info_cache
+    except ImportError as exc:  # pragma: no cover - the module exists
+        # Narrowed from `Exception` on purpose: a swallowed `Exception` hid
+        # this typo for months. An ImportError here is a broken deployment and
+        # has to be visible in the log.
+        logger.warning(
+            "provider_object_info_cache_invalidation_unavailable",
+            provider_id=provider_id,
+            error=str(exc),
+        )
+    else:
+        # No provider id: a provider edit can change what the worker exposes,
+        # and the graph is cached per provider, so the safe answer is to drop
+        # every provider's cached graph.
         invalidate_object_info_cache()
-    except Exception:
-        pass
     status_service = get_provider_status_service(session)
     return await status_service.build_provider_record(provider.id, provider=provider)
 

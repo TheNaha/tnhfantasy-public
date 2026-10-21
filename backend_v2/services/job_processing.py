@@ -13,8 +13,12 @@ from infrastructure.logging import get_logger
 from services.chat_utils import extract_first_text
 from services.image_processing import build_job_outputs, normalize_persisted_output
 from services.job_service import FAILURE_FINALIZATION
-from services.orchestrator_service import get_max_agentic_depth
-from services.pipeline_runner import run_from
+from services.orchestrator_service import (
+    IMAGE_TOOL_NAME,
+    get_max_agentic_depth,
+    tool_counter_key,
+)
+from services.pipeline_runner import USER_STAGE, run_stage, stage
 from services.pipeline_stages import chain_stage
 
 logger = get_logger("job_processing")
@@ -467,6 +471,48 @@ def _classify_llm_job_type(job, final_result: dict[str, Any]) -> str:
     return "chat_reply"
 
 
+async def _run_pipeline_stages_isolated(start_key: str, ctx: dict[str, Any]) -> dict[str, Any]:
+    """Walk the pipeline from `start_key`, isolating each stage's failure.
+
+    The walk is the one `services.pipeline_runner.run_from` performs — the
+    same manifest order, the same `halt` semantics, the same stage list — but
+    each stage is wrapped on its own.
+
+    It used to be ONE `try` around the whole walk, so a failure in any stage
+    cancelled every stage after it: an audit that raised took the
+    illustration, the Statekeeper, the memory extraction and the autonomous
+    chain with it, and the single WARNING that recorded it named no stage, so
+    the log said "something failed" and nothing about what.
+
+    A stage is a side effect on a turn that has ALREADY been paid for and
+    saved, so one broken stage must not delete the rest of the turn's work.
+    The stage name is in the log line, because "the pipeline failed" is not a
+    thing that can be acted on.
+    """
+    async def _run_one(key: str) -> None:
+        try:
+            await run_stage(key, ctx)
+        except Exception as exc:
+            logger.warning(
+                "post_turn_pipeline_stage_failed",
+                stage=key,
+                job_id=ctx.get("job_id"),
+                error=str(exc),
+            )
+
+    await _run_one(start_key)
+    if ctx.get("halt"):
+        return ctx
+
+    for next_key in stage(start_key).next_stages:
+        if ctx.get("halt"):
+            break
+        if next_key == USER_STAGE:
+            break
+        await _run_one(next_key)
+    return ctx
+
+
 async def _finalize_llm_job(
     *,
     job,
@@ -621,6 +667,12 @@ async def _finalize_llm_job(
                         "max_turns": int(pending_chain.get("max_turns", MAX_AUTONOMOUS_TURNS)),
                         "autonomy_level": pending_chain.get("autonomy_level", "balanced"),
                         "branch_id": pending_chain.get("branch_id"),
+                        # The images this exchange has already spent. The
+                        # deferred chain runs with a context of its own, so
+                        # the running total has to travel with the payload.
+                        tool_counter_key(IMAGE_TOOL_NAME): int(
+                            pending_chain.get(tool_counter_key(IMAGE_TOOL_NAME)) or 0
+                        ),
                     }
                 )
             except Exception as chain_exc:
@@ -860,13 +912,19 @@ async def _finalize_llm_job(
 
                     # Stages 3-6, in the order the manifest declares them.
                     #
-                    # `run_from("audit", ...)` walks
+                    # The walk follows
                     # `PIPELINE_STAGES["audit"].next_stages` — the audit
                     # itself, then illustrate, update, chain — and each stage
                     # is the function the manifest names. The order and the
                     # limits come from `services/chat_pipeline.py` now, not
                     # from the shape of this function.
-                    pipeline_ctx = await run_from(
+                    #
+                    # Each stage is isolated: a stage that raises is logged
+                    # with its name and the walk CONTINUES, so one broken
+                    # stage cannot delete the illustration, the state update,
+                    # the memory extraction and the chain of a turn that has
+                    # already been paid for.
+                    pipeline_ctx = await _run_pipeline_stages_isolated(
                         "audit",
                         {
                             "session": session,
@@ -893,9 +951,26 @@ async def _finalize_llm_job(
                     # stage: it is a side effect of the durable-memory gate,
                     # and it has no place in the stage graph.
                     audit_decision = pipeline_ctx.get("audit_decision")
-                    if (
-                        audit_decision is not None
-                        and audit_decision.updater_gates.get("gate_durable_memory", 0.0) >= UPDATER_GATE_THRESHOLD
+                    if audit_decision is None:
+                        # The audit did NOT ANSWER — the stage failed. The
+                        # gate could not be evaluated at all, so the same
+                        # fallback the outer branch uses when the Director is
+                        # off applies: extract rather than lose the turn's
+                        # memory because a gate never spoke.
+                        #
+                        # This is NOT the same as a gate that fired "no". A
+                        # decision that says "no durable memory" is honoured
+                        # exactly as before.
+                        if character_id:
+                            from services.memory_extraction import enqueue_memory_extraction
+                            await enqueue_memory_extraction(
+                                session=session,
+                                chat_id=chat_id,
+                                character_id=character_id,
+                                job_service=job_service,
+                            )
+                    elif (
+                        audit_decision.updater_gates.get("gate_durable_memory", 0.0) >= UPDATER_GATE_THRESHOLD
                         and (character_id or chat_obj.character_id)
                     ):
                         from services.memory_extraction import enqueue_memory_extraction
@@ -914,16 +989,20 @@ async def _finalize_llm_job(
                         job_service=job_service,
                     )
             except Exception as exc:
-                # WARNING, not debug. This handler wraps the whole post-turn
-                # Director block — the audit, the continuation, the illustrator,
-                # the Statekeeper, memory extraction and the turn chain — so a
-                # failure here does not degrade the reply, it deletes the rest
-                # of the pipeline for that turn. At debug level that was
-                # invisible: a TypeError in the Statekeeper's workflow builder
-                # and an ImportError in the chain's prompt import both landed
-                # here, and the suite stayed green while the Updater, the
-                # episodic memory extraction and the autonomous multi-turn
-                # chaining silently never ran.
+                # WARNING, not debug. This handler wraps the post-turn
+                # Director block — the context reads, the walk and the memory
+                # extraction — so a failure here does not degrade the reply,
+                # it deletes the rest of the pipeline for that turn. At debug
+                # level that was invisible: a TypeError in the Statekeeper's
+                # workflow builder and an ImportError in the chain's prompt
+                # import both landed here, and the suite stayed green while
+                # the Updater, the episodic memory extraction and the
+                # autonomous multi-turn chaining silently never ran.
+                #
+                # A stage that raises no longer lands here: each stage is
+                # isolated by `_run_pipeline_stages_isolated`, which logs the
+                # stage name and lets the walk continue. What reaches this
+                # handler is a failure in the parts that are not stages.
                 logger.warning("post_turn_director_or_memory_hook_failed", job_id=job_id, error=str(exc))
 
 

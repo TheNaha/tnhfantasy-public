@@ -1,6 +1,5 @@
 
 import asyncio
-import os
 
 from fastapi import APIRouter, Depends, Query
 
@@ -27,30 +26,34 @@ router = APIRouter()
 # MODEL ENDPOINTS
 # ============================================================================
 
-# Plain `def` on purpose, not `async def`, for this and the two routes below.
-# Each awaited a service method that was itself a decorative `async def` around a
-# synchronous SQLModel query, so the handler ran the whole query on the event
-# loop. Measured on the live stack 2026-10-03 for `GET /api/v2/models/` (the
-# 1.5 MB listing this route returns): 761 ms per request at concurrency 1 and
-# 778 ms at concurrency 16 — flat, i.e. fully serialised, throughput pinned at
-# ~1.3 req/s. The control route one file over, which uses `asyncio.to_thread`,
-# went 360 -> 59 -> 31 ms over the same sweep. FastAPI runs a plain `def` handler
-# in a worker thread, which is what this work is.
-@router.get("/")
-def list_models(service: ModelServiceV2 = Depends(get_model_service_v2)):
-    """List all models grouped by directory."""
-    return {"models": service.get_models_grouped()}
-
-
-@router.get("/all")
-async def list_all_models(service: ModelServiceV2 = Depends(get_model_service_v2)):
-    """List all models as flat list."""
-    return await service.list_models()
+# `GET /api/v2/models/`, `GET /api/v2/models/all` and the two
+# `/api/v2/providers/model-cache*` routes are GONE (2026-10-21).
+#
+# They were four implementations of the same 1.53 MB model dump —
+# `/api/v2/models/` and `/api/v2/providers/model-cache` byte-identical — and
+# all four had zero callers. The only frontend call into the `/api/v2/models/`
+# prefix is a POST (the CivitAI import), which stays.
+#
+# The measurement that made the removal worth doing is in the audit: the
+# listing measured 761 ms per request at concurrency 1 and 778 ms at
+# concurrency 16 — flat, i.e. fully serialised on the event loop, because the
+# service method behind it was a decorative `async def` around a synchronous
+# query. The control route one file over, which uses `asyncio.to_thread`, went
+# 360 -> 59 -> 31 ms over the same sweep.
 
 
 @router.get("/catalog")
 def get_catalog():
-    """Return the LLM and base model catalog and active role mappings."""
+    """Return the LLM and base model catalog and active role mappings.
+
+    Never returns a credential. This route used to answer with a `tokens`
+    block holding the plaintext `HF_TOKEN` / `CIVITAI_TOKEN` environment
+    values, falling back to the DECRYPTED per-provider credentials when the
+    environment did not carry them — and it is unauthenticated. The block is
+    gone; a token's presence is readable through the write-only credential
+    routes (`GET /api/v2/providers/{id}/credentials` returns presence and a
+    masked hint, never the value).
+    """
     from services.llm_config import get_active_models
     from services.llm_router import get_router
 
@@ -66,27 +69,13 @@ def get_catalog():
         registry.primary("decisions").id if "decisions" in registry.roles else "laya_multilingual"
     )
 
-    tokens = {
-        "hf_token": os.getenv("HF_TOKEN", ""),
-        "civitai_token": os.getenv("CIVITAI_TOKEN", ""),
-    }
     checkpoint_recommendations = {}
     try:
         from infrastructure.deps import get_session_sync
-        from infrastructure.repositories import ProviderRepository
         from services.checkpoint_recommendations import get_checkpoint_recommendations
 
         session = get_session_sync()
         try:
-            repo = ProviderRepository(session)
-            for p in repo.get_all():
-                creds = p.credentials or {}
-                if not tokens["hf_token"] and creds.get("hf_token"):
-                    tokens["hf_token"] = str(creds.get("hf_token"))
-                if not tokens["civitai_token"] and creds.get("civitai_token"):
-                    tokens["civitai_token"] = str(creds.get("civitai_token"))
-                if tokens["hf_token"] and tokens["civitai_token"]:
-                    break
             checkpoint_recommendations = get_checkpoint_recommendations(session)
         finally:
             session.close()
@@ -110,7 +99,6 @@ def get_catalog():
             "image": active.get("image", ""),
         },
         "shared_weights": shared_weights,
-        "tokens": tokens,
         "checkpoint_recommendations": checkpoint_recommendations,
     }
 

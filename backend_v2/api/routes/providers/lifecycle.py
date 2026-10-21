@@ -55,28 +55,12 @@ def _invalidate_provider_runtime_caches(provider_id: str | None = None) -> None:
     invalidate_provider_status_caches(provider_id)
 
 
-@router.get("/status-cards")
-async def get_provider_status_cards(
-    service: ProviderService = Depends(get_provider_service),
-    status_service: ProviderStatusService = Depends(get_provider_status_service)
-):
-    """Return canonical provider status payloads for all configured providers."""
-    providers = await service.list_providers()
-    cards = await status_service.build_provider_status_cards(providers)
-
-    return {
-        "status_cards": cards,
-        "count": len(cards),
-    }
-
-
-@router.get("/{provider_id}/status-card")
-async def get_provider_status_card(
-    provider_id: str,
-    status_service: ProviderStatusService = Depends(get_provider_status_service)
-):
-    """Return canonical provider status payload for a single provider."""
-    return await status_service.build_provider_status_card(provider_id)
+# `GET /api/v2/providers/status-cards` and
+# `GET /api/v2/providers/{id}/status-card` are GONE (2026-10-21).
+#
+# Nothing called them: the frontend reads `GET /api/v2/providers/`, and the
+# per-provider payload it needs is still served by `GET /api/v2/providers/{id}`
+# and by `GET /api/v2/providers/{id}/logs`.
 
 
 @router.get("/{provider_id}/live-metrics")

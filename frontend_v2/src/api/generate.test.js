@@ -87,15 +87,32 @@ describe('generateApi', () => {
         );
     });
 
-    it('reads an options-shaped argument as guided, not as a graph', async () => {
+    it('sends the kind the caller states', async () => {
         postMock.mockResolvedValue({ ok: true });
 
-        await generateApi.workflow({ prompt: 'a cat', mode: 't2i' });
+        await generateApi.workflow({ prompt: 'a cat', mode: 't2i' }, {}, { kind: 'guided' });
 
         const body = postMock.mock.calls[0][1];
         expect(body.kind).toBe('guided');
         expect(body.options).toEqual({ prompt: 'a cat', mode: 't2i' });
         expect(body.workflow).toBeUndefined();
+    });
+
+    it('never infers the kind from the shape of the argument', async () => {
+        // The kind used to be INFERRED: an object with a `mode` or a `prompt`
+        // key was read as options, and anything else as a graph. So a ComfyUI
+        // graph in API format - whose top-level key IS `prompt` - was
+        // compiled as generator options and rejected by the option schema.
+        //
+        // A request that states no kind takes the strict path instead.
+        postMock.mockResolvedValue({ ok: true });
+
+        await generateApi.workflow({ prompt: 'a cat', mode: 't2i' });
+
+        const body = postMock.mock.calls[0][1];
+        expect(body.kind).toBe('graph');
+        expect(body.workflow).toEqual({ prompt: 'a cat', mode: 't2i' });
+        expect(body.options).toBeUndefined();
     });
 
 });

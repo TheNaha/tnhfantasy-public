@@ -95,8 +95,8 @@ class ModelServiceV2:
 
         A plain `def`, not a decorative `async def`, because it is a
         synchronous query chain and the caller is expected to hoist it into
-        `asyncio.to_thread` — see `get_models_grouped` above for why that
-        distinction is worth making here rather than annotating it.
+        `asyncio.to_thread` — that distinction is worth making here rather
+        than annotating it.
 
         `ids` bypasses the page query for a sort the database cannot express: the
         caller supplies the ids it wants, already ordered and sliced, and this
@@ -121,24 +121,12 @@ class ModelServiceV2:
         total = self.repo.count_models_by_directory(directory, **filters)
         return self.repo.models_to_dict(models, include_versions=True), total
 
-    def get_models_grouped(self) -> dict[str, list[dict[str, Any]]]:
-        """Get all models grouped by directory.
-
-        Synchronous on purpose. This was `async def` around one synchronous
-        SQLModel query, so every caller awaited a function that never yielded —
-        which read as "off the loop" and was not. Its only caller is
-        `GET /api/v2/models/`, the 1.5 MB listing that measured flat at 778 ms
-        per request from concurrency 1 to 16: fully serialised behind the event
-        loop, because the query really did run there.
-        """
-        return self.repo.get_grouped_by_directory()
-
     async def delete_model(self, model_id: int) -> bool:
         """Delete a model and all related data, including from providers."""
         model = self.repo.get_model(model_id)
         if not model:
             raise NotFoundError("Model", str(model_id))
-            
+
         for f in self.repo.get_files_for_model(model_id):
             storage_path = f"models/{model.directory}/{f.storage_filename}"
             self.repo.add_tombstone(storage_path)
@@ -146,7 +134,32 @@ class ModelServiceV2:
         # Trigger deletion from all providers BEFORE removing from DB
         await self.downloader.trigger_delete_from_providers(model_id)
 
-        return self.repo.delete_model(model_id)
+        deleted = self.repo.delete_model(model_id)
+
+        # The answer "is this model available?" just changed.
+        #
+        # The availability caches have a 30 s TTL, and the only thing that
+        # cleared them was a provider being enabled or disabled. So a
+        # DELETED checkpoint stayed selectable - and stayed in the
+        # generation path - for up to half a minute after it was gone, and
+        # the user got "Missing Models" from ComfyUI instead of the model
+        # simply not being there any more.
+        if deleted:
+            self.invalidate_availability_caches()
+        return deleted
+
+    @staticmethod
+    def invalidate_availability_caches() -> None:
+        """Clear the model-availability caches.
+
+        Both of them: the load balancer's routing memo and the availability
+        service's own TTL cache. `LoadBalancer.invalidate_model_availability_cache`
+        is the one entry point that clears both, and it is the one every
+        writer goes through.
+        """
+        from services.load_balancer import LoadBalancer
+
+        LoadBalancer.invalidate_model_availability_cache()
 
     async def check_and_trigger_dependencies(
         self, 
@@ -216,6 +229,11 @@ class ModelServiceV2:
         """Toggle whether a version is enabled."""
         version = self.repo.toggle_version_enabled(version_id)
         if version:
+            # A disabled version is no longer eligible for generation, and an
+            # enabled one is. The availability caches have a 30 s TTL and the
+            # only thing that cleared them was a provider being toggled - so
+            # the answer the generator reads was stale either way.
+            self.invalidate_availability_caches()
             return self.repo._version_to_dict(version)
         return None
 
@@ -296,10 +314,6 @@ class ModelServiceV2:
     def get_pending_downloads(self, provider_id: str) -> list[dict[str, Any]]:
         """Get pending downloads for a specific provider."""
         return self.reconciliation.get_pending_downloads(provider_id)
-
-    def get_full_cache(self) -> dict[str, list[dict[str, Any]]]:
-        """Get all model metadata for reconciliation (sync method for worker)."""
-        return self.reconciliation.get_full_cache()
 
     # =========================================================================
     # SEARCH OPERATIONS

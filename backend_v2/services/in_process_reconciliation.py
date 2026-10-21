@@ -50,6 +50,22 @@ _PREVIOUS_ORPHANS: dict[str, set[str]] = {}
 _BULK_WRITE_CHUNK = 500
 
 
+
+def _write_provider_status(model_service, **kwargs) -> None:
+    """Write a provider file status AND invalidate the availability caches.
+
+    `ModelDownloader.update_provider_file_status` is the writer that
+    invalidates - it is the one that makes a newly-ready model eligible for
+    generation. The reconciler bypassed it by calling
+    `model_service.repo.update_provider_status` directly, so a model the
+    reconciler had just marked `ready` stayed ineligible for the
+    availability check for up to the 30 s TTL - on the exact path that
+    exists to make it servable.
+    """
+    model_service.repo.update_provider_status(**kwargs)
+    model_service.invalidate_availability_caches()
+
+
 def _delete_orphans_enabled() -> bool:
     return os.getenv("RECONCILIATION_DELETE_ORPHANS", "false").strip().lower() in ("true", "1", "yes")
 
@@ -458,7 +474,7 @@ async def _run_reconciliation(
                         file_id = path_to_id.get(storage_path) or path_to_id.get(norm_sp)
                         if file_id is None:
                             continue
-                        model_service.repo.update_provider_status(
+                        _write_provider_status(model_service, 
                             file_id=file_id,
                             provider_id=provider_id,
                             status="pending",
@@ -491,7 +507,7 @@ async def _run_reconciliation(
                         file_id = item.get("file_id") or path_to_id.get(sp) or path_to_id.get(norm_sp)
                         if file_id is None:
                             continue
-                        model_service.repo.update_provider_status(
+                        _write_provider_status(model_service, 
                             file_id=file_id,
                             provider_id=provider_id,
                             status="ready",
@@ -628,7 +644,7 @@ async def _run_reconciliation(
                     )
 
                     def _mark_downloading() -> None:
-                        model_service.repo.update_provider_status(
+                        _write_provider_status(model_service, 
                             file_id=file_id,
                             provider_id=provider_id,
                             status="downloading",
@@ -643,7 +659,7 @@ async def _run_reconciliation(
                         stats["downloads_completed"] += 1
 
                         def _mark_ready() -> None:
-                            model_service.repo.update_provider_status(
+                            _write_provider_status(model_service, 
                                 file_id=file_id,
                                 provider_id=provider_id,
                                 status="ready",
@@ -685,7 +701,7 @@ async def _run_reconciliation(
                         # name on block exit, so a closure over it would be a
                         # late-binding landmine if the thread hop outlived it.
                         def _mark_failed(_err: str = str(exc)) -> None:
-                            model_service.repo.update_provider_status(
+                            _write_provider_status(model_service, 
                                 file_id=file_id,
                                 provider_id=provider_id,
                                 status="failed",

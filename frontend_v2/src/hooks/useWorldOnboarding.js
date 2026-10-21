@@ -2,9 +2,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 import { QUERY_KEYS, buildQueryKey } from '../constants/queryKeys';
 import { invalidateVaultAggregates } from './useWorldVaultResource';
-import { CHAT_LIST_KEY } from './useChats';
-
-const CHAT_DETAIL_KEY = (id) => buildQueryKey(QUERY_KEYS.CHATS, 'detail', id);
+import { CHAT_LIST_KEY, CHAT_DETAIL_KEY } from './useChats';
 
 export const useAnalyzeCardOnboarding = () => {
     return useMutation({

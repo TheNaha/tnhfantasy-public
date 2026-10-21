@@ -122,4 +122,5 @@ MODEL_DIRECTORIES = [
     "models/ultralytics/seg",
     "models/motion_modules",
     "models/clip_vision",
+    "models/ipadapter",
 ]

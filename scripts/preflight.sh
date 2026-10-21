@@ -119,7 +119,12 @@ echo "==> Network exposure"
 # while reading `.env` alone still reported 100.150.0.4 and downgraded to a note —
 # i.e. exactly the condition this check exists to catch was unreachable when set
 # the way an operator would actually set it.
-frontend_bind=${COMFY_FRONTEND_BIND:-$(grep -E "^COMFY_FRONTEND_BIND=" .env 2>/dev/null | head -1 | cut -d= -f2-)}
+# `tail -1`, not `head -1`: dotenv and compose take the LAST assignment of a
+# duplicated key, and this file sets COMFY_FRONTEND_BIND twice (the VPN
+# address first, the loopback address last). Reading the FIRST one reported
+# the opposite of the live bind on the one thing this check exists to warn
+# about.
+frontend_bind=${COMFY_FRONTEND_BIND:-$(grep -E "^COMFY_FRONTEND_BIND=" .env 2>/dev/null | tail -1 | cut -d= -f2-)}
 # 127.0.0.2 is the compose default for the second binding. The whole of
 # 127.0.0.0/8 is loopback and unroutable, so it is a safe default rather than a
 # wildcard — see the comment in docker-compose.yml.
@@ -189,8 +194,15 @@ else
   # Counted with a JSON parse, not a grep: the list response nests an `enabled`
   # and several `id`s per provider (runtime_state, capabilities), so a grep count
   # reads 10 disabled "of 6".
-  counts=$(printf '%s' "$providers_json" | python3 -c '
-import json, sys
+  # The LLM-capable providers come from the route that exists for exactly
+  # this question. The two payloads are merged into one object so the parser
+  # reads them from a single stdin.
+  llm_providers_json=$(
+    docker compose exec -T "$BACKEND_SVC" \
+      curl -sf --max-time 3 localhost:8002/api/v2/llm/providers 2>/dev/null
+  )
+  counts=$(printf '%s' "$providers_json" | LLM_PROVIDERS_JSON="$llm_providers_json" python3 -c '
+import json, os, sys
 try:
     body = json.load(sys.stdin)
 except Exception:
@@ -205,12 +217,40 @@ off = sum(1 for r in rows if isinstance(r, dict) and r.get("enabled") is False)
 # providers are switched off" and leaves the operator to work out which.
 # `/api/v2/llm/available-models` is the route the chat composer actually calls,
 # so its emptiness is the honest signal.
-llm_enabled = sum(
-    1 for r in rows
-    if isinstance(r, dict)
-    and r.get("enabled") is not False
-    and (r.get("worker_type") == "llm" or str(r.get("type", "")).startswith(("openai", "anthropic", "google", "ollama", "vllm", "modal_llm")))
-)
+# The LLM-capable providers come from the route that exists for exactly
+# this question - `/api/v2/llm/providers` - and NOT from pattern-matching
+# the generic provider list.
+#
+# The pattern match was wrong about the live stack: it recognised
+# `worker_type == "llm"` and a `type` starting with openai/anthropic/
+# google/ollama/vllm/modal_llm, but the live LLM provider is
+# `remote_hybrid` with `worker_type: hybrid` - it serves images AND chat
+# from one rig. So the count was 0, preflight said "NO ENABLED LLM
+# PROVIDER - every chat turn will fail", and exited 1 - on a stack whose
+# chat path is live (`/api/v2/llm/available-models` answers with a model).
+#
+# The fallback below is only used when the route is unreachable.
+llm_rows = []
+try:
+    llm_body = json.loads(os.environ.get("LLM_PROVIDERS_JSON") or "null")
+except Exception:
+    llm_body = None
+if isinstance(llm_body, dict):
+    llm_rows = llm_body.get("providers") or []
+elif isinstance(llm_body, list):
+    llm_rows = llm_body
+if llm_rows:
+    llm_enabled = sum(
+        1 for r in llm_rows
+        if isinstance(r, dict) and r.get("enabled") is not False
+    )
+else:
+    llm_enabled = sum(
+        1 for r in rows
+        if isinstance(r, dict)
+        and r.get("enabled") is not False
+        and (r.get("worker_type") == "llm" or str(r.get("type", "")).startswith(("openai", "anthropic", "google", "ollama", "vllm", "modal_llm")))
+    )
 models = None
 print(f"{off} {len(rows)} {llm_enabled}")
 ')

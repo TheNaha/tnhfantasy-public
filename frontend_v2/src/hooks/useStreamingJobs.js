@@ -117,6 +117,43 @@ export function getStreamingJob(queryClient, jobId) {
 }
 
 /**
+ * Every streaming job that is still in flight, as `{ jobId, chatId }`.
+ *
+ * The two namespaces are `['streaming', jobId]` (the per-job payload) and
+ * `['streaming', 'active', chatId]` (the per-chat list). A caller that wants
+ * "the jobs I am still waiting on" has to read both.
+ *
+ * This exists because the stall watchdog used to read a THIRD key,
+ * `['streaming', 'jobs']`, that nothing ever writes. It therefore always
+ * found an empty list, never cleared a stalled reply, and the "X is
+ * thinking…" bubble survived until a page reload.
+ */
+export function getInFlightStreamingJobs(queryClient) {
+    if (!queryClient) return [];
+    const out = [];
+    const seen = new Set();
+    for (const query of queryClient.getQueryCache().findAll({ queryKey: ['streaming'] })) {
+        const key = query.queryKey;
+        const data = query.state?.data;
+        if (key[1] === 'active') {
+            const chatId = key[2];
+            for (const entry of Array.isArray(data) ? data : []) {
+                const jobId = entry?._jobId;
+                if (!jobId || seen.has(jobId)) continue;
+                seen.add(jobId);
+                out.push({ jobId, chatId: entry.chatId || chatId });
+            }
+            continue;
+        }
+        const jobId = key[1];
+        if (!jobId || seen.has(jobId)) continue;
+        seen.add(jobId);
+        out.push({ jobId, chatId: data?.chatId || null });
+    }
+    return out;
+}
+
+/**
  * Reactive subscription to the active streaming jobs for a given chat.
  * Returns a stable-shaped array; consumers map it once via useMemo.
  */

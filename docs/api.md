@@ -16,16 +16,27 @@ TNHComfy exposes REST and WebSocket APIs for job lifecycle, model management, pr
 
 ## Base URL
 
-The backend has **no host port**. `http://localhost:8002` answers `000`, and
-that is the security boundary rather than a missing service — a published
-`0.0.0.0:8002` exposed the entire unauthenticated API to anything that could
-route to the host, which is how a probe deleted all job history on 2026-10-01.
+The backend is **published on two host addresses, and neither is a wildcard**:
+`127.0.0.1:8002` (loopback) and `${COMFY_BACKEND_BIND:-100.150.0.4}:8002` — the
+operator's own VPN/LAN address, which is a NetBird address on this host.
+
+> This paragraph used to say "the backend has **no host port**" and that
+> `http://localhost:8002` answers `000`. That was false as of `7a1f1e93`, which
+> added the two publishes above, and the doc kept asserting the opposite for
+> days. A document that describes a port that is not there is worse than no
+> document: it sends the reader looking for a missing service, and it hides a
+> real exposure. The *intent* was always right — never publish `0.0.0.0` — and
+> it is still enforced: a bare `8002:8002` publishes the entire
+> unauthenticated API on every interface the host has, which is how a probe
+> deleted 154 rows of job history on 2026-10-01. The publishes are named
+> addresses, not wildcards. Verify with `docker compose ps`.
 
 Reach it one of these ways:
 
 | context | base URL |
 |---|---|
 | browser, through the frontend | `/api` on the frontend's own origin (`http://localhost:5174`, or `https://comfy.lan.thenaha.my.id`) — the Vite/Nginx frontend proxies `/api` to the backend in-process |
+| a shell on the host | `http://127.0.0.1:8002`, or `http://${COMFY_BACKEND_BIND}:8002` |
 | a shell inside the container | `http://localhost:8002` from `docker compose exec backend_v2`, or from any container on the `tnhcomfy` network |
 | a dedicated API hostname | `https://comfy-backend.lan.thenaha.my.id` (Traefik router `comfyui-api`, on the external `proxy` Docker network) |
 
@@ -77,8 +88,6 @@ Behavior:
 
 ### Models V2 (`/api/v2/models`)
 
-- `GET /api/v2/models`: Grouped model listing.
-- `GET /api/v2/models/all`: Flat model listing.
 - `POST /api/v2/models`: Import a model/version selection.
 - `PUT /api/v2/models/{model_id}/default-version`: Set model default version.
 - `DELETE /api/v2/models/{model_id}`: Delete model and associated status rows.
@@ -298,7 +307,10 @@ TTS voices. Synthesis and voice design are `task_type="tts"` jobs routed to the 
 - `DELETE /api/v2/voices/{voice_id}` — Delete a voice.
 - `POST /api/v2/voices/{voice_id}/preview` — Get a voice preview clip.
 - `POST /api/v2/voices/design` — Generate new voice designs (enqueues a TTS job).
-- `POST /api/v2/voices/speak` — Synthesise speech with a voice (enqueues a TTS job).
+
+  There is no `POST /api/v2/voices/speak`. It duplicated
+  `POST /api/v2/voices/{voice_id}/preview`, which is the route the frontend
+  calls, and it was removed on 2026-10-21.
 
 ### Timeline (`/api/v2/timeline`)
 
@@ -313,9 +325,15 @@ TTS voices. Synthesis and voice design are `task_type="tts"` jobs routed to the 
   `tests/test_e2e_endpoint_contract.py` now checks every endpoint the specs
   request against the real route table.
 
-### Gallery (`/api/v2/gallery`)
+### Gallery
 
-- `GET /api/v2/gallery` — The v2 gallery index. The paginated, filterable, DB-backed listing is `GET /api/v2/assets`; this is the gallery-shaped view over it.
+There is no `GET /api/v2/gallery`. It was a second URL for the gallery
+listing — byte-identical to `GET /api/files`, which the frontend calls — and
+it existed for exactly one reason: it called the gallery route handler as a
+plain Python call, so FastAPI never resolved the callee's
+`Query(..., ge=1, le=MAX_BATCH_ITEMS)` default and `?limit=100000000`
+materialised the whole assets table. The alias was removed on 2026-10-21; the
+paginated, filterable, DB-backed listing is `GET /api/v2/assets`.
 
 ## Files & Media
 
@@ -339,16 +357,11 @@ Real-time job lifecycle, downloads, reconciliation, and provider status (replace
 - `PUT /api/v2/providers/{id}`: Update provider config/credentials.
 - `PATCH /api/v2/providers/{id}`: Update provider (alias for PUT).
 - `DELETE /api/v2/providers/{id}`: Remove provider.
-- `GET /api/v2/providers/load-balancing`: Current load-balancer strategy (alias).
-- `PUT /api/v2/providers/load-balancing`: Update load-balancer strategy (alias).
 - `GET /api/v2/providers/config/load-balancing`: Current load-balancer configuration with stats.
 - `PUT /api/v2/providers/config/load-balancing`: Update load-balancer configuration.
-- `GET /api/v2/providers/load-balancer/stats`: Load-balancer statistics.
 - `POST /api/v2/providers/{id}/reconcile`: Trigger model sync for a provider.
 - `GET /api/v2/providers/{id}/reconciliation-status`: Get reconciliation status for a provider.
 - `POST /api/v2/providers/{id}/reconciliation-event`: Trigger a reconciliation event.
-- `GET /api/v2/providers/status-cards`: Canonical status payloads for all providers.
-- `GET /api/v2/providers/{id}/status-card`: Status payload for a single provider.
 - `GET /api/v2/providers/{id}/modal-stats`: Provider storage/model counts (cached 30s).
 - `GET /api/v2/providers/{id}/sync-status`: V2-backed sync counts for a provider.
 - `GET /api/v2/providers/{id}/models`: Provider models grouped by directory.
@@ -458,13 +471,15 @@ exposed `/live` and the compose healthcheck used `/api/ready`. The provider
 
 <!-- Generated by scripts/generate_api_docs.py. Do not edit by hand. -->
 
-The live surface is **291 paths / 379 operations**. Everything below is
+The live surface is **286 paths / 374 operations**. Everything below is
 derived from `app.openapi()`, so it cannot name a route that does not exist.
 
 ### Characters
 
 - `GET`, `POST` `/api/v2/characters`
 - `POST` `/api/v2/characters/import`
+- `POST` `/api/v2/characters/import/analyze`
+- `POST` `/api/v2/characters/import/commit`
 - `POST` `/api/v2/characters/reorder`
 - `GET`, `PUT`, `PATCH`, `DELETE` `/api/v2/characters/{character_id}`
 - `GET`, `POST` `/api/v2/characters/{character_id}/avatar`
@@ -618,10 +633,6 @@ derived from `app.openapi()`, so it cannot name a route that does not exist.
 - `GET`, `PUT`, `DELETE` `/api/v2/collections/{collection_id}`
 - `POST`, `DELETE` `/api/v2/collections/{collection_id}/images`
 
-### Gallery
-
-- `GET` `/api/v2/gallery`
-
 ### Assets
 
 - `GET` `/api/v2/assets`
@@ -634,8 +645,7 @@ derived from `app.openapi()`, so it cannot name a route that does not exist.
 
 ### Models
 
-- `GET`, `POST` `/api/v2/models/`
-- `GET` `/api/v2/models/all`
+- `POST` `/api/v2/models/`
 - `POST` `/api/v2/models/autopopulate-all`
 - `POST` `/api/v2/models/autopopulate-candidates/batch`
 - `GET` `/api/v2/models/autopopulate-pending`
@@ -676,14 +686,9 @@ derived from `app.openapi()`, so it cannot name a route that does not exist.
 - `GET`, `PUT` `/api/v2/providers/config/load-balancing`
 - `POST` `/api/v2/providers/deploy`
 - `GET` `/api/v2/providers/deploy/targets`
-- `GET` `/api/v2/providers/load-balancer/stats`
-- `GET`, `PUT` `/api/v2/providers/load-balancing`
-- `GET` `/api/v2/providers/model-cache`
-- `GET` `/api/v2/providers/model-cache/{directory}`
 - `POST` `/api/v2/providers/models/custom`
 - `GET` `/api/v2/providers/schemas`
 - `POST` `/api/v2/providers/state/cleanup`
-- `GET` `/api/v2/providers/status-cards`
 - `POST` `/api/v2/providers/test-connection`
 - `GET`, `PUT`, `PATCH`, `DELETE` `/api/v2/providers/{provider_id}`
 - `GET`, `PUT` `/api/v2/providers/{provider_id}/credentials`
@@ -701,7 +706,6 @@ derived from `app.openapi()`, so it cannot name a route that does not exist.
 - `POST` `/api/v2/providers/{provider_id}/reconciliation-event`
 - `GET` `/api/v2/providers/{provider_id}/reconciliation-status`
 - `POST` `/api/v2/providers/{provider_id}/setup`
-- `GET` `/api/v2/providers/{provider_id}/status-card`
 - `GET` `/api/v2/providers/{provider_id}/sync-status`
 - `POST` `/api/v2/providers/{provider_id}/test`
 - `POST`, `DELETE` `/api/v2/providers/{provider_id}/worker-token`
@@ -710,7 +714,6 @@ derived from `app.openapi()`, so it cannot name a route that does not exist.
 
 - `GET`, `POST` `/api/v2/voices`
 - `POST` `/api/v2/voices/design`
-- `POST` `/api/v2/voices/speak`
 - `GET`, `PUT`, `PATCH`, `DELETE` `/api/v2/voices/{voice_id}`
 - `POST` `/api/v2/voices/{voice_id}/preview`
 
@@ -757,16 +760,8 @@ derived from `app.openapi()`, so it cannot name a route that does not exist.
 - `GET` `/api/settings/schema`
 - `GET`, `POST` `/api/settings/session`
 - `GET`, `PUT` `/api/settings/system-prompts`
-- `GET` `/api/settings/system-prompts/library` — The user's own system-prompt blocks.
-- `POST` `/api/settings/system-prompts/library` — Add one. Body: `{key, label, category, prompt}`.
-- `PUT` `/api/settings/system-prompts/library/{key}` — Edit one.
-- `DELETE` `/api/settings/system-prompts/library/{key}` — Remove one.
-
-The built-in `system_prompts` blocks are a fixed set the code looks up by
-name, so they could not grow and could not be removed. The library is a list,
-so it can be both. Its entries are merged into the blocks the rest of the
-system resolves, so a prompt of your own is usable by key everywhere a
-built-in one is. A library key may not collide with a built-in one.
+- `GET`, `POST` `/api/settings/system-prompts/library`
+- `PUT`, `DELETE` `/api/settings/system-prompts/library/{key}`
 
 ### Statistics
 
@@ -793,6 +788,7 @@ built-in one is. A library key may not collide with a built-in one.
 
 ### Nodes
 
+- `GET` `/api/nodes/capabilities`
 - `GET` `/api/nodes/object_info`
 
 ### Upload
@@ -837,8 +833,6 @@ built-in one is. A library key may not collide with a built-in one.
 - `GET`, `PUT`, `DELETE` `/api/v2/personas/{persona_id}`
 - `GET` `/api/v2/tags`
 - `GET` `/api/view/{path}`
-- `GET` `/api/workers/connected`
-- `GET` `/api/workers/{provider_id}/status`
 - `GET` `/metrics`
 
 <!-- END GENERATED ROUTE INDEX -->

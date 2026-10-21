@@ -289,57 +289,7 @@ async def design_voices(
     )
 
 
-class VoiceSpeakRequest(BaseModel):
-    text: str
-    voice_id: str | None = None
-    voice_profile: str | None = None
-    language: str | None = None
-
-
-@router.post("/speak")
-async def speak(
-    req: VoiceSpeakRequest,
-    session: Session = Depends(get_session),
-    voice_model_repo: VoiceModelRepository = Depends(get_voice_model_repo),
-):
-    """Speak text in an existing voice.
-
-    NOT what narration uses, whatever this docstring used to say. Chat and
-    chapter narration build their own `build_voice_speak_workflow` graph inline
-    so the output path carries the chat/chapter ids (`chats.py`,
-    `stories.py`); this endpoint is a standalone voice audition. There is no
-    frontend caller, and it exists for API users and tests.
-    """
-    from services.tts_workflow_builder import _require_tts_capable, build_voice_speak_workflow
-
-    _require_tts_capable(session)
-
-    if not (req.text or "").strip():
-        raise ValidationError("Provide text to speak")
-
-    profile = req.voice_profile
-    language = req.language
-    voice = None
-    if req.voice_id:
-        voice = voice_model_repo.get(req.voice_id)
-        if not voice:
-            raise NotFoundError("VoiceModel", req.voice_id)
-        # The stored profile wins over the request, so one voice has one voice.
-        profile = voice.voice_profile or profile
-        language = voice.language or language
-
-    try:
-        workflow, metadata = build_voice_speak_workflow(
-            req.text,
-            voice_profile=profile,
-            language=language,
-        )
-    except ValueError as exc:
-        raise ValidationError(str(exc)) from exc
-    if voice is not None:
-        metadata["voice_model_id"] = voice.id
-        if voice.character_id:
-            metadata["character_id"] = voice.character_id
-
-    job = await submit_tts_job(session, workflow, metadata)
-    return {"job_id": job.id, "voice_id": voice.id if voice else None}
+# `POST /api/v2/voices/speak` is GONE (2026-10-21).
+#
+# It duplicated `POST /api/v2/voices/{voice_id}/preview`, which is the one the
+# frontend calls. `VoiceSpeakRequest` went with it: nothing else referenced it.

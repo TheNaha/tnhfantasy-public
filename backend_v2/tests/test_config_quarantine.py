@@ -85,23 +85,26 @@ def test_the_quarantine_does_not_touch_the_rest_of_the_directory(tmp_path):
     ]
 
 
-def test_the_test_suites_restore_is_atomic():
-    """The restore is the other half of the fix.
+def test_no_test_writes_the_live_config():
+    """The suite redirects every config write to a temp copy.
 
-    `Path.write_bytes` truncates and then writes, so the file is empty in
-    between. The restore has to be a rename.
+    `_isolate_config_file` (tests/conftest.py) points `config._config_path`
+    at a private copy of the operator's `backend_v2/config.json` for every
+    test, and restores it on the way out. So `PUT /api/settings`,
+    `POST /api/settings/reset` and `update_config(persist=True)` can never
+    truncate, half-write or replace the live file - and no per-file restore
+    fixture races with the parallel workers any more.
+
+    That is the whole fix for the defect that rewrote this repository's own
+    config.json while the suite ran.
     """
     from pathlib import Path
 
-    for name in ("test_settings_route.py", "test_system_prompt_library.py"):
-        source = Path(__file__).resolve().parent / name
-        text = source.read_text(encoding="utf-8")
-        assert "write_bytes(original)" not in text, (
-            f"{name} restores the config with a truncating write"
-        )
-        assert "os.replace(tmp_path, config_path)" in text, (
-            f"{name} does not restore the config atomically"
-        )
+    source = Path(__file__).resolve().parent / "conftest.py"
+    text = source.read_text(encoding="utf-8")
+    assert "_isolate_config_file" in text
+    assert "cfg._config_path = str(target)" in text
+    assert "cfg._config_path = original_path" in text
 
 
 def test_the_config_write_is_atomic_too(tmp_path):

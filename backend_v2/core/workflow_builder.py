@@ -29,6 +29,7 @@ from config import DEFAULT_CHECKPOINT, settings  # noqa: E402,F401
 # imports it. The names are re-exported here because the builder's callers
 # have always imported them from here.
 from infrastructure.logging import get_logger
+from core.exceptions import ValidationError
 from core.workflow_postprocess import (  # noqa: F401
     embedding_file_exists as _embedding_file_exists,
     expand_prompt_shortcuts,
@@ -82,7 +83,14 @@ class GeneratorOptions(BaseModel):
     batchSize: int = 1
     
     # Models
-    checkpoint: str = ""
+    #
+    # `checkpoint` is Optional because the client sends it as `null` for a
+    # UNET model - the model lives in `models/unet/`, not in
+    # `models/checkpoints/`, so there is no checkpoint to name. It was
+    # declared as a bare `str` while its four siblings below were
+    # `str | None`, and that asymmetry made every Flux and AuraFlow request
+    # fail pydantic validation before a job was ever created.
+    checkpoint: str | None = None
     unet: str | None = None
     clip: str | None = None
     clip2: str | None = None
@@ -365,8 +373,27 @@ class WorkflowBuilder:
         return [face_detailer, 0]
 
     def load_models(self, options: GeneratorOptions):
-        if options.unet and options.clip:
-            # Split Loader Mode (Flux, SD3, AuraFlow)
+        if options.unet:
+            # Split Loader Mode (Flux, SD3, AuraFlow).
+            #
+            # The branch is keyed on the UNET ALONE. It used to require
+            # `unet AND clip`, so a UNET selected without its text encoder
+            # fell through to the checkpoint branch and produced
+            # `CheckpointLoaderSimple{ckpt_name: null}` - a graph ComfyUI
+            # rejects at prompt validation with nothing pointing at the
+            # field that was wrong.
+            if not options.clip:
+                raise ValidationError(
+                    "A UNET model needs its text encoder: select the CLIP "
+                    "that goes with it, or choose a checkpoint model instead.",
+                    field="clip",
+                )
+            if options.modelType == "flux" and not options.clip2:
+                raise ValidationError(
+                    "A Flux model needs both of its text encoders: select "
+                    "the second CLIP as well.",
+                    field="clip2",
+                )
             current_model = [self.add_node("UNETLoader", {
                 "unet_name": options.unet,
                 "weight_dtype": "default"
@@ -400,7 +427,7 @@ class WorkflowBuilder:
         else:
             # Standard Checkpoint Loader
             checkpoint_loader = self.add_node("CheckpointLoaderSimple", {
-                "ckpt_name": options.checkpoint
+                "ckpt_name": options.checkpoint or ""
             })
             current_model = [checkpoint_loader, 0]
             current_clip = [checkpoint_loader, 1]
@@ -438,8 +465,14 @@ class WorkflowBuilder:
             else:
                 current_model = self.apply_pag(current_model, options.pagScale)
 
-        current_model = self.apply_ip_adapters(current_model, options.ipAdapters)
-
+        # The IPAdapter chain needs three node classes the provider may not
+        # have. The builder used to emit them regardless, so a provider
+        # without the IPAdapter pack failed at dispatch with "node type not
+        # found" - after the user had picked the adapter and waited.
+        if options.ipAdapters and self._supports("ipadapter") is False:
+            self._warn_unsupported("ipadapter", "IPAdapter")
+        else:
+            current_model = self.apply_ip_adapters(current_model, options.ipAdapters)
         # CLIP Encoding — expand prompt shortcuts and validate embedding
         # references before the text reaches ComfyUI.
         #
@@ -460,7 +493,14 @@ class WorkflowBuilder:
             "clip": current_clip
         }), 0]
 
-        positive_cond = self.apply_controlnets(positive_cond, options.controlnets)
+        # The ControlNet pack is not every provider's. The builder used to
+        # emit `ControlNetLoader` / `ControlNetApply` regardless, so a
+        # provider without the pack failed at dispatch with "node type not
+        # found" - after the user had picked the ControlNet and waited.
+        if options.controlnets and self._supports("controlnet") is False:
+            self._warn_unsupported("controlnet", "ControlNet")
+        else:
+            positive_cond = self.apply_controlnets(positive_cond, options.controlnets)
 
         # Latent Setup based on mode
         if mode == 't2i':

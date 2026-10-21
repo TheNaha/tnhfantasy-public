@@ -102,7 +102,6 @@ CONVERTED = {
     ("settings.py", "get_system_prompts"),
     ("settings.py", "get_session_status"),
     ("settings.py", "start_session"),
-    ("worker_ws.py", "list_connected_workers"),
     ("jobs.py", "validate_workflow"),
     # 2026-10-03 resolver fix. `ModelServiceV2.get_model` is now a plain `def`
     # (one repository read, no suspension), so `GET /api/v2/models/{id}` had
@@ -452,7 +451,6 @@ def test_every_searched_directory_exists_and_is_indexed():
 # `ModelCivitaiSyncService.search_candidates`, ...), which is the same
 # vacuous-entry failure the two route-name guards exist for, one level down.
 SYNC_CHAINED = {
-    "list_all_models": "ModelServiceV2.list_models — one bulk query, no await of its own",
     "list_models_by_directory": (
         "ModelServiceV2.list_models_by_directory — one bulk query, no await of its own"
     ),
@@ -481,15 +479,6 @@ SYNC_CHAINED = {
         "this route's only await is the stats query"
     ),
     "update_load_balancing_config": "ProviderService.update_load_balancing_config — same shape",
-    "get_load_balancer_stats": "ProviderService.get_load_balancer_stats — same shape",
-    "get_load_balancing_alias": (
-        "ProviderService.get_load_balancer_stats — reaches it through the "
-        "get_load_balancing_config route handler"
-    ),
-    "update_load_balancing_alias": (
-        "ProviderService.update_load_balancing_config — reaches it through the "
-        "update_load_balancing_config route handler"
-    ),
     "mint_provider_worker_token": "ProviderService.mint_worker_token — same shape",
     "revoke_provider_worker_token": "ProviderService.revoke_worker_token — same shape",
     "get_provider_modal_stats": (
@@ -531,13 +520,6 @@ SYNC_CHAINED = {
     ),
     "search_huggingface": (
         "ExternalModelService.search_huggingface — provider HTTP, needs a real await"
-    ),
-    # Not a defect either. One dict lookup under an uncontended
-    # asyncio.Lock in infrastructure/worker_registry._get_live_worker.
-    "get_worker_status": (
-        "worker_registry._get_live_worker — one dict lookup plus an "
-        "asyncio.Lock acquire that does not yield on an uncontended lock. "
-        "Allowlisted rather than converted because there is no work to move."
     ),
 }
 

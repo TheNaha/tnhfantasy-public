@@ -62,18 +62,17 @@ class TestProvidersBasic:
 
 
 class TestProvidersModelCache:
+    """`GET /api/v2/providers/model-cache` and `.../model-cache/{directory}`
+    served the same 1.5 MB model dump as two other routes, byte-identically,
+    and nothing called them. They are gone."""
+
     def test_get_model_cache(self, client):
         response = client.get("/api/v2/providers/model-cache")
-        assert response.status_code == 200
+        assert response.status_code in (404, 405)
 
     def test_get_model_cache_by_directory(self, client):
         response = client.get("/api/v2/providers/model-cache/checkpoints")
-        assert response.status_code == 200
-
-    def test_model_cache_structure(self, client):
-        response = client.get("/api/v2/providers/model-cache")
-        data = response.json()
-        assert "models" in data
+        assert response.status_code in (404, 405)
 
 
 class TestProvidersLoadBalancing:
@@ -86,18 +85,20 @@ class TestProvidersLoadBalancing:
         response = client.put("/api/v2/providers/config/load-balancing", json=payload)
         assert response.status_code == 200
 
-    def test_get_load_balancer_stats(self, client):
+    def test_load_balancer_stats_alias_is_gone(self, client):
+        """The alias had no caller; the canonical config route carries the
+        stats in its `stats` key."""
         response = client.get("/api/v2/providers/load-balancer/stats")
-        assert response.status_code == 200
+        assert response.status_code in (404, 405)
 
-    def test_get_load_balancing(self, client):
+    def test_get_load_balancing_alias_is_gone(self, client):
         response = client.get("/api/v2/providers/load-balancing")
-        assert response.status_code == 200
+        assert response.status_code in (404, 405)
 
-    def test_put_load_balancing(self, client):
+    def test_put_load_balancing_alias_is_gone(self, client):
         payload = {"strategy": "priority"}
         response = client.put("/api/v2/providers/load-balancing", json=payload)
-        assert response.status_code == 200
+        assert response.status_code in (404, 405)
 
 
 class TestProvidersContainers:

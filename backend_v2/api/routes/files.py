@@ -1289,34 +1289,16 @@ async def move_asset(asset_id: str, body: MoveAssetRequest):
     return await asyncio.to_thread(_move_asset_sync, asset_id, body)
 
 
-@router.get("/api/v2/gallery")
-async def get_v2_gallery(
-    # These need their own bounds, not `list_files_endpoint`'s. Calling a route
-    # function as a plain Python call means FastAPI never resolves the callee's
-    # `Query(..., ge=1, le=MAX_BATCH_ITEMS)` default, so `?limit=100000000`
-    # reached `_query_gallery_files` and materialised the whole assets table —
-    # including the ~70 MB `metadata_` jsonb — in a single response, and a
-    # negative offset made Postgres raise, reported as a 503.
-    limit: int = Query(20, ge=1, le=MAX_BATCH_ITEMS),
-    offset: int = Query(0, ge=0),
-    sort: str = "date_desc", 
-    search: str | None = _bounded_search(),
-    workspace: str | None = None,
-    character_id: str | None = None,
-    story_id: str | None = None,
-    model_service = Depends(get_model_service_v2)
-):
-    return await list_files_endpoint(
-        directory="output",
-        limit=limit,
-        offset=offset,
-        sort=sort,
-        search=search,
-        workspace=workspace,
-        character_id=character_id,
-        story_id=story_id,
-        model_service=model_service
-    )
+# `GET /api/v2/gallery` is GONE (2026-10-21).
+#
+# It was a byte-identical second URL for the gallery listing — the frontend
+# calls `GET /api/files?directory=output` (`frontend_v2/src/api/files.js`) —
+# and it existed for exactly one reason: it called `list_files_endpoint` as a
+# plain Python call, so FastAPI never resolved the callee's
+# `Query(..., ge=1, le=MAX_BATCH_ITEMS)` default and `?limit=100000000`
+# materialised the whole assets table. The route that remains declares its own
+# bounds, so the hole is closed with the alias.
+
 
 @router.get("/api/files")
 async def list_files_endpoint(

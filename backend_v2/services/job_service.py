@@ -30,6 +30,14 @@ logger = job_logger()
 # history instead of failing to load.
 JOB_DIAGNOSTICS_KEY = "diagnostics"
 
+# Where a RETRY keeps the diagnostics of the job it was retried from.
+#
+# The retry's own `diagnostics` block starts empty - a retry that has not run
+# yet must not report the original's failure kind, attempt count or attempt
+# history - so the original's block is preserved under this key instead of
+# being extended.
+JOB_RETRY_ORIGIN_DIAGNOSTICS_KEY = "retry_origin_diagnostics"
+
 # Bound the stored attempt history so a job that fails over across many
 # providers cannot grow its metadata row without limit.
 MAX_TRACKED_ATTEMPTS = 20
@@ -100,12 +108,21 @@ JOB_STATUS_TRANSITIONS = {
     # so the failover write was rejected by the FSM and the job was left
     # in SENT_TO_PROVIDER with NO event emitted at all - the frontend
     # never learned the job was still alive.
+    #
+    # The same edge is needed from every state a provider can fail IN. A
+    # provider that dies after its first progress frame leaves the job in
+    # CONNECTED / PRE_GENERATION / GENERATING, and the failover write -
+    # which always writes PENDING - was rejected from all of them. The
+    # rejected write was dropped, the job kept its old status through the
+    # whole failover, and every such failover logged a WARNING that looked
+    # like a bug. The provider client writes those three statuses during
+    # the call, so they are reachable in production, not just in theory.
     JobStatus.SENT_TO_PROVIDER: {JobStatus.CONNECTED, JobStatus.PRE_GENERATION, JobStatus.GENERATING, JobStatus.POST_PROCESSING, JobStatus.RETRYING, JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED, JobStatus.PENDING},
-    JobStatus.CONNECTED: {JobStatus.PRE_GENERATION, JobStatus.GENERATING, JobStatus.POST_PROCESSING, JobStatus.RETRYING, JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED},
-    JobStatus.PRE_GENERATION: {JobStatus.GENERATING, JobStatus.POST_PROCESSING, JobStatus.RETRYING, JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED},
-    JobStatus.GENERATING: {JobStatus.POST_PROCESSING, JobStatus.RETRYING, JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED},
-    JobStatus.POST_PROCESSING: {JobStatus.RETRYING, JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED},
-    JobStatus.RETRYING: {JobStatus.SENT_TO_PROVIDER, JobStatus.CONNECTED, JobStatus.PRE_GENERATION, JobStatus.GENERATING, JobStatus.POST_PROCESSING, JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED},
+    JobStatus.CONNECTED: {JobStatus.PRE_GENERATION, JobStatus.GENERATING, JobStatus.POST_PROCESSING, JobStatus.RETRYING, JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED, JobStatus.PENDING},
+    JobStatus.PRE_GENERATION: {JobStatus.GENERATING, JobStatus.POST_PROCESSING, JobStatus.RETRYING, JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED, JobStatus.PENDING},
+    JobStatus.GENERATING: {JobStatus.POST_PROCESSING, JobStatus.RETRYING, JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED, JobStatus.PENDING},
+    JobStatus.POST_PROCESSING: {JobStatus.RETRYING, JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED, JobStatus.PENDING},
+    JobStatus.RETRYING: {JobStatus.SENT_TO_PROVIDER, JobStatus.CONNECTED, JobStatus.PRE_GENERATION, JobStatus.GENERATING, JobStatus.POST_PROCESSING, JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED, JobStatus.PENDING},
     JobStatus.COMPLETED: set(),
     JobStatus.FAILED: {JobStatus.PENDING},
     JobStatus.CANCELLED: set(),
@@ -674,9 +691,13 @@ class JobService:
         now = datetime.now(timezone.utc)
         stranded: list[tuple[Job, float]] = []
 
-        for job in self.get_pending_jobs():
-            if job.enqueued_at is not None:
-                continue
+        # The predicate does the filtering, not a Python loop over every
+        # pending row. A stranded row is PENDING with a null `enqueued_at`,
+        # and the age bound is the same one the loop applied - so the set is
+        # identical and the read is a range scan instead of a full table
+        # materialisation.
+        cutoff = now - timedelta(seconds=timeout_seconds)
+        for job in self.repo.get_stranded_pending(cutoff):
             elapsed = (now - as_utc(job.created_at)).total_seconds()
             if elapsed > timeout_seconds:
                 stranded.append((job, elapsed))
@@ -1060,9 +1081,13 @@ class JobService:
         logger.info("jobs_cleared", count=count)
         return count
     
-    def get_pending_jobs(self) -> list[Job]:
-        """Get all pending jobs in FIFO order."""
-        return self.repo.get_pending()
+    def get_pending_jobs(self, limit: int | None = None) -> list[Job]:
+        """Get pending jobs in FIFO order."""
+        return self.repo.get_pending(limit=limit)
+
+    def count_pending_jobs(self) -> int:
+        """How many jobs are pending - without loading any of them."""
+        return self.repo.count_pending()
     
     def get_running_jobs(self) -> list[Job]:
         """Get all running/processing jobs."""

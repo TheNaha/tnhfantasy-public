@@ -15,6 +15,7 @@ from typing import Any
 
 from infrastructure.logging import get_logger
 from services.model_availability_service import ModelAvailabilityService
+from core.pipeline_limits import MAX_AGENTIC_IMAGES
 
 logger = get_logger("orchestrator")
 
@@ -41,7 +42,10 @@ MAX_AGENTIC_DEPTH = 5
 # and the tool it named did not exist. The row below is the pattern a second
 # costed tool should follow: add a row to `TOOL_BUDGETS`, and the gate, the
 # per-entity column and the job metadata all pick it up.
-MAX_AGENTIC_IMAGES_PER_EXCHANGE = 2
+#
+# The NUMBER comes from `core.pipeline_limits`, which the manifest also reads,
+# so the cap the UI shows and the cap the code enforces cannot drift.
+MAX_AGENTIC_IMAGES_PER_EXCHANGE = MAX_AGENTIC_IMAGES
 
 IMAGE_TOOL_NAME = "generate_image"
 
@@ -54,7 +58,7 @@ TOOL_BUDGETS: dict[str, tuple[str, str, int]] = {
     IMAGE_TOOL_NAME: (
         "agentic_image_jobs",
         "max_agentic_images",
-        MAX_AGENTIC_IMAGES_PER_EXCHANGE,
+        MAX_AGENTIC_IMAGES,
     ),
 }
 
@@ -216,6 +220,17 @@ def get_tool_count(metadata: dict[str, Any] | None, tool_name: str) -> int:
         return int(metadata.get(counter_key) or 0)
     except (TypeError, ValueError):
         return 0
+
+
+def tool_counter_key(tool_name: str) -> str:
+    """The job-metadata key that carries `tool_name`'s running total.
+
+    Exposed because a caller that has to WRITE the counter back — the
+    Illustrator stage, which spends one image outside the agentic tool loop —
+    must use the key the budget table declares, not a fourth copy of the
+    string.
+    """
+    return _budget_for(tool_name)[0]
 
 
 def get_tool_max(tool_name: str, chat_or_story=None, metadata: dict[str, Any] | None = None) -> int:

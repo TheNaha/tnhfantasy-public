@@ -1229,8 +1229,14 @@ function ServerCheckpointSelect({ installed, loading, onMirror }) {
     const notInstalled = Boolean(serverValue) && !installedNames.includes(serverValue);
 
     useEffect(() => {
-        if (onMirror) onMirror(serverValue || null);
-    }, [serverValue, onMirror]);
+        // The WHOLE settings object, not the checkpoint string. The mirror
+        // callback reads `settings.generator?.default_checkpoint` and
+        // `settings.generator?.prompt_shortcuts`; handed a string it saw
+        // `undefined` for both and blanked the mirror - so opening this tab
+        // deleted the generator's prompt shortcuts, and the store persisted
+        // that to localStorage.
+        if (onMirror) onMirror(configResponse?.settings);
+    }, [configResponse, onMirror]);
 
     const handleChange = async (next) => {
         setSaving(true);
@@ -1292,7 +1298,7 @@ function GeneratorSettings({ settings, onUpdate, onReset, onMirrorDefaultCheckpo
         // The checkpoint is server-owned, so restoring the local category
         // defaults must not blank its mirror in the store.
         if (onMirrorDefaultCheckpoint) {
-            onMirrorDefaultCheckpoint(configResponse?.settings?.generator?.default_checkpoint || null);
+            onMirrorDefaultCheckpoint(configResponse?.settings);
         }
     };
 

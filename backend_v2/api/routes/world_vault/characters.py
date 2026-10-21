@@ -996,7 +996,17 @@ def _resolve_lorebook_ids(session: Session, lorebook_ids: list[str]) -> list[str
 
 @router.patch("/{character_id}")
 def patch_character(character_id: str, character_update: CharacterUpdateRequest, session: Session = Depends(get_session), character_repo: CharacterRepository = Depends(get_character_repo)):
-    """Partial update — only updates fields explicitly provided (non-None values)."""
+    """Partial update — only updates fields explicitly provided (non-None values).
+
+    `world_id` is the exception, and it is the exception on purpose: it is
+    ownership, not a column assignment. It goes through `apply_world_id`, so
+    an unknown world id is a 404 rather than an `IntegrityError` (which was a
+    500, and left the session poisoned), and an explicit `null` DETACHES the
+    character from its world. It used to fall through the generic `setattr`
+    loop below, which is why `PATCH {"world_id": "does-not-exist"}` answered
+    500 while `PUT` answered 404, and why a character could never be detached
+    at all.
+    """
     character = character_repo.get(character_id)
     if not character:
         raise NotFoundError("Character", character_id)
@@ -1004,6 +1014,10 @@ def patch_character(character_id: str, character_update: CharacterUpdateRequest,
     update_data = character_update.model_dump(exclude_unset=True)
     if "lorebook_ids" in update_data and update_data["lorebook_ids"] is not None:
         update_data["lorebook_ids"] = _resolve_lorebook_ids(session, update_data["lorebook_ids"])
+    # `apply_world_id` reads the key BEFORE the None-filter below, so an
+    # explicit null still reaches it — that is the detach.
+    apply_world_id(session, character, update_data)
+    update_data.pop("world_id", None)
     # For PATCH, also skip None values so we never overwrite with null
     update_data = {k: v for k, v in update_data.items() if v is not None}
     for key, value in update_data.items():

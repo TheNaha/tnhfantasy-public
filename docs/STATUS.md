@@ -55,8 +55,8 @@ chat-workflow pass recorded in §1c below:
 
 | Suite | Count | Command |
 |---|---|---|
-| Backend | **3805 passed, 5 skipped** (~11 min) | `cd backend_v2 && .venv/bin/python -m pytest` |
-| Frontend | **1951 passed across 217 files** (~5 min) | `cd frontend_v2 && npx vitest run` |
+| Backend | **4075 passed, 5 skipped** (~4 min) | `cd backend_v2 && .venv/bin/python -m pytest` |
+| Frontend | **2029 passed across 224 files** (~4 min) | `cd frontend_v2 && npx vitest run` |
 | remote_agent | exports clean (no tests of its own) | covered by `tests/test_in_process_engines.py` contract tests |
 
 `npm run lint` is **0 errors / 1 warning** and `ruff check .` is clean.
@@ -199,7 +199,7 @@ two Dockerfiles (plus `backend_v2/requirements.txt` and
 there because GitHub has no job-level `paths:` — `on.<event>.paths` filters the
 whole workflow — and it is a few minutes on a Dockerfile change.
 
-`docs/api.md` documents **294 of 296** live paths (99.3%) on the 386-operation
+`docs/api.md` documents **294 of 297** live paths (98.8%) on the **387**-operation
 router. It had 26 endpoints that did not exist until 2026-09-29, including two
 whole sections under the wrong URL prefix. It is checked against
 `app.openapi()["paths"]`, not against itself — but the check's assertion is
@@ -891,9 +891,10 @@ Three things in it outrank the rest:
   above was a local observation.**
 - **The frontend re-published the whole API on `0.0.0.0:5174`.** It is a reverse
   proxy to the backend, so publishing it publishes the unauthenticated API —
-  measured `curl http://192.168.1.28:5174/api/ready → 200` while the backend
-  answered nothing on any host port. Now bound to loopback plus an optional named
-  address; `preflight.sh` fails on a wildcard.
+  measured `curl http://192.168.1.28:5174/api/ready → 200`. Now bound to
+  loopback plus an optional named address; `preflight.sh` fails on a wildcard.
+  The backend itself publishes `127.0.0.1:8002` and
+  `${COMFY_BACKEND_BIND:-100.150.0.4}:8002` — named addresses, never `0.0.0.0`.
 - **Five declared indexes were never created on a fresh install**, including the
   HNSW vector index on `character_memories(embedding)` — so semantic memory search
   had no index at all on any new deployment. `create_all` cannot emit an
@@ -1142,10 +1143,13 @@ Items 1-6 of the previous list were fixed — see §1b of the follow-up.
 >
 > **The real hole is closed.** The backend published `8002:8002` on `0.0.0.0`
 > with no authentication, so `PATCH /api/v2/providers/{id}` was open to anyone on
-> the network. It now publishes **no host port**; Traefik reaches it over the
+> the network. It now publishes **named addresses only** — `127.0.0.1:8002` and
+> `${COMFY_BACKEND_BIND:-100.150.0.4}:8002`, never a wildcard — so the hole is
+> closed while LAN/VPN reachability survives. Traefik reaches it over the
 > `proxy` network, verified from inside the Traefik container. Measured on the
-> host's LAN IP: **200 → 000.** Reachability is now governed by the NetBird ACL
-> on the reverse proxy. See the audit for the two compose traps found on the way.
+> host's LAN IP: **200 → 000** on `0.0.0.0`, **200** on the named addresses.
+> Reachability is now governed by the NetBird ACL on the reverse proxy. See the
+> audit for the two compose traps found on the way.
 
 Every registered provider reports discovered, connected and healthy, heartbeating
 within the same second. Five are `enabled=false`, which is a per-provider field
@@ -1183,9 +1187,11 @@ deliberately left alone — this is a capacity and billing decision, not a bug f
    every destructive endpoint, including the unauthenticated published-story
    export, is reachable by anyone who can reach the API. Do not expose this
    to a network you do not control. **The shipped compose file does not:** the
-   backend publishes no host port at all, Traefik reaches it on the external
-   `proxy` Docker network through the `comfyui-api` router on
-   `comfy-backend.lan.thenaha.my.id`, and reachability is governed by the
+   backend publishes `127.0.0.1:8002` and
+   `${COMFY_BACKEND_BIND:-100.150.0.4}:8002` — named addresses, never `0.0.0.0`.
+   Traefik reaches it on the external `proxy` Docker network through the
+   `comfyui-api` router on `comfy-backend.lan.thenaha.my.id`, and reachability
+   is governed by the
    NetBird ACL on the reverse proxy. `docs/deployment.md` has the router table
    and `docs/api.md` the base-URL options. The dev override restricts `db` to
    `127.0.0.1`, which makes the backend's omission look deliberate too.
@@ -1321,6 +1327,19 @@ worth doing:
 
 8. **`/api/v2/models/catalog` returns the LLM registry, not models.** An
    API-surface decision rather than a cleanup.
+
+### Added by the 2026-10-21 consolidation sweep
+
+9. **The `charGen*` prompts are never seeded from the server.** Eight
+   server-owned generation prompts are mirrored into the generator settings
+   store (`frontend_v2/src/store/settingsStore.js`) and exposed on the
+   Characters page, but nothing reads them from `config.json`, so editing them
+   there has no effect and the Settings page reports success while the value
+   goes nowhere. An inert control.
+10. **Three orphaned scripts.** `backend_v2/scripts/{backfill_download_urls,
+    benchmark_statistics,clean_preview_cache}.py` (286 lines) are referenced
+    from nothing but a `.kilo/plans` file. Safe to delete once that plan file
+    is retired.
 
 ### Added by the 2026-09-28 audit
 

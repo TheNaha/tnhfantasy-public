@@ -2,7 +2,7 @@ import { useEffect, useRef, useCallback } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import { useWebSocket, EventTypes } from '../api/websocket';
-import { getStreamingJob, setStreamingJob, clearStreamingJob } from './useStreamingJobs';
+import { getStreamingJob, setStreamingJob, clearStreamingJob, getInFlightStreamingJobs } from './useStreamingJobs';
 import { jobMetadata, JOB_STATUS } from '../utils/jobStatus';
 import { buildQueryKey, QUERY_KEYS } from '../constants/queryKeys';
 
@@ -33,9 +33,13 @@ export function useChatStreaming({
     const armStallTimer = useCallback(() => {
         if (stallTimerRef.current) window.clearTimeout(stallTimerRef.current);
         stallTimerRef.current = window.setTimeout(() => {
-            const root = queryClient.getQueryCache().findAll({ queryKey: ['streaming', 'jobs'] });
-            const ids = root.flatMap((q) => Object.keys(q.state?.data || {}));
-            ids.forEach((eventId) => clearStreamingJob(queryClient, eventId));
+            // The live streaming namespaces are `['streaming', jobId]` and
+            // `['streaming', 'active', chatId]`. This used to read
+            // `['streaming', 'jobs']` - a key nothing ever writes - so the
+            // list was always empty, the stall was never cleared, and the
+            // "X is thinking…" bubble stayed until a page reload.
+            const inFlight = getInFlightStreamingJobs(queryClient);
+            inFlight.forEach(({ jobId, chatId }) => clearStreamingJob(queryClient, jobId, chatId));
             toast.error(
                 'Generation stalled. No reply was saved — sending again will restart it.'
             );
@@ -50,22 +54,6 @@ export function useChatStreaming({
     }, []);
 
     useEffect(() => () => clearStallTimer(), [clearStallTimer]);
-
-    // Arm when a job is created, so a stream that never produces a first token
-    // is covered too — the first-token arm alone would only catch a stream that
-    // stalls part-way.
-    const lastArmedJobRef = useRef(null);
-    useEffect(() => {
-        const jobs = queryClient.getQueryCache().findAll({ queryKey: ['streaming', 'jobs'] });
-        const streamed = jobs.flatMap((q) => Object.values(q.state?.data || {}));
-        const running = streamed.filter((j) => j && j.status !== 'completed' && j.status !== 'failed');
-        if (!running.length) return;
-        const armedKey = running.map((j) => j.text || '').join('').length;
-        if (lastArmedJobRef.current !== armedKey) {
-            lastArmedJobRef.current = armedKey;
-            armStallTimer();
-        }
-    }, [queryClient, armStallTimer]);
 
     useEffect(() => {
         const getJob = (event) => event?.data?.job || {};
@@ -165,6 +153,20 @@ export function useChatStreaming({
                 progress: job.overall_progress ?? job.progress ?? null,
                 continuationOfJobId: meta.continuation_of_job_id || null,
             });
+
+            // Arm the watchdog at CREATION, so a stream that never produces a
+            // first token is covered too - the per-token arm below only
+            // catches a stream that stalls part-way. The mount-time effect
+            // that used to do this read a cache key nothing writes, and its
+            // dependencies never changed, so it could not re-arm for a new
+            // job either.
+            //
+            // Only conversation jobs: an image generation can legitimately
+            // run for longer than the stall window, and clearing ITS
+            // streaming entry would be wrong.
+            if (job.task_type === 'llm' || job.task_type === 'chat_reply' || job.task_type === 'narrator') {
+                armStallTimer();
+            }
         });
 
         const unsubUpdated = subscribe(EventTypes.JOB_UPDATED, (event) => {

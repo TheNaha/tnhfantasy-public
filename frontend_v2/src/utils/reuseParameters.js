@@ -157,6 +157,30 @@ function normalizeCheckpoint(checkpoint) {
     return null;
 }
 
+/**
+ * The model FAMILY a UNET belongs to.
+ *
+ * The catalogue's `base_model` is what says "this model is a UNET" - the
+ * request builder and the store both read it, and a UNET lives in
+ * models/unet/, not models/checkpoints/.
+ *
+ * The guided metadata carries the model RECORD, so its `base_model` is
+ * still there. The backend's own graph-derived metadata carries only the
+ * NAME, so the family has to be recovered from the model type the job
+ * recorded, or from the file name.
+ */
+function unetBaseModel(metadata, unetName) {
+    const modelType = firstDefined(metadata, ['modelType', 'model_type']);
+    if (typeof modelType === 'string' && modelType === 'flux') {
+        return 'flux';
+    }
+
+    const name = String(unetName || '').toLowerCase();
+    if (name.includes('flux')) return 'flux';
+    if (name.includes('aura')) return 'aura';
+    return null;
+}
+
 function normalizeName(value) {
     if (typeof value !== 'string') {
         return '';
@@ -600,7 +624,25 @@ export function buildGeneratorStateFromMetadata(metadataInput) {
     }
 
     const checkpointRaw = firstDefined(metadata, ['checkpoint', 'ckpt_name']) ?? workflowHints.checkpoint;
-    const checkpoint = normalizeCheckpoint(checkpointRaw);
+    const unetName = firstDefined(metadata, ['unet', 'unet_name']);
+    let checkpoint = normalizeCheckpoint(checkpointRaw);
+    if (unetName) {
+        // A UNET model.
+        //
+        // The backend loads a UNET with `unet` + `clip` (+ `clip2` for
+        // Flux), and the record has to SAY it is a UNET - because the
+        // builder decides the loader from the record, and a UNET does not
+        // live in models/checkpoints/. Without this the reuse restored a
+        // model the builder read as a checkpoint, and the request asked
+        // models/checkpoints/ for a file that is in models/unet/.
+        const baseModel = unetBaseModel(metadata, unetName);
+        const record = checkpoint || normalizeCheckpoint(unetName);
+        checkpoint = {
+            ...record,
+            name: record.name || unetName,
+            ...(baseModel && !record.base_model ? { base_model: baseModel } : {}),
+        };
+    }
     if (checkpoint) {
         updates.selectedCheckpoint = checkpoint;
     }
@@ -610,6 +652,9 @@ export function buildGeneratorStateFromMetadata(metadataInput) {
         updates.selectedVae = vae;
     }
 
+    // The text encoders. A UNET model needs BOTH of them (Flux needs two),
+    // and the guided metadata used to carry neither - so the reuse of a
+    // Flux image produced a model with no text encoder at all.
     const clip = firstDefined(metadata, ['clip', 'clip_name']) ?? workflowHints.clip;
     if (typeof clip === 'string' && clip) {
         updates.selectedClip = clip;

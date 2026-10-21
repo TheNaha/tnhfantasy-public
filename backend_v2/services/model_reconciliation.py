@@ -21,7 +21,18 @@ _DIRECTORY_TO_MODEL_TYPE = {
     "poses": "Poses",
     "wildcards": "Wildcards",
     "ultralytics/bbox": "Other",
+    # The segmentation tree is a separate directory from the bbox tree, and
+    # it was missing here - so a model discovered under it was typed "Other",
+    # which is the type the model list filters on and the type the UI shows.
+    "ultralytics/seg": "Other",
     "motion_modules": "MotionModule",
+    # The CLIP vision encoder is the text encoder's sibling and has its own
+    # directory. It was missing here for the same reason.
+    "clip_vision": "CLIP",
+    # The IPAdapter weights. Also missing - which is why the IPAdapter
+    # picker was always empty even on a provider that had the weights
+    # installed: the directory was not in the reconciled list at all.
+    "ipadapter": "IPAdapter",
 }
 
 
@@ -72,6 +83,20 @@ class ModelReconciliationService:
     and reconciliation caching for the model service.
     """
 
+    def _write_provider_status(self, **kwargs) -> None:
+        """Write a provider file status AND invalidate the availability caches.
+
+        `ModelDownloader.update_provider_file_status` is the writer that
+        invalidates. Writing through the repository directly bypassed it, so
+        a model this pass had just marked `ready` stayed ineligible for the
+        availability check for up to the 30 s TTL.
+        """
+        self.repo.update_provider_status(**kwargs)
+        from services.load_balancer import LoadBalancer
+
+        LoadBalancer.invalidate_model_availability_cache()
+
+
     def __init__(self, session: Session, repo: ModelRepositoryV2 | None = None):
         self.session = session
         self.repo = repo or ModelRepositoryV2(session)
@@ -113,7 +138,7 @@ class ModelReconciliationService:
             try:
                 existing_file = self.repo.get_file_by_storage_path(directory, filename)
                 if existing_file:
-                    self.repo.update_provider_status(
+                    self._write_provider_status(
                         file_id=existing_file.id,
                         provider_id=provider_id,
                         status="ready",
@@ -165,7 +190,7 @@ class ModelReconciliationService:
                     self.session.add(file)
                     self.session.flush()
 
-                    self.repo.update_provider_status(
+                    self._write_provider_status(
                         file_id=file.id,
                         provider_id=provider_id,
                         status="ready",
@@ -192,7 +217,3 @@ class ModelReconciliationService:
     def get_pending_downloads(self, provider_id: str) -> list[dict[str, Any]]:
         """Get files pending download for a provider (sync method for worker)."""
         return self.repo.get_pending_downloads(provider_id)
-
-    def get_full_cache(self) -> dict[str, list[dict[str, Any]]]:
-        """Get all model metadata for reconciliation (sync method for worker)."""
-        return self.repo.get_grouped_by_directory()

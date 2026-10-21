@@ -126,20 +126,13 @@ def get_settings_schema() -> dict[str, Any]:
         "jobs": {
             "description": "Job management configuration",
             "fields": {
-                "default_limit": {
-                    "type": "integer",
-                    "description": "Default number of jobs to return in API",
-                    "min": 1,
-                    "max": 100,
-                    "default": _default("jobs.default_limit")
-                },
-                "max_in_memory": {
-                    "type": "integer",
-                    "description": "Maximum jobs to keep in memory for SSE",
-                    "min": 10,
-                    "max": 500,
-                    "default": _default("jobs.max_in_memory")
-                },
+                # `default_limit` and `max_in_memory` are GONE (2026-10-21).
+                #
+                # They were documented, editable and validated, and nothing
+                # read them: the job list limit is the hardcoded
+                # `limit: int = 20` on `GET /api/jobs`, and the in-process
+                # queue is an unbounded `asyncio.Queue()`. Documenting them
+                # promised an effect that never happened.
                 "max_concurrent": {
                     "type": "integer",
                     "description": (

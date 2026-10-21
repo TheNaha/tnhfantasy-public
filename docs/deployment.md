@@ -27,19 +27,34 @@ Key variables surfaced by `.env.example`:
 
 ### Architecture
 - **db**: PostgreSQL 16 with the `pgvector` extension. Everything else waits on its healthcheck. Published on `127.0.0.1:5432` by the dev override only.
-- **backend_v2**: FastAPI server on port 8002. Runs as `user: "1000:1000"`. Readiness check hits `/api/ready`. Publishes no host port at all (see "Backend reachability"). Its DSN is assembled in-process from `POSTGRES_*`.
+- **backend_v2**: FastAPI server on port 8002. Runs as `user: "1000:1000"`. Readiness check hits `/api/ready`. Published on `127.0.0.1:8002` and on `${COMFY_BACKEND_BIND:-100.150.0.4}:8002` (see "Backend reachability"). Its DSN is assembled in-process from `POSTGRES_*`.
 - **frontend_v2**: React/Vite dev server or Nginx (prod). Depends on backend health. Proxied via Traefik.
 
 ### Backend reachability
 
-**The backend has no host port. Do not add one.** A bare `8002:8002` in a compose
-file publishes the entire unauthenticated API on every interface the host has:
-`GET`/`POST` on every route, `DELETE /api/jobs`, and `PATCH
-/api/v2/providers/{id}`. Nothing in front of it authenticates. On 2026-10-01 an
-ordinary audit probe called `DELETE /api/jobs` from the LAN and destroyed 154 rows
-of job history, and on 2026-10-03 that is what prompted removing the publish.
+**The backend is published on NAMED addresses, never on a wildcard.** A bare
+`8002:8002` in a compose file publishes the entire unauthenticated API on every
+interface the host has: `GET`/`POST` on every route, `DELETE /api/jobs`, and
+`PATCH /api/v2/providers/{id}`. Nothing in front of it authenticates. On
+2026-10-01 an ordinary audit probe called `DELETE /api/jobs` from the LAN and
+destroyed 154 rows of job history, and on 2026-10-03 that is what prompted
+removing the wildcard publish.
 
-The API is reached two ways, and neither is a host port:
+What the compose file publishes today:
+
+| host address | source | who it serves |
+|---|---|---|
+| `127.0.0.1:8002` | hard-coded | this machine only |
+| `${COMFY_BACKEND_BIND:-100.150.0.4}:8002` | `COMFY_BACKEND_BIND` in `.env` | the operator's own VPN/LAN address (`100.150.0.4` is a NetBird address on this host) |
+
+> This section used to read "**The backend has no host port. Do not add one.**"
+> and to list only the in-container and Traefik routes. That stopped being true
+> in `7a1f1e93`, which added the two named publishes above, and the document
+> kept asserting the opposite. The *rule* is unchanged and still enforced by
+> `scripts/preflight.sh`: **never a wildcard**. Verify what is actually
+> published with `docker compose ps`.
+
+The API is reached three ways:
 
 - **Traefik**, over the external `proxy` Docker network. Two routers, both on
   the `websecure` entrypoint (443, TLS):
@@ -52,6 +67,8 @@ The API is reached two ways, and neither is a host port:
   server proxies `/api` to the backend in-process, so the browser never needs the
   API hostname. `comfy-backend.lan.thenaha.my.id` exists for `curl`, Postman and
   anything else talking to the API directly.
+- **The host**, on the two named addresses above: `http://127.0.0.1:8002` and
+  `http://100.150.0.4:8002`.
 - **A shell inside the container**, which is where `scripts/preflight.sh` reads
   provider state from:
   ```bash
@@ -92,7 +109,7 @@ A new provider is a row in the DB, not a compose service. Either:
 - create it in the UI: **Providers → + Add Provider**, pick an engine type, and fill its credential fields; or
 - `POST /api/v2/providers` with `{ "type": "modal"|"beam"|"openai_compat"|..., "worker_type": "image"|"llm"|"tts"|"direct", "enabled": true, ...credentials }`.
 
-The schema for each type is served by `GET /api/v2/schemas` (`ProviderModal.jsx` is fully schema-driven — type options, credential fields, and config are all rendered from it; save payload is schema-only). An added provider with a live credential resolves on next reconcile to an `InProcessEngine` and can receive jobs immediately; with no credential it is marked `connected:false` until one is supplied. No compose change, no `--profile`, no per-worker env file.
+The schema for each type is served by `GET /api/v2/providers/schemas` (`ProviderModal.jsx` is fully schema-driven — type options, credential fields, and config are all rendered from it; save payload is schema-only). An added provider with a live credential resolves on next reconcile to an `InProcessEngine` and can receive jobs immediately; with no credential it is marked `connected:false` until one is supplied. No compose change, no `--profile`, no per-worker env file.
 
 ### Remote Agent
 ### Remote Agent

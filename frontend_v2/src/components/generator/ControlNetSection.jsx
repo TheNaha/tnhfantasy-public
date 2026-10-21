@@ -4,6 +4,24 @@ import CollapsibleSection from '../CollapsibleSection';
 import filesApi from '../../api/files';
 import toast from 'react-hot-toast';
 
+/**
+ * The preprocessors the backend actually applies.
+ *
+ * `backend_v2/core/workflow_builder.py` builds a `CannyEdgePreprocessor`
+ * node for `preprocessor == "Canny"` and NOTHING else - every other value
+ * feeds the raw photo to the ControlNet as the control image. So the
+ * dropdown used to offer Depth, OpenPose and Lineart, and picking one of
+ * them produced a graph that silently used the unprocessed photo: the
+ * control was a lie, and the result was neither what the user asked for
+ * nor what the label said.
+ *
+ * A preprocessor is added here when the backend implements it, not before.
+ */
+const SUPPORTED_PREPROCESSORS = [
+    { value: 'None', label: 'None (Raw Image)' },
+    { value: 'Canny', label: 'Canny Edge' },
+];
+
 const ControlNetSection = memo(function ControlNetSection({
     controlnets,
     addControlNet,
@@ -22,7 +40,13 @@ const ControlNetSection = memo(function ControlNetSection({
             loading: 'Uploading image...',
             success: (data) => {
                 if (data.status === 'success') {
-                    handleControlNetChange(index, 'image', file.name);
+                    // `data.filename` is the UUID-based name the backend stored
+                    // under `models/input/` — that is what ComfyUI's
+                    // `LoadImage` resolves. `file.name` is the browser's local
+                    // name and never exists on the provider, so the ControlNet
+                    // graph silently referenced a missing file and the job
+                    // failed at dispatch.
+                    handleControlNetChange(index, 'image', data.filename);
                     return 'Image uploaded!';
                 } else {
                     throw new Error('Upload failed');
@@ -99,11 +123,9 @@ const ControlNetSection = memo(function ControlNetSection({
                                 value={cn.preprocessor}
                                 onChange={(e) => handleControlNetChange(idx, 'preprocessor', e.target.value)}
                             >
-                                <option value="None">None (Raw Image)</option>
-                                <option value="Canny">Canny Edge</option>
-                                <option value="Depth">Depth</option>
-                                <option value="Openpose">OpenPose</option>
-                                <option value="Lineart">Lineart</option>
+                                {SUPPORTED_PREPROCESSORS.map((p) => (
+                                    <option key={p.value} value={p.value}>{p.label}</option>
+                                ))}
                             </select>
                         </div>
                     </div>

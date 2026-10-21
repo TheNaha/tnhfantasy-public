@@ -283,13 +283,12 @@ class TestProviderServiceLoadBalancing:
 
 
 class TestProviderServiceModelCache:
-    def test_get_model_cache_empty(self, service):
-        cache = service.get_model_cache()
-        assert isinstance(cache, dict)
-
-    def test_get_model_cache_for_directory_empty(self, service):
-        result = service.get_model_cache_for_directory("checkpoints")
-        assert isinstance(result, list)
+    def test_the_model_cache_accessors_are_gone(self, service):
+        """`get_model_cache` / `get_model_cache_for_directory` existed only to
+        serve `GET /api/v2/providers/model-cache`, which was one of four
+        implementations of the same 1.5 MB dump and had no caller."""
+        assert not hasattr(service, "get_model_cache")
+        assert not hasattr(service, "get_model_cache_for_directory")
 
 
 class TestProviderToDict:

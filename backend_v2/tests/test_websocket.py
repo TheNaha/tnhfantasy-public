@@ -134,6 +134,11 @@ async def test_cancel_job_pending(mock_get_session, mock_job_service_cls, mock_q
     job_id = "job1"
 
     # Mock job queue says job is NOT active (so it's pending)
+    #
+    # `is_job_active_anywhere` is the whole-manager check: the handler used
+    # to test the image and LLM pools by name and forget the TTS pool, so a
+    # running TTS job could not be cancelled. It now asks the manager.
+    mock_queue_manager.is_job_active_anywhere.return_value = False
     mock_queue_manager.image.is_job_active.return_value = False
     mock_queue_manager.llm.is_job_active.return_value = False
 
@@ -166,6 +171,7 @@ async def test_cancel_job_active(mock_get_session, mock_resolve_provider_runtime
     job_id = "job1"
 
     # Mock job active
+    mock_queue_manager.is_job_active_anywhere.return_value = True
     mock_queue_manager.image.is_job_active.return_value = True
 
     # Mock session

@@ -37,10 +37,8 @@ from core.entities import Job, JobStatus
 from core.exceptions import NotFoundError
 from core.progress import coerce_worker_percent
 from infrastructure.worker_registry import (  # noqa: F401
-    _get_live_worker,
     dispatch_job_to_worker,
     forget_job_future,
-    get_connected_workers,
     is_worker_connected,
     register_worker,
     request_worker_job_cancel,
@@ -439,29 +437,9 @@ async def worker_websocket(
 # ============================================================================
 # HTTP Endpoints for Worker Status
 # ============================================================================
-
-# Plain `def` on purpose, not `async def`: nothing in this handler awaits,
-# so as `async def` it ran on the event loop and its DB/disk work blocked
-# every other request for the duration. FastAPI runs a plain `def` handler in
-# a worker thread, which is what the work actually needs.
-@router.get("/api/workers/connected")
-def list_connected_workers():
-    """List all connected external workers."""
-    workers = get_connected_workers()
-    return {
-        "workers": workers,
-        "count": len(workers),
-    }
-
-
-@router.get("/api/workers/{provider_id}/status")
-async def get_worker_status(provider_id: str):
-    """Get status of a specific worker."""
-    worker = await _get_live_worker(provider_id)
-    if worker is None:
-        return {"connected": False}
-
-    return {
-        "connected": True,
-        **worker.to_dict()
-    }
+#
+# `GET /api/workers/connected` and `GET /api/workers/{provider_id}/status`
+# are GONE (2026-10-21). Nothing consumed them: the provider list
+# (`GET /api/v2/providers/`) is where the UI reads provider health, and a
+# connected external worker is visible there through its provider's runtime
+# state.

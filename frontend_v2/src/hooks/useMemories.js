@@ -75,8 +75,13 @@ export const useReindexMemories = () => {
     return useMutation({
         mutationFn: (params = {}) => api.post('/api/v2/memories/reindex', null, { params }),
         onSuccess: () => {
+            // `buildQueryKey`, not `[QUERY_KEYS.MEMORIES]`: the memories live
+            // under `['world_vault', 'memories', ...]`, and the bare array
+            // `['memories']` prefix-matched nothing - so a reindex, which is
+            // precisely the operation that changes the semantic ranking,
+            // left the search results stale.
             queryClient.invalidateQueries({
-                queryKey: [QUERY_KEYS.MEMORIES],
+                queryKey: buildQueryKey(QUERY_KEYS.MEMORIES),
             });
             invalidateVaultAggregates(queryClient);
         },

@@ -21,7 +21,9 @@ from __future__ import annotations
 
 # The autonomous multi-turn budget: how many turns one interaction may chain
 # before control returns to the user. Also the default for
-# `Chat.max_autonomous_turns` / `Story.max_autonomous_turns`.
+# `Chat.max_autonomous_turns` — the only entity that has one. `Story` has no
+# such column: a story continues inside its own chapters and has no Director
+# turn budget of its own.
 MAX_AUTONOMOUS_TURNS = 4
 
 # How many generation ATTEMPTS one turn may make when the reply keeps
@@ -59,9 +61,6 @@ AUTONOMY_CHAIN_THRESHOLDS: dict[str, float] = {
 
 # Wall-clock budget for one Director decision (triage, audit, or chaining).
 DIRECTOR_TIMEOUT_SECONDS = 15.0
-
-# Wall-clock budget for the stage-local LLM calls the Director makes.
-STAGE_TIMEOUT_SECONDS = 15.0
 
 # How much scene authoring one chat may spend, in the cost units of
 # `core.scene_graph.scene_spec_cost` — one unit is a 1024x1024 image at 20

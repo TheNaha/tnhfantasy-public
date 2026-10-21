@@ -12,6 +12,7 @@ from core.entities import (
     CATEGORY_IMAGE,
     CATEGORY_LLM,
     CATEGORY_TTS,
+    JobStatus,
 )
 from infrastructure.background_tasks import start_background_task
 from infrastructure.database import database_url
@@ -309,6 +310,36 @@ class JobQueue:
         digest = hashlib.blake2b(self._task_type.encode("utf-8"), digest_size=8).digest()
         return int.from_bytes(digest, "big") & ((1 << 63) - 1)
 
+    def _claim_lease_seconds(self) -> int:
+        """How long a claim may be held before it counts as leaked.
+
+        A claim is taken when the worker picks the job up and released when
+        the job finishes, so it is held for the whole run of the job - which
+        may be as long as that task type's timeout. The lease therefore has
+        to EXCEED the longest legal run of this pool, or a slow-but-healthy
+        job would be reclaimed and paid for twice.
+
+        It exists because the claim had no expiry at all: `claimed_at` was
+        written, cleared and read only as a NULL / non-NULL flag, and the
+        release was a bare `await` in a `finally` whose DB error escaped into
+        the worker's outer handler. One leaked claim stranded a PENDING job
+        forever AND permanently consumed one of the pool's concurrency slots,
+        so five leaks deadlocked the pool.
+        """
+        from config import get_job_timeout
+
+        longest = 0
+        for task_type in self._claim_task_types:
+            try:
+                longest = max(longest, int(get_job_timeout(task_type)))
+            except Exception:
+                continue
+        if longest <= 0:
+            longest = 3600
+        # A margin, so a job that finishes at exactly its timeout does not
+        # race the lease.
+        return longest + 300
+
     def _max_concurrent(self) -> int:
         """In-flight ceiling for this pool, from `jobs.max_concurrent`.
 
@@ -404,7 +435,13 @@ class JobQueue:
                     status IN {active_status_placeholders}
                     -- A claim sets claimed_at but not status; without this the
                     -- row the previous claimer took is not yet counted.
-                    OR (status = 'PENDING' AND claimed_at IS NOT NULL)
+                    -- An EXPIRED claim is not counted either: a leaked claim
+                    -- used to hold a concurrency slot forever.
+                    OR (
+                        status = 'PENDING'
+                        AND claimed_at IS NOT NULL
+                        AND claimed_at >= now() - make_interval(secs => :lease_seconds)
+                    )
                   )
             ),
             candidate AS (
@@ -412,7 +449,10 @@ class JobQueue:
                 FROM jobs
                 WHERE {type_predicate}
                   AND status = 'PENDING'
-                  AND claimed_at IS NULL
+                  AND (
+                    claimed_at IS NULL
+                    OR claimed_at < now() - make_interval(secs => :lease_seconds)
+                  )
                   -- Only rows that were actually handed to the queue. A job row
                   -- can exist purely as an event carrier for work its creator
                   -- runs inline (the agentic narrator holds its parent's queue
@@ -438,7 +478,11 @@ class JobQueue:
             ).first()
             row = conn.execute(
                 claim_job_sql,
-                {**type_params, "max_concurrent": self._max_concurrent()},
+                {
+                    **type_params,
+                    "max_concurrent": self._max_concurrent(),
+                    "lease_seconds": self._claim_lease_seconds(),
+                },
             ).first()
         if row is None:
             return None
@@ -460,7 +504,39 @@ class JobQueue:
         return await asyncio.to_thread(self._claim_next_job_sync)
 
     async def _clear_claim(self, job_id: str) -> None:
-        await asyncio.to_thread(self._clear_claim_sync, job_id)
+        """Release the DB claim, and never let a failure here leak it.
+
+        The release is the LAST thing the worker does with a job, and it used
+        to be a bare `await` in a `finally`. A DB error there raised out of
+        the `finally`, was caught by the worker's outer handler, and the
+        worker carried on - WITH THE CLAIM STILL SET. The job was then
+        PENDING-with-claim forever: `_claim_next_job_sync` requires
+        `claimed_at IS NULL`, so it was never claimed again, never ran, and
+        never failed. It also counted in the in-flight CTE, so it held one
+        of the pool's concurrency slots for good.
+
+        So the release is retried once and, if it still fails, logged at
+        ERROR rather than being allowed to escape: the lease (see
+        `_claim_lease_seconds`) is the backstop for a claim that really
+        cannot be released.
+        """
+        for attempt in (1, 2):
+            try:
+                await asyncio.to_thread(self._clear_claim_sync, job_id)
+                return
+            except Exception as exc:
+                if attempt == 2:
+                    logger.error(
+                        "job_claim_release_failed",
+                        job_id=job_id,
+                        error=str(exc),
+                    )
+                    return
+                logger.warning(
+                    "job_claim_release_retry",
+                    job_id=job_id,
+                    error=str(exc),
+                )
 
     async def _get_job_payload(self) -> tuple[str, str | None] | None:
         """Return the next (job_id, provider_id) to process.
@@ -708,7 +784,8 @@ class JobQueue:
     def is_job_active(self, job_id: str) -> bool:
         """Check if a job is currently being processed."""
         return job_id in self._active_jobs
-    
+
+
 # ---------------------------------------------------------------------------
 # QueueManager — typed queues for image and LLM jobs
 # ---------------------------------------------------------------------------
@@ -774,6 +851,18 @@ class QueueManager:
         if task_type in self.pools:
             return self.pools[task_type]
         raise KeyError(f"no job pool for task type {task_type!r}")
+
+    def is_job_active_anywhere(self, job_id: str) -> bool:
+        """Is this job being processed by ANY of the pools?
+
+        `JobQueue.is_job_active` is per-pool, so a caller that remembered
+        two of the three pools silently could not cancel the third. The
+        websocket cancel handler checked the image and LLM pools and not the
+        TTS pool, so a running TTS generation answered "cannot cancel" and
+        the provider kept working - and billing.
+        """
+        return any(pool.is_job_active(job_id) for pool in self.pools.values())
+
 
     async def enqueue(self, job_id: str, provider_id: str | None = None, task_type: str = "image") -> None:
         """Enqueue a job into the correct typed queue."""
@@ -888,13 +977,12 @@ class QueueManager:
         )
         stranded_ids = {job.id for job in stranded_jobs}
 
-        pending = [
-            job
-            for job in job_service.get_pending_jobs()
-            if job.id not in stranded_ids
-        ]
+        # `fail_stranded_pending_jobs` already marked them FAILED, so a count
+        # taken now excludes them. No further subtraction of `stranded_ids`.
+        pending_total = job_service.count_pending_jobs()
         running = list(job_service.get_running_jobs())
         recoverable_running = [job for job in running if job.id not in stale_ids]
+        recoverable_running_ids = {job.id for job in recoverable_running}
 
         summary: dict[str, Any] = {
             "mode": "db_claims" if _DB_CLAIMS_ENABLED else "in_memory",
@@ -903,7 +991,7 @@ class QueueManager:
             "failed_job_ids": [job.id for job in stale_jobs]
             + [job.id for job in stranded_jobs],
             "failed_stranded_job_ids": [job.id for job in stranded_jobs],
-            "pending": len(pending),
+            "pending": pending_total,
             "running": len(recoverable_running),
         }
 
@@ -912,14 +1000,34 @@ class QueueManager:
             # back to PENDING (same semantic as lifecycle requeue) and clear all
             # claims so workers can re-claim them from the DB.
             await asyncio.to_thread(self._reset_claims_and_requeue_sync)
-            summary["recovered"] = len(pending) + len(recoverable_running)
+            summary["recovered"] = pending_total + len(recoverable_running)
             for queue in self.pools.values():
                 queue._schedule_notify()
-            logger.info("queue_manager_recovery_db_reset", pending=len(pending), running=len(recoverable_running))
+            logger.info("queue_manager_recovery_db_reset", pending=pending_total, running=len(recoverable_running))
             return summary
+
+        pending = [
+            job
+            for job in job_service.get_pending_jobs()
+            if job.id not in stranded_ids
+        ]
 
         for job in [*pending, *recoverable_running]:
             task_type = getattr(job, "task_type", "image") or "image"
+            # In-memory mode: a job that was ACTIVE when the process died is
+            # still in its active status, and `execute_job` refuses to run
+            # anything that is not PENDING - it logs `job_not_pending` at DEBUG
+            # and returns. So the job was re-enqueued, popped, skipped, and
+            # left "generating" until the next boot's stale sweep.
+            #
+            # The DB branch resets those rows; this branch has to as well.
+            if job.id in recoverable_running_ids:
+                await job_service.update_job(
+                    job.id,
+                    status=JobStatus.PENDING,
+                    claimed_at=None,
+                    started_at=None,
+                )
             await self.get_queue(task_type).enqueue(job.id, job.provider_id)
             summary["recovered"] += 1
 

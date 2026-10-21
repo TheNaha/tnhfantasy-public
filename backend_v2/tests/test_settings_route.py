@@ -1,48 +1,7 @@
 """Tests for api/routes/settings.py"""
-from pathlib import Path
 from unittest.mock import patch
 
-import pytest
-
 from config import DEFAULT_CONFIG
-
-
-@pytest.fixture(autouse=True)
-def _preserve_config_file():
-    """Restore the real config.json after the test.
-
-    The restore is ATOMIC, and it has to be. `Path.write_bytes` truncates
-    first and writes second, so between the two the file is empty - and a
-    reader in another worker (the suite runs eight of them) reads it, finds
-    it unparseable, and replaces it with the defaults. The operator's
-    settings were destroyed by the test suite, with the file left looking
-    like it had never been configured.
-
-    `os.replace` over a temp file is a rename, so a reader sees either the
-    old file or the new one and never a hole.
-    """
-    import os
-    import tempfile
-
-    config_path = Path(__file__).resolve().parents[1] / "config.json"
-    original = config_path.read_bytes() if config_path.exists() else None
-    yield
-    if original is not None:
-        fd, tmp_path = tempfile.mkstemp(
-            dir=str(config_path.parent), prefix=".config-restore-", suffix=".json"
-        )
-        try:
-            with os.fdopen(fd, "wb") as handle:
-                handle.write(original)
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.replace(tmp_path, config_path)
-        except BaseException:
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
-            raise
 
 
 class TestSettingsGet:
@@ -114,7 +73,7 @@ class TestSettingsPut:
         assert response.status_code == 400
 
     def test_update_nested_setting(self, client):
-        update = {"jobs": {"default_limit": 30}}
+        update = {"jobs": {"max_concurrent": 3}}
         response = client.put("/api/settings", json=update)
         assert response.status_code == 200
 

@@ -19,6 +19,7 @@ import toast from "react-hot-toast";
 import { useConfirmation } from "../../store/confirmationStore";
 
 import { api, ApiError, createIdempotencyKey, generateApi } from "../../api";
+import { GUIDED } from "../../api/generate";
 import useSettingsStore from "../../store/settingsStore";
 import ProgressiveImage from "../ProgressiveImage";
 import ContextMenu, { createImageActions } from "../ContextMenu";
@@ -29,6 +30,8 @@ import { copyToClipboard } from "../../utils/clipboard";
 import {
   applyGeneratorStateFromMetadata,
 } from "../../utils/reuseParameters";
+import { buildGeneratorPayload } from "../../hooks/useWorkflowBuilder";
+import { useGenerationPreflight } from "../../hooks/useGenerationPreflight";
 import FeedCardDetails from "./feed-card/FeedCardDetails";
 import FeedCardActions from "./feed-card/FeedCardActions";
 import { refetchNewestGalleryPage } from "../../hooks/useGallery";
@@ -39,6 +42,105 @@ import { refetchNewestGalleryPage } from "../../hooks/useGallery";
  * decode leaves the promise pending and the menu item permanently inert.
  */
 const DIMENSION_PROBE_TIMEOUT_MS = 10000;
+
+/**
+ * A model NAME, whichever shape the metadata carried it in.
+ *
+ * The guided path stores the model RECORD; the backend's graph-derived
+ * metadata stores the name. Both are legitimate, so both are read.
+ */
+function modelName(value) {
+  if (!value) return null;
+  if (typeof value === "string") return value;
+  if (typeof value === "object") return value.name || value.display_name || null;
+  return null;
+}
+
+/**
+ * The model a job's metadata names, as the RESOLVED model fields.
+ *
+ * The loader is chosen from `unet` + `clip`, not from the mode, so a job
+ * that ran a UNET has to be remixed as a UNET. The remix used to assemble
+ * its own options and sent `unet: undefined, clip: undefined` for a guided
+ * Flux image - the metadata never carried them - so the backend built
+ * `CheckpointLoaderSimple{ckpt_name: "flux1-dev.safetensors"}` and asked
+ * models/checkpoints/ for a file that lives in models/unet/.
+ */
+function remixModel(meta) {
+  const unet = modelName(meta.unet);
+  const clip = modelName(meta.clip);
+  const clip2 = modelName(meta.clip2);
+  const vae = modelName(meta.vae);
+  const checkpoint = checkpointName(meta);
+
+  return {
+    // A UNET model has no checkpoint to name: the backend keys the loader
+    // on `unet`, and a UNET does not live in models/checkpoints/.
+    checkpoint: unet ? null : checkpoint,
+    unet,
+    clip,
+    clip2,
+    vae,
+    modelType: meta.modelType || null,
+  };
+}
+
+/**
+ * The generator state a job's metadata describes.
+ *
+ * This is the store's shape, so the shared builder can read it. The remix
+ * used to spread the metadata into an options object of its own, which is
+ * how it lost the model type, the IP adapter's "Stop At", and every
+ * deliberate zero: `strength || 1.0` turned a LoRA the user had turned off
+ * back on.
+ */
+function remixSnapshot(meta) {
+  const model = remixModel(meta);
+  const record = meta.checkpoint && typeof meta.checkpoint === "object"
+    ? meta.checkpoint
+    : (model.checkpoint ? { name: model.checkpoint, display_name: model.checkpoint } : null);
+
+  return {
+    prompt: meta.prompt,
+    negativePrompt: meta.negativePrompt,
+    steps: meta.steps,
+    cfg: meta.cfg,
+    sampler: meta.sampler,
+    scheduler: meta.scheduler,
+    width: meta.width,
+    height: meta.height,
+    batchSize: meta.batchSize,
+    clipSkip: meta.clipSkip,
+    selectedCheckpoint: record,
+    selectedVae: model.vae,
+    selectedClip: model.clip,
+    selectedClip2: model.clip2,
+    model,
+    selectedLoras: meta.loras,
+    controlnets: meta.controlnets,
+    ipAdapters: meta.ipAdapters,
+    hiresFix: meta.hiresFix,
+    hiresUpscaler: meta.hiresUpscaler,
+    hiresDenoise: meta.hiresDenoise,
+    hiresUpscale: meta.hiresUpscale,
+    hiresSteps: meta.hiresSteps,
+    adetailer: meta.adetailer,
+    adetailerModel: meta.adetailerModel,
+    adetailerPrompt: meta.adetailerPrompt,
+    adetailerSteps: meta.adetailerSteps,
+    adetailerDenoise: meta.adetailerDenoise,
+    adetailerInpaintMasked: meta.adetailerInpaintMasked,
+    enableFreeU: meta.enableFreeU,
+    enablePAG: meta.enablePAG,
+    pagScale: meta.pagScale,
+    enableLatentUpscale: meta.enableLatentUpscale,
+    latentUpscaleMultiplier: meta.latentUpscaleMultiplier,
+    sourceImage: meta.sourceImage ? { filename: meta.sourceImage } : null,
+    denoise: meta.denoise,
+    maskBlur: meta.maskBlur,
+    growMask: meta.growMask,
+  };
+}
 
 const FeedCard = memo(function FeedCard({
   item,
@@ -171,6 +273,7 @@ const FeedCard = memo(function FeedCard({
 
   // Quick Remix: Load params, randomize seed, and generate immediately
   const [remixing, setRemixing] = useState(false);
+  const { runWithPreflight } = useGenerationPreflight();
 
   const handleRemix = async () => {
     if (remixing) return;
@@ -186,41 +289,33 @@ const FeedCard = memo(function FeedCard({
       // Generate new random seed
       const newSeed = Math.floor(Math.random() * Number.MAX_SAFE_INTEGER);
 
-      // Build options
-      const options = {
-        mode: meta.type || 't2i',
-        ...meta,
-        seed: newSeed,
-        // Override the image input to make sure it feeds correctly for img2img
-        inputImage: meta.sourceImage, 
-        checkpoint: checkpointName(meta),
-        unet: meta.unet?.name || meta.unet,
-        clip: meta.clip?.name || meta.clip,
-        vae: meta.vae?.name || meta.vae,
-        clip2: meta.clip2?.name || meta.clip2,
-        loras: meta.loras?.map(l => ({ name: l.name || l, strength: l.strength || 1.0 })),
-        controlnets: meta.controlnets?.map(c => ({
-            name: c.name || c,
-            image: c.image,
-            preprocessor: c.preprocessor || "None",
-            strength: c.strength || 1.0
-        })),
-        ipAdapters: meta.ipAdapters?.map(ip => ({
-            model: ip.model,
-            clipVision: ip.clipVision,
-            image: ip.image,
-            weight: ip.weight || 1.0
-        }))
-      };
+      // The SAME builder the generator pages use, fed from this job's
+      // metadata. The remix used to assemble an options object of its own -
+      // a second request builder that had to agree with the first one, and
+      // did not: it lost the UNET and its text encoders, the model type and
+      // the IP adapter's "Stop At", and its `|| 1.0` fallbacks turned a
+      // deliberate `strength: 0` back into full strength.
+      const { options, metadata } = buildGeneratorPayload(
+        meta.type || "t2i",
+        remixSnapshot(meta),
+        {
+          seed: newSeed,
+          maskResult: meta.maskImage ? { filename: meta.maskImage } : undefined,
+        }
+      );
 
-      const metadata = {
-        ...meta,
-        seed: newSeed,
-      };
-
-      await generateApi.workflow(options, metadata, {
-        idempotencyKey: createIdempotencyKey("generate-remix"),
+      // The preflight, like the generator pages: a remix of a model that is
+      // not installed should say so before the job is created, not fail on
+      // the provider a minute later.
+      const { ok } = await runWithPreflight(options, {
+        onValid: async () =>
+          generateApi.workflow(options, metadata, {
+            kind: GUIDED,
+            idempotencyKey: createIdempotencyKey("generate-remix"),
+          }),
       });
+      if (!ok) return;
+
       toast.success("Remix queued! Creating variation...", {
         icon: "✨",
         duration: settings.ui.toastSuccessDuration,

@@ -11,8 +11,9 @@ import {
     AlertTriangle,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { generateApi, ApiError } from '../api';
+import { settingsApi } from '../api/settingsApi';
 import { useModelDirectories } from '../hooks/useModelDirectories';
 import { useJobStatus } from '../hooks/useJobStatus';
 import { useWorkflowBuilder } from '../hooks/useWorkflowBuilder';
@@ -97,6 +98,13 @@ const TERMINAL_STATUSES = ['completed', 'failed', 'error', 'cancelled'];
 // callbacks, all of which therefore recomputed on every render of this page.
 const NO_MODELS = [];
 
+/**
+ * The same cache entries the Settings page reads the server config through,
+ * so the two share one request.
+ */
+const SETTINGS_CONFIG_QUERY_KEY = ['settings_config'];
+const SETTINGS_SCHEMA_QUERY_KEY = ['settings_schema'];
+
 function findModelByName(models, name) {
     if (!name) return null;
     return models.find((model) => model.name === name) || { name };
@@ -135,10 +143,14 @@ export default function BatchGenerate() {
     const selectedVae = useGeneratorStore((state) => state.selectedVae);
     const setSelectedVae = useGeneratorStore((state) => state.setSelectedVae);
     const selectedLoras = useGeneratorStore((state) => state.selectedLoras);
-    const setSelectedLoras = useGeneratorStore((state) => state.setSelectedLoras);
     const addLora = useGeneratorStore((state) => state.addLora);
     const removeLora = useGeneratorStore((state) => state.removeLora);
     const updateLora = useGeneratorStore((state) => state.updateLora);
+    // The bulk writer. It is the only one that honours the locks: a locked
+    // parameter means "do not change this value", and the individual
+    // setters do not know about the locks at all.
+    const setAll = useGeneratorStore((state) => state.setAll);
+    const lockedParams = useGeneratorStore((state) => state.lockedParams);
 
     const autoRandomizeSeed = useSettingsStore((state) => state.settings.generator.autoRandomizeSeed);
     const updateSetting = useSettingsStore((state) => state.updateSetting);
@@ -195,6 +207,41 @@ export default function BatchGenerate() {
     const checkpointName = selectedCheckpoint?.name || '';
     const activePreset = activePresetName ? getPreset(activePresetName) : null;
 
+    // The server's default checkpoint.
+    //
+    // "Auto (default)" used to mean "send no checkpoint at all", and the
+    // backend's own fallback is an empty string - so the request named no
+    // model and the preflight reported a missing model with an empty name.
+    //
+    // The server HAS a default, in two places: the CONFIGURED one
+    // (`generator.default_checkpoint` in config.json) and the compiled-in
+    // one, which the settings schema documents. Both are readable from here,
+    // so "Auto" now names a real model.
+    const { data: settingsConfig } = useQuery({
+        queryKey: SETTINGS_CONFIG_QUERY_KEY,
+        queryFn: () => settingsApi.get(),
+        staleTime: 30000,
+    });
+    const { data: settingsSchema } = useQuery({
+        queryKey: SETTINGS_SCHEMA_QUERY_KEY,
+        queryFn: () => settingsApi.getSchema(),
+        staleTime: 5 * 60 * 1000,
+    });
+    const serverDefaultCheckpoint = (
+        settingsConfig?.settings?.generator?.default_checkpoint
+        || settingsSchema?.generator?.fields?.default_checkpoint?.default
+        || ''
+    );
+
+    // The model the request will actually name.
+    const resolvedCheckpoint = useMemo(() => {
+        if (selectedCheckpoint?.name) return selectedCheckpoint;
+        if (serverDefaultCheckpoint) return findModelByName(checkpoints, serverDefaultCheckpoint);
+        return null;
+    }, [selectedCheckpoint, serverDefaultCheckpoint, checkpoints]);
+    const effectiveCheckpointName = resolvedCheckpoint?.name || '';
+    const hasCheckpoint = Boolean(effectiveCheckpointName);
+
     const generatedPrompts = useMemo(
         () => resolvePrompts(prompts, { charName, sceneName, basePrompt }),
         [prompts, charName, sceneName, basePrompt]
@@ -211,10 +258,10 @@ export default function BatchGenerate() {
     // model was deleted) says so here rather than failing at render time.
     const missing = useMemo(
         () => findMissingModels(
-            { checkpoint: checkpointName, loras: lorasFromSelectedLoras(selectedLoras) },
+            { checkpoint: effectiveCheckpointName, loras: lorasFromSelectedLoras(selectedLoras) },
             { checkpoints, loras: installedLoras }
         ),
-        [checkpointName, selectedLoras, checkpoints, installedLoras]
+        [effectiveCheckpointName, selectedLoras, checkpoints, installedLoras]
     );
     const showMissingWarning = !modelsLoading && missing.hasMissing;
 
@@ -266,9 +313,21 @@ export default function BatchGenerate() {
             // reads the store, which is where this page's steps, cfg,
             // sampler, checkpoint, loras and dimensions already live - so
             // there is one request builder, not two that have to agree.
-            const { options, metadata } = buildPayload(jobSeed, { prompt });
+            //
+            // The checkpoint is passed explicitly, because "Auto (default)"
+            // is a choice the page resolves - to the server's configured
+            // default - and the store only knows about an explicit pick.
+            const { options, metadata } = buildPayload(jobSeed, {
+                prompt,
+                selectedCheckpoint: resolvedCheckpoint,
+            });
             return {
-                workflow: { nodes: {}, edges: [] },
+                // The entry's KIND, stated. The backend's batch endpoint
+                // reads `options` and compiles it, and an entry that also
+                // carries an empty `workflow` was only unambiguous by
+                // accident - it depended on the backend noticing that
+                // `{nodes: {}, edges: []}` has neither.
+                kind: 'guided',
                 options,
                 metadata: {
                     ...metadata,
@@ -289,6 +348,13 @@ export default function BatchGenerate() {
         }
         if (!generatedPrompts.some((prompt) => prompt.trim())) {
             toast.error('Please fill in required fields');
+            return;
+        }
+        // A request with no checkpoint names no model, and the provider
+        // fails it a minute later with a message about a file called "".
+        // The Simple page blocks the same way.
+        if (!hasCheckpoint) {
+            toast.error('Select a checkpoint first');
             return;
         }
 
@@ -380,6 +446,12 @@ export default function BatchGenerate() {
      * A preset owns every field it can: the generation config goes back into
      * the generator store (so Simple Generate agrees) and the batch-only fields
      * into local state. Nothing is read that nothing wrote.
+     *
+     * The store part goes through `setAll`, the bulk writer, because it is
+     * the only writer that honours the locks. The individual setters know
+     * nothing about them, so loading a preset used to overwrite a locked
+     * step count, a locked resolution and a locked sampler - the one thing
+     * a lock is for.
      */
     const handleLoadPreset = useCallback((name) => {
         const preset = getPreset(name);
@@ -392,24 +464,28 @@ export default function BatchGenerate() {
         setCharName(preset.charName);
         setSceneName(preset.sceneName);
         setSeedMode(preset.seedMode);
-        setNegativePrompt(preset.negativePrompt);
-        setSteps(preset.steps);
-        setCfg(preset.cfg);
-        setSampler(preset.sampler);
-        setScheduler(preset.scheduler);
-        setClipSkip(preset.clipSkip);
-        setBatchSize(preset.batchSize);
-        setWidth(preset.width);
-        setHeight(preset.height);
-        setSelectedVae(preset.vae);
-        setSelectedCheckpoint(findModelByName(checkpoints, preset.checkpoint));
-        setSelectedLoras(lorasToSelectedLoras(preset.loras));
+        setAll({
+            negativePrompt: preset.negativePrompt,
+            steps: preset.steps,
+            cfg: preset.cfg,
+            sampler: preset.sampler,
+            scheduler: preset.scheduler,
+            clipSkip: preset.clipSkip,
+            batchSize: preset.batchSize,
+            width: preset.width,
+            height: preset.height,
+            selectedVae: preset.vae,
+            selectedCheckpoint: findModelByName(checkpoints, preset.checkpoint),
+            selectedLoras: lorasToSelectedLoras(preset.loras),
+        });
+        // `setAll` does not bump the preflight tick the individual setters
+        // bump, so the previous preflight result would survive a preset
+        // that changed the model.
+        useGeneratorStore.setState((state) => ({ preflightTick: state.preflightTick + 1 }));
         toast.success(`Loaded preset "${name}"`);
     }, [
         getPreset, setPrompts, setBasePrompt, setCharName, setSceneName, setSeedMode,
-        setNegativePrompt, setSteps, setCfg, setSampler, setScheduler, setClipSkip,
-        setBatchSize, setWidth, setHeight, setSelectedVae, setSelectedCheckpoint,
-        setSelectedLoras, checkpoints,
+        setAll, checkpoints,
     ]);
 
     const handleSelectBaked = useCallback((key) => {
@@ -608,7 +684,11 @@ export default function BatchGenerate() {
                             onChange={(event) => handleSelectCheckpoint(event.target.value)}
                             className="w-full px-3 py-2 bg-gray-800 border border-white/10 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500/50 mb-3"
                         >
-                            <option value="">Auto (default)</option>
+                            <option value="">
+                                {serverDefaultCheckpoint
+                                    ? `Auto (default: ${serverDefaultCheckpoint})`
+                                    : 'None — pick a checkpoint'}
+                            </option>
                             {checkpointOptions.map((option) => (
                                 <option key={option.name} value={option.name}>{option.label}</option>
                             ))}
@@ -711,9 +791,11 @@ export default function BatchGenerate() {
                                 label="Steps"
                                 value={steps}
                                 onChange={(value) => {
+                                    if (lockedParams.steps) return;
                                     const parsed = Number(value);
                                     if (Number.isFinite(parsed)) setSteps(Math.max(1, Math.round(parsed)));
                                 }}
+                                disabled={lockedParams.steps}
                                 min={1}
                                 max={150}
                             />
@@ -721,9 +803,11 @@ export default function BatchGenerate() {
                                 label="CFG"
                                 value={cfg}
                                 onChange={(value) => {
+                                    if (lockedParams.cfg) return;
                                     const parsed = Number(value);
                                     if (Number.isFinite(parsed)) setCfg(Math.max(0, parsed));
                                 }}
+                                disabled={lockedParams.cfg}
                                 min={0}
                                 max={30}
                                 step={0.5}
@@ -732,9 +816,11 @@ export default function BatchGenerate() {
                                 label="Clip Skip"
                                 value={clipSkip || 1}
                                 onChange={(value) => {
+                                    if (lockedParams.clipSkip) return;
                                     const parsed = Number(value);
                                     if (Number.isFinite(parsed)) setClipSkip(Math.max(1, Math.min(4, Math.round(parsed))));
                                 }}
+                                disabled={lockedParams.clipSkip}
                                 min={1}
                                 max={4}
                             />
@@ -743,8 +829,9 @@ export default function BatchGenerate() {
                                 <select
                                     id="batch-sampler"
                                     value={sampler}
-                                    onChange={(event) => setSampler(event.target.value)}
-                                    className="w-full px-3 py-2 bg-gray-800 border border-white/10 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500/50"
+                                    disabled={lockedParams.sampler}
+                                    onChange={(event) => { if (!lockedParams.sampler) setSampler(event.target.value); }}
+                                    className="w-full px-3 py-2 bg-gray-800 border border-white/10 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500/50 disabled:opacity-50 disabled:cursor-not-allowed"
                                 >
                                     {withCurrentOption(SAMPLERS, sampler).map((option) => (
                                         <option key={option} value={option}>{option}</option>
@@ -756,8 +843,9 @@ export default function BatchGenerate() {
                                 <select
                                     id="batch-scheduler"
                                     value={scheduler}
-                                    onChange={(event) => setScheduler(event.target.value)}
-                                    className="w-full px-3 py-2 bg-gray-800 border border-white/10 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500/50"
+                                    disabled={lockedParams.scheduler}
+                                    onChange={(event) => { if (!lockedParams.scheduler) setScheduler(event.target.value); }}
+                                    className="w-full px-3 py-2 bg-gray-800 border border-white/10 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500/50 disabled:opacity-50 disabled:cursor-not-allowed"
                                 >
                                     {withCurrentOption(SCHEDULERS, scheduler).map((option) => (
                                         <option key={option} value={option}>{option}</option>
@@ -776,14 +864,15 @@ export default function BatchGenerate() {
                         <select
                             id="batch-canvas"
                             value={matchesSizeOption ? `${width}x${height}` : 'custom'}
+                            disabled={lockedParams.width || lockedParams.height}
                             onChange={(event) => {
                                 const [nextWidth, nextHeight] = event.target.value.split('x').map(Number);
                                 if (nextWidth && nextHeight) {
-                                    setWidth(nextWidth);
-                                    setHeight(nextHeight);
+                                    if (!lockedParams.width) setWidth(nextWidth);
+                                    if (!lockedParams.height) setHeight(nextHeight);
                                 }
                             }}
-                            className="w-full px-3 py-2 bg-gray-800 border border-white/10 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500/50 mb-3"
+                            className="w-full px-3 py-2 bg-gray-800 border border-white/10 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500/50 mb-3 disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                             {matchesSizeOption ? null : (
                                 <option value="custom">Custom ({width}×{height})</option>
@@ -800,8 +889,9 @@ export default function BatchGenerate() {
                                     id="batch-width"
                                     type="number"
                                     value={width}
-                                    onChange={(event) => setWidth(Number(event.target.value) || 64)}
-                                    className="w-full px-3 py-2 bg-gray-800 border border-white/10 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500/50"
+                                    disabled={lockedParams.width}
+                                    onChange={(event) => { if (!lockedParams.width) setWidth(Number(event.target.value) || 64); }}
+                                    className="w-full px-3 py-2 bg-gray-800 border border-white/10 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500/50 disabled:opacity-50 disabled:cursor-not-allowed"
                                 />
                             </div>
                             <div>
@@ -810,8 +900,9 @@ export default function BatchGenerate() {
                                     id="batch-height"
                                     type="number"
                                     value={height}
-                                    onChange={(event) => setHeight(Number(event.target.value) || 64)}
-                                    className="w-full px-3 py-2 bg-gray-800 border border-white/10 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500/50"
+                                    disabled={lockedParams.height}
+                                    onChange={(event) => { if (!lockedParams.height) setHeight(Number(event.target.value) || 64); }}
+                                    className="w-full px-3 py-2 bg-gray-800 border border-white/10 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500/50 disabled:opacity-50 disabled:cursor-not-allowed"
                                 />
                             </div>
                         </div>
@@ -823,8 +914,12 @@ export default function BatchGenerate() {
                             min={1}
                             max={16}
                             value={batchSize}
-                            onChange={(event) => setBatchSize(Math.max(1, Math.min(16, parseInt(event.target.value, 10) || 1)))}
-                            className="w-full px-3 py-2 bg-gray-800 border border-white/10 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500/50 mb-3"
+                            disabled={lockedParams.batchSize}
+                            onChange={(event) => {
+                                if (lockedParams.batchSize) return;
+                                setBatchSize(Math.max(1, Math.min(16, parseInt(event.target.value, 10) || 1)));
+                            }}
+                            className="w-full px-3 py-2 bg-gray-800 border border-white/10 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500/50 mb-3 disabled:opacity-50 disabled:cursor-not-allowed"
                         />
 
                         <label className="block text-xs text-gray-400 mb-1" htmlFor="batch-negative">Negative Prompt</label>
@@ -936,11 +1031,17 @@ export default function BatchGenerate() {
                         )}
                         <button
                             onClick={handleGenerate}
-                            disabled={isGenerating || overLimit}
+                            disabled={isGenerating || overLimit || !hasCheckpoint}
                             className="w-full mt-4 flex items-center justify-center gap-2 px-4 py-3 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors"
                         >
                             <Play size={16} /> {isGenerating ? 'Generating...' : `Generate ${totalImages} Images`}
                         </button>
+                        {!hasCheckpoint && (
+                            <p role="alert" className="mt-2 text-2xs text-amber-300 text-center">
+                                Pick a checkpoint first. Without one the request names no model, and the
+                                provider fails it with a file called &quot;&quot;.
+                            </p>
+                        )}
                         {overLimit && (
                             <p className="mt-2 text-2xs text-gray-500 text-center">
                                 The backend accepts at most {MAX_BATCH_WORKFLOWS} workflows per batch request.

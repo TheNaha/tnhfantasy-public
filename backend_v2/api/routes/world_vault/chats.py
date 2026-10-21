@@ -6,7 +6,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, File, Form, Header, Query, UploadFile
 from fastapi.responses import Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 from sqlmodel import Session, select
 from sqlalchemy import String, cast, func, delete, or_
 
@@ -33,6 +33,7 @@ from core.entities import (
     VoiceModel,
 )
 from core.exceptions import ComfyError, NotFoundError, ValidationError
+from core.pipeline_limits import AUTONOMY_CHAIN_THRESHOLDS, MAX_AUTONOMOUS_TURNS
 from core.sql_search import LIKE_ESCAPE_CHAR, like_contains
 from core.upload_validation import (
     MAX_CARD_SIZE_MB,
@@ -152,6 +153,24 @@ def _model_for_kind(kind: str, override: str | None, session):
     return model_for_kind(kind, override, session)
 
 
+def _validate_autonomy_level(value: str | None) -> str | None:
+    """Reject an autonomy level the pipeline does not know.
+
+    The vocabulary is `core.pipeline_limits`' own — the keys of
+    `AUTONOMY_CHAIN_THRESHOLDS`, which is the table the chain stage reads —
+    so a new level is added in one place and this validator cannot drift
+    away from it.
+    """
+    if value is None:
+        return None
+    if value not in AUTONOMY_CHAIN_THRESHOLDS:
+        raise ValueError(
+            "director_autonomy_level must be one of: "
+            + ", ".join(sorted(AUTONOMY_CHAIN_THRESHOLDS))
+        )
+    return value
+
+
 class UpdateChatRequest(BaseModel):
     name: str | None = None
     # See `CreateChatRequest.world_id`. `None` here means "not supplied" (the
@@ -210,7 +229,23 @@ class UpdateChatRequest(BaseModel):
     authors_note: str | None = None
     authors_note_depth: int | None = None
     director_enabled: bool | None = None
+    # The Director's autonomy level and its turn budget. The same failure as
+    # `additional_character_ids` and the two budget columns above, one level
+    # down: the COLUMNS existed (`core/entities.py:1434`), the pipeline read
+    # them (`services/pipeline_stages.py:368`), the manifest quoted the
+    # budget — and the UI PATCHed them
+    # (`ChatContextPanel.jsx:1411`) — but `UpdateChatRequest` never declared
+    # them, so pydantic's `extra='ignore'` dropped them at the edge and the
+    # route answered 200. The Strict/Balanced/Cinematic selector was a no-op
+    # and the "up to 4 turns" budget could not be configured.
+    director_autonomy_level: str | None = None
+    max_autonomous_turns: int | None = Field(default=None, ge=1, le=MAX_AUTONOMOUS_TURNS)
     state_snapshot: dict | None = None
+
+    @field_validator("director_autonomy_level")
+    @classmethod
+    def _check_director_autonomy_level(cls, value: str | None) -> str | None:
+        return _validate_autonomy_level(value)
 
 
 class NarrateRequest(BaseModel):
@@ -244,7 +279,17 @@ class CreateChatRequest(BaseModel):
     idle_sim_enabled: bool = False
     persona_id: str | None = None
     director_enabled: bool = True
+    # See `UpdateChatRequest.director_autonomy_level` — a chat that never set
+    # its autonomy could not be given one later without a PATCH, which is a
+    # worse way to start than editing it.
+    director_autonomy_level: str | None = None
+    max_autonomous_turns: int | None = Field(default=None, ge=1, le=MAX_AUTONOMOUS_TURNS)
     state_snapshot: dict | None = None
+
+    @field_validator("director_autonomy_level")
+    @classmethod
+    def _check_director_autonomy_level(cls, value: str | None) -> str | None:
+        return _validate_autonomy_level(value)
 
 
 class SendMessageRequest(BaseModel):
@@ -757,6 +802,14 @@ def create_chat(req: CreateChatRequest, session: Session = Depends(get_session),
         idle_sim_enabled=req.idle_sim_enabled,
         persona_id=req.persona_id,
         director_enabled=req.director_enabled,
+        # Both columns are NOT NULL, so an unset value takes the entity's own
+        # default rather than being written as null.
+        director_autonomy_level=req.director_autonomy_level or "balanced",
+        max_autonomous_turns=(
+            req.max_autonomous_turns
+            if req.max_autonomous_turns is not None
+            else MAX_AUTONOMOUS_TURNS
+        ),
         state_snapshot=initial_snapshot,
     )
     chat.created_at = datetime.now(timezone.utc)
@@ -890,6 +943,12 @@ def update_chat(chat_id: str, data: UpdateChatRequest, session: Session = Depend
     if not chat:
         raise NotFoundError("Chat", chat_id)
     update_fields = data.model_dump(exclude_unset=True)
+    # Both Director columns are NOT NULL, so an explicit null means "leave
+    # alone" rather than "set to null" — writing None would raise an
+    # IntegrityError and leave the session poisoned.
+    for _director_field in ("director_autonomy_level", "max_autonomous_turns"):
+        if update_fields.get(_director_field) is None:
+            update_fields.pop(_director_field, None)
     # Validate the group roster: every id must resolve, and the primary
     # character must not also sit in it. A dangling id here is not a rendering
     # problem, it silently drops that speaker from the prompt context, so the
@@ -1919,6 +1978,25 @@ def edit_message(
     session.refresh(message)
     return message
 
+def _inflight_chat_job_ids_sync(session: Session, chat_id: str) -> list[str]:
+    """The ids of the LLM jobs still in flight for `chat_id`.
+
+    Synchronous on purpose: the caller is `async def` and awaits the cancels
+    below, so this query would otherwise run on the event loop.
+    """
+    from services.agent_simulation import IN_FLIGHT_JOB_STATUSES
+
+    return list(
+        session.exec(
+            select(Job.id).where(
+                Job.task_type == "llm",
+                Job.status.in_(IN_FLIGHT_JOB_STATUSES),
+                Job.metadata_["chat_id"].as_string() == chat_id,
+            )
+        ).all()
+    )
+
+
 async def _cancel_inflight_chat_jobs(session: Session, chat_id: str, *, reason: str) -> int:
     """Cancel every LLM job still in flight for `chat_id`. Returns how many.
 
@@ -1934,17 +2012,12 @@ async def _cancel_inflight_chat_jobs(session: Session, chat_id: str, *, reason: 
     the user is rolling back from — so it is swallowed per job. One job failing to
     cancel must not 500 the rollback and leave the conversation half-rewound.
     """
-    from services.agent_simulation import IN_FLIGHT_JOB_STATUSES
     from services.job_processing import cancel_job as cancel_job_processing
     from services.job_service import JobService
 
-    in_flight = session.exec(
-        select(Job.id).where(
-            Job.task_type == "llm",
-            Job.status.in_(IN_FLIGHT_JOB_STATUSES),
-            Job.metadata_["chat_id"].as_string() == chat_id,
-        )
-    ).all()
+    # The read is off the loop: this is an `async def` and the cancels below
+    # are awaited, so the query would otherwise block the event loop.
+    in_flight = await asyncio.to_thread(_inflight_chat_job_ids_sync, session, chat_id)
     if not in_flight:
         return 0
 
@@ -2910,6 +2983,26 @@ class PatchStateSnapshotRequest(BaseModel):
     story_time: str | None = None
 
 
+def _director_prep_sync(
+    chat_repo: ChatRepository,
+    character_repo: CharacterRepository,
+    message_repo: MessageRepository,
+    chat_id: str,
+) -> tuple[Chat, Character | None, list]:
+    """Load the chat, its character and its recent messages.
+
+    Synchronous on purpose: the route awaits the Director below, so it cannot
+    become a plain `def` route and these three reads would otherwise run on
+    the event loop.
+    """
+    chat = chat_repo.get(chat_id)
+    if not chat:
+        raise NotFoundError("Chat", chat_id)
+    character = character_repo.get(chat.character_id) if chat.character_id else None
+    recent = message_repo.list_by_chat(chat_id, limit=8, newest_first=True)
+    return chat, character, recent
+
+
 @router.post("/{chat_id}/director/evaluate")
 async def evaluate_chat_director(
     chat_id: str,
@@ -2928,13 +3021,14 @@ async def evaluate_chat_director(
     )
 
     req = request or TriggerDirectorRequest()
-    chat = chat_repo.get(chat_id)
-    if not chat:
-        raise NotFoundError("Chat", chat_id)
+    # The reads are off the loop: this route awaits the Director, so it is an
+    # `async def`, and the three queries it used to run inline blocked every
+    # other request in the process for their duration.
+    chat, character, recent = await asyncio.to_thread(
+        _director_prep_sync, chat_repo, character_repo, message_repo, chat_id
+    )
 
-    character = character_repo.get(chat.character_id) if chat.character_id else None
     char_name = character.name if character else "Character"
-    recent = message_repo.list_by_chat(chat_id, limit=8, newest_first=True)
     recent_transcript = [
         {
             "role": m.role.value if hasattr(m.role, "value") else str(m.role),
