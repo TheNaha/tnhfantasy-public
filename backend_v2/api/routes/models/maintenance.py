@@ -1,6 +1,7 @@
 
 
 import asyncio
+import os
 
 from fastapi import APIRouter, BackgroundTasks, Depends
 from pydantic import BaseModel
@@ -116,12 +117,20 @@ def list_model_tags(session: Session, model_id: str) -> list[dict]:
     return [{"tag": r.tag, "source": r.source} for r in rows]
 
 
+def _civitai_headers() -> dict[str, str]:
+    headers = {"User-Agent": "TNHComfy/1.0"}
+    token = os.getenv("CIVITAI_TOKEN", "").strip()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
+
+
 def _apply_civitai_metadata(model, civitai_data: dict, session) -> None:
     """
     Apply CivitAI API response data to a model entity and its related tags/versions.
     Shared by single-model resync and background resync.
     """
-    from core.entities import ModelTag
+    from core.entities import ModelImage, ModelTag
 
     stats = civitai_data.get("stats") or {}
     creator = civitai_data.get("creator") or {}
@@ -161,7 +170,7 @@ def _apply_civitai_metadata(model, civitai_data: dict, session) -> None:
         session.add(ModelTag(model_id=model.id, tag=name, source=MODEL_TAG_SOURCE_CIVITAI))
         known.add(name)
 
-    # Update file sizes from versions
+    # Update file sizes and preview images from versions
     civitai_versions = civitai_data.get("modelVersions", [])
     if civitai_versions:
         local_versions = model.versions
@@ -180,6 +189,49 @@ def _apply_civitai_metadata(model, civitai_data: dict, session) -> None:
                             if not lf.size_kb or lf.size_kb == 0:
                                 lf.size_kb = float(civitai_size_kb)
                                 session.add(lf)
+
+                # Synchronize preview images (up to 20 images)
+                cv_images = cv.get("images", [])
+                if cv_images:
+                    existing_images = session.exec(
+                        select(ModelImage).where(ModelImage.version_id == lv.id)
+                    ).all()
+                    existing_by_url = {img.url: img for img in existing_images}
+
+                    for i, img_data in enumerate(cv_images[:20]):
+                        img_url = img_data.get("url")
+                        if not img_url:
+                            continue
+                        img_nsfw_level = img_data.get("nsfwLevel")
+                        if img_nsfw_level is None:
+                            img_nsfw_level = 3 if img_data.get("nsfw") else 1
+
+                        if img_url in existing_by_url:
+                            existing_img = existing_by_url[img_url]
+                            if existing_img.width is None:
+                                existing_img.width = img_data.get("width")
+                            if existing_img.height is None:
+                                existing_img.height = img_data.get("height")
+                            if existing_img.blurhash is None:
+                                existing_img.blurhash = img_data.get("hash")
+                            if existing_img.nsfw_level is None or existing_img.nsfw_level == 1:
+                                existing_img.nsfw_level = img_nsfw_level
+                            session.add(existing_img)
+                        else:
+                            new_img = ModelImage(
+                                version_id=lv.id,
+                                url=img_url,
+                                width=img_data.get("width"),
+                                height=img_data.get("height"),
+                                blurhash=img_data.get("hash"),
+                                type=img_data.get("type", "image"),
+                                nsfw_level=img_nsfw_level,
+                                has_meta=img_data.get("hasMeta", False),
+                                has_positive_prompt=img_data.get("hasPositivePrompt", False),
+                                sort_order=i,
+                            )
+                            session.add(new_img)
+                            existing_by_url[img_url] = new_img
 
     session.add(model)
 
@@ -275,16 +327,51 @@ async def resync_model_from_civitai(
     # write after it both run in a worker thread.
     civitai_model_id = await asyncio.to_thread(_civitai_id_for_resync, session, model_id)
 
-    # Fetch fresh data from CivitAI
-    url = f"https://civitai.com/api/v1/models/{civitai_model_id}"
-    try:
-        http_client = get_http_client()
-        response = await http_client.get(url, timeout=30.0)
-        if response.status_code != 200:
-            raise ComfyError(f"CivitAI API error: {response.status_code}")
-        civitai_data = response.json()
-    except Exception as e:
-        raise ComfyError(f"Failed to fetch from CivitAI: {e!s}")
+    # Fetch fresh data from CivitAI with civitai.red fallback and 429 retry
+    headers = _civitai_headers()
+    http_client = get_http_client()
+    domains = ["civitai.com", "civitai.red"]
+    civitai_data = None
+    last_error = None
+
+    for domain in domains:
+        url = f"https://{domain}/api/v1/models/{civitai_model_id}"
+        domain_not_found = False
+        for attempt in range(RESYNC_MAX_RETRIES):
+            try:
+                response = await http_client.get(url, headers=headers, timeout=30.0)
+            except TypeError:
+                response = await http_client.get(url, timeout=30.0)
+            except Exception as e:
+                last_error = e
+                break
+
+            if response.status_code == 429:
+                retry_after = response.headers.get("Retry-After")
+                try:
+                    wait = float(retry_after) if retry_after is not None else RESYNC_INITIAL_BACKOFF_SECONDS * (2 ** attempt)
+                except ValueError:
+                    wait = RESYNC_INITIAL_BACKOFF_SECONDS
+                await asyncio.sleep(min(wait, RESYNC_MAX_BACKOFF_SECONDS))
+                last_error = ComfyError("API error: 429")
+                continue
+
+            if response.status_code == 404:
+                domain_not_found = True
+                last_error = ComfyError(f"CivitAI API error: {response.status_code}")
+                break
+
+            if response.status_code != 200:
+                raise ComfyError(f"CivitAI API error: {response.status_code}")
+
+            civitai_data = response.json()
+            break
+
+        if civitai_data is not None or not domain_not_found:
+            break
+
+    if civitai_data is None:
+        raise ComfyError(f"Failed to fetch from CivitAI: {last_error!s}")
 
     # Apply metadata using shared helper
     return await asyncio.to_thread(
@@ -411,43 +498,59 @@ async def run_background_resync():
         await report("started", "Starting...", 0)
 
         http_client = get_http_client()
+        headers = _civitai_headers()
 
         async def fetch_one(model):
-            """Fetch one model's CivitAI metadata, backing off on 429 until clear."""
-            url = f"https://civitai.com/api/v1/models/{model.civitai_model_id}"
+            """Fetch one model's CivitAI metadata, backing off on 429 until clear, with civitai.red fallback on 404."""
+            domains = ["civitai.com", "civitai.red"]
             last_error = None
-            for attempt in range(RESYNC_MAX_RETRIES):
-                try:
-                    response = await http_client.get(url, timeout=30.0)
-                except Exception as exc:
-                    return None, exc
 
-                if response.status_code == 429:
-                    retry_after = response.headers.get("Retry-After")
-                    if retry_after is not None:
-                        try:
-                            wait = float(retry_after)
-                        except ValueError:
-                            wait = RESYNC_INITIAL_BACKOFF_SECONDS
-                    else:
-                        wait = min(
-                            RESYNC_INITIAL_BACKOFF_SECONDS * (2 ** attempt),
-                            RESYNC_MAX_BACKOFF_SECONDS,
+            for domain in domains:
+                url = f"https://{domain}/api/v1/models/{model.civitai_model_id}"
+                domain_not_found = False
+
+                for attempt in range(RESYNC_MAX_RETRIES):
+                    try:
+                        response = await http_client.get(url, headers=headers, timeout=30.0)
+                    except TypeError:
+                        response = await http_client.get(url, timeout=30.0)
+                    except Exception as exc:
+                        return None, exc
+
+                    if response.status_code == 429:
+                        retry_after = response.headers.get("Retry-After")
+                        if retry_after is not None:
+                            try:
+                                wait = float(retry_after)
+                            except ValueError:
+                                wait = RESYNC_INITIAL_BACKOFF_SECONDS
+                        else:
+                            wait = min(
+                                RESYNC_INITIAL_BACKOFF_SECONDS * (2 ** attempt),
+                                RESYNC_MAX_BACKOFF_SECONDS,
+                            )
+                        # Keep the frontend informed instead of appearing stalled.
+                        await report(
+                            "processing",
+                            f"{model.name or model.id} (rate limited, retrying in {int(wait)}s)",
+                            index_ref[0],
                         )
-                    # Keep the frontend informed instead of appearing stalled.
-                    await report(
-                        "processing",
-                        f"{model.name or model.id} (rate limited, retrying in {int(wait)}s)",
-                        index_ref[0],
-                    )
-                    await asyncio.sleep(wait)
-                    last_error = ComfyError("API error: 429")
-                    continue
+                        await asyncio.sleep(wait)
+                        last_error = ComfyError("API error: 429")
+                        continue
 
-                if response.status_code != 200:
-                    return None, ComfyError(f"API error: {response.status_code}")
+                    if response.status_code == 404:
+                        domain_not_found = True
+                        last_error = ComfyError("API error: 404")
+                        break
 
-                return response.json(), None
+                    if response.status_code != 200:
+                        return None, ComfyError(f"API error: {response.status_code}")
+
+                    return response.json(), None
+
+                if not domain_not_found:
+                    break
 
             return None, last_error
 

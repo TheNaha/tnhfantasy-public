@@ -29,7 +29,7 @@ class _DummyAsyncClient:
     def __init__(self, route_handler):
         self.route_handler = route_handler
 
-    async def get(self, url, timeout=0):
+    async def get(self, url, timeout=0, **kwargs):
         return self.route_handler(url, timeout)
 
 
@@ -180,7 +180,12 @@ async def test_fetch_civitai_preview_skips_network_after_recent_failure(monkeypa
     assert second_data is None
     assert second_content_type is None
     assert second_cache_hit is False
-    assert len(calls) == 1
+    # Probes civitai.com then civitai.red on the first attempt, second attempt is cached
+    assert len(calls) == 2
+    assert calls == [
+        "https://civitai.com/api/v1/models/987654",
+        "https://civitai.red/api/v1/models/987654",
+    ]
 
 
 @pytest.mark.asyncio
@@ -209,7 +214,12 @@ async def test_fetch_civitai_preview_skips_retries_after_model_not_found(monkeyp
     assert second_data is None
     assert second_content_type is None
     assert second_cache_hit is False
-    assert len(calls) == 1
+    # Probes civitai.com then civitai.red on the first attempt, second attempt is cached
+    assert len(calls) == 2
+    assert calls == [
+        "https://civitai.com/api/v1/models/579645",
+        "https://civitai.red/api/v1/models/579645",
+    ]
 
 
 @pytest.mark.asyncio

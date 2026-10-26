@@ -31,9 +31,11 @@ class FakeHttpClient:
     def __init__(self, makers):
         self.makers = list(makers)
         self.calls = []
+        self.headers_passed = []
 
-    async def get(self, url, timeout=None):
+    async def get(self, url, headers=None, timeout=None, **kwargs):
         self.calls.append(url)
+        self.headers_passed.append(headers)
         if not self.makers:
             return FakeResponse(500)
         return self.makers.pop(0)()
@@ -258,3 +260,110 @@ async def test_resync_non_429_error_fails_without_retry(session, monkeypatch):
     assert client.calls == [f"https://civitai.com/api/v1/models/{m.civitai_model_id}"]
     assert results["errors"][0]["model_id"] == str(m.id)
     assert slept == []
+
+
+@pytest.mark.asyncio
+async def test_resync_synchronizes_all_version_images(session, monkeypatch):
+    from core.entities import ModelImage, ModelVersion
+    from sqlmodel import select
+
+    m = make_model(session, 500, "Image Sync Model")
+    version = ModelVersion(
+        model_id=m.id,
+        civitai_version_id=5001,
+        name="v1.0",
+        is_default=True,
+    )
+    session.add(version)
+    session.commit()
+    session.refresh(version)
+
+    # Initial image seed
+    img0 = ModelImage(
+        version_id=version.id,
+        url="https://image.civitai.com/x/img0.webp",
+        sort_order=0,
+    )
+    session.add(img0)
+    session.commit()
+
+    payload = civitai_payload("Image Sync Model")
+    payload["modelVersions"] = [
+        {
+            "id": 5001,
+            "name": "v1.0",
+            "images": [
+                {"url": "https://image.civitai.com/x/img0.webp", "hash": "h0", "width": 512, "height": 512},
+                {"url": "https://image.civitai.com/x/img1.webp", "hash": "h1", "width": 1024, "height": 1024},
+                {"url": "https://image.civitai.com/x/img2.webp", "hash": "h2", "width": 768, "height": 768},
+            ],
+        }
+    ]
+
+    client = FakeHttpClient([lambda: FakeResponse(200, json_data=payload)])
+
+    async def fake_broadcast(evt, data):
+        pass
+
+    monkeypatch.setattr(maintenance, "get_http_client", lambda: client)
+    monkeypatch.setattr(maintenance, "broadcast_to_all", fake_broadcast)
+    monkeypatch.setattr(maintenance, "get_session_context", lambda: fake_session_context(session))
+
+    results = await maintenance.run_background_resync()
+    assert results["success"] == 1
+
+    images = session.exec(
+        select(ModelImage).where(ModelImage.version_id == version.id).order_by(ModelImage.sort_order)
+    ).all()
+
+    assert len(images) == 3
+    urls = [img.url for img in images]
+    assert urls == [
+        "https://image.civitai.com/x/img0.webp",
+        "https://image.civitai.com/x/img1.webp",
+        "https://image.civitai.com/x/img2.webp",
+    ]
+    # Check that metadata on existing image was updated
+    assert images[0].blurhash == "h0"
+    assert images[0].width == 512
+    # Check that new images have their metadata
+    assert images[1].blurhash == "h1"
+    assert images[1].width == 1024
+    assert images[2].blurhash == "h2"
+    assert images[2].width == 768
+
+
+@pytest.mark.asyncio
+async def test_resync_falls_back_to_civitai_red_on_404(session, monkeypatch):
+    m = make_model(session, 600, "Red Domain Model")
+
+    # civitai.com returns 404, civitai.red returns 200
+    client = FakeHttpClient([
+        lambda: FakeResponse(404),
+        lambda: FakeResponse(200, json_data=civitai_payload("Red Synced Model")),
+    ])
+
+    monkeypatch.setenv("CIVITAI_TOKEN", "test-secret-token")
+    async def fake_broadcast(evt, data):
+        pass
+
+    monkeypatch.setattr(maintenance, "get_http_client", lambda: client)
+    monkeypatch.setattr(maintenance, "broadcast_to_all", fake_broadcast)
+    monkeypatch.setattr(maintenance, "get_session_context", lambda: fake_session_context(session))
+
+    results = await maintenance.run_background_resync()
+    assert results["success"] == 1
+    assert results["failed"] == 0
+
+    session.refresh(m)
+    assert m.name == "Red Synced Model"
+
+    assert client.calls == [
+        "https://civitai.com/api/v1/models/600",
+        "https://civitai.red/api/v1/models/600",
+    ]
+    # Verify Authorization header was passed
+    assert client.headers_passed[0] == {
+        "User-Agent": "TNHComfy/1.0",
+        "Authorization": "Bearer test-secret-token",
+    }
