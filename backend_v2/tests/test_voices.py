@@ -16,9 +16,9 @@ def character_with_voice(session):
 @pytest.fixture
 def voice_model(session, character_with_voice):
     vm = VoiceModel(
-        name="Test XTTS Voice",
+        name="Test Qwen3-TTS Voice",
         description="A test voice model",
-        type="xtts",
+        type="qwen3_tts",
         voice_profile="test_speaker",
         language="en",
         preview_text="Hello, this is a test.",
@@ -35,7 +35,7 @@ def test_list_voices(client, session, character_with_voice, voice_model):
     assert response.status_code == 200
     data = response.json()
     assert len(data) >= 1
-    assert any(v["name"] == "Test XTTS Voice" for v in data)
+    assert any(v["name"] == "Test Qwen3-TTS Voice" for v in data)
 
 
 def test_list_voices_filtered_by_character(client, session, character_with_voice, voice_model):
@@ -43,15 +43,15 @@ def test_list_voices_filtered_by_character(client, session, character_with_voice
     assert response.status_code == 200
     data = response.json()
     assert len(data) == 1
-    assert data[0]["name"] == "Test XTTS Voice"
+    assert data[0]["name"] == "Test Qwen3-TTS Voice"
 
 
 def test_get_voice(client, session, voice_model):
     response = client.get(f"/api/v2/voices/{voice_model.id}")
     assert response.status_code == 200
     data = response.json()
-    assert data["name"] == "Test XTTS Voice"
-    assert data["type"] == "xtts"
+    assert data["name"] == "Test Qwen3-TTS Voice"
+    assert data["type"] == "qwen3_tts"
     assert data["voice_profile"] == "test_speaker"
 
 
@@ -139,7 +139,7 @@ def test_voice_preview_refuses_when_no_provider_can_serve_tts(client, voice_mode
 
 
 def test_voice_preview_no_preview_text(client, session):
-    vm = VoiceModel(name="NoPreview", type="xtts")
+    vm = VoiceModel(name="NoPreview", type="qwen3_tts")
     session.add(vm)
     session.commit()
     session.refresh(vm)

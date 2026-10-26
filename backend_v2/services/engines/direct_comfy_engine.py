@@ -1349,19 +1349,20 @@ class DirectTTSEngine(DirectComfyEngine):
     manages_model_files: bool = False
     supports_discovery_reconcile: bool = False
 
-    #: Kokoro's built-in voices. A ComfyUI speech rig exposes them through its
+    #: Qwen3-TTS built-in preset timbres. A ComfyUI speech rig exposes them through its
     #: own nodes, so this is the catalogue for `list_models` rather than a
     #: discovery result. Same list `api/routes/providers/crud.py` serves for
     #: `modal_tts`, so the voice picker is identical across TTS providers.
     DEFAULT_VOICES: tuple[dict[str, str], ...] = (
-        {"name": "af_bella", "id": "af_bella", "type": "voice", "gender": "female", "accent": "American"},
-        {"name": "af_sarah", "id": "af_sarah", "type": "voice", "gender": "female", "accent": "American"},
-        {"name": "am_adam", "id": "am_adam", "type": "voice", "gender": "male", "accent": "American"},
-        {"name": "am_michael", "id": "am_michael", "type": "voice", "gender": "male", "accent": "American"},
-        {"name": "bf_emma", "id": "bf_emma", "type": "voice", "gender": "female", "accent": "British"},
-        {"name": "bf_isabella", "id": "bf_isabella", "type": "voice", "gender": "female", "accent": "British"},
-        {"name": "bm_george", "id": "bm_george", "type": "voice", "gender": "male", "accent": "British"},
-        {"name": "bm_lewis", "id": "bm_lewis", "type": "voice", "gender": "male", "accent": "British"},
+        {"name": "friendly", "id": "friendly", "type": "preset", "gender": "neutral", "description": "Warm, approachable tone"},
+        {"name": "professional", "id": "professional", "type": "preset", "gender": "neutral", "description": "Clear, authoritative delivery"},
+        {"name": "cheerful", "id": "cheerful", "type": "preset", "gender": "neutral", "description": "Bright, energetic tone"},
+        {"name": "calm", "id": "calm", "type": "preset", "gender": "neutral", "description": "Relaxed, soothing presence"},
+        {"name": "deep", "id": "deep", "type": "preset", "gender": "male", "description": "Rich, resonant bass"},
+        {"name": "bright", "id": "bright", "type": "preset", "gender": "female", "description": "Crisp, clear high register"},
+        {"name": "storyteller", "id": "storyteller", "type": "preset", "gender": "neutral", "description": "Expressive, narrative style"},
+        {"name": "whisper", "id": "whisper", "type": "preset", "gender": "neutral", "description": "Intimate, hushed delivery"},
+        {"name": "dramatic", "id": "dramatic", "type": "preset", "gender": "neutral", "description": "Theatrical, emotional range"},
     )
 
     async def list_models(self, directory: str = "voices") -> list[dict[str, Any]]:

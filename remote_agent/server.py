@@ -1949,14 +1949,75 @@ async def vram_stop_llm():
 
 
 # ---------------------------------------------------------------------------
-# TTS worker mode: synthesise to a file, return its address.
-#
-# The clip is written under DATA_ROOT and read back through the existing
-# `/get-file` route, so the same service token, the same path containment check
-# and the same size cap that guard model files also guard audio. A container
-# that already runs the model agent needs no second file-serving path.
+# TTS & Hybrid worker voice enumeration:
+# Enumerate available voices from Qwen3-TTS voice library + designed voices.
 # ---------------------------------------------------------------------------
-if WORKER_MODE == "tts":
+if WORKER_MODE in ("tts", "hybrid"):
+    @app.get("/v1/voices", dependencies=[Depends(verify_token)])
+    async def list_voices():
+        """Enumerate available voices from Qwen3-TTS voice library + designed voices."""
+        import glob
+        voices = []
+        
+        # Qwen3-TTS preset voices (9 built-in timbres)
+        preset_voices = [
+            {"id": "friendly", "name": "Friendly", "type": "preset", "language": "en", "description": "Warm, approachable tone"},
+            {"id": "professional", "name": "Professional", "type": "preset", "language": "en", "description": "Clear, authoritative delivery"},
+            {"id": "cheerful", "name": "Cheerful", "type": "preset", "language": "en", "description": "Bright, energetic tone"},
+            {"id": "calm", "name": "Calm", "type": "preset", "language": "en", "description": "Relaxed, soothing presence"},
+            {"id": "deep", "name": "Deep", "type": "preset", "language": "en", "description": "Rich, resonant bass"},
+            {"id": "bright", "name": "Bright", "type": "preset", "language": "en", "description": "Crisp, clear high register"},
+            {"id": "storyteller", "name": "Storyteller", "type": "preset", "language": "en", "description": "Expressive, narrative style"},
+            {"id": "whisper", "name": "Whisper", "type": "preset", "language": "en", "description": "Intimate, hushed delivery"},
+            {"id": "dramatic", "name": "Dramatic", "type": "preset", "language": "en", "description": "Theatrical, emotional range"},
+        ]
+        
+        for pv in preset_voices:
+            voices.append(pv)
+        
+        # Designed voices: scan output/voice/ directory for saved voice designs
+        voice_output_dir = os.path.join(DATA_ROOT, "output", "voice")
+        if os.path.isdir(voice_output_dir):
+            for voice_dir in os.listdir(voice_output_dir):
+                voice_path = os.path.join(voice_output_dir, voice_dir)
+                if os.path.isdir(voice_path):
+                    # Check for metadata file
+                    meta_path = os.path.join(voice_path, "metadata.json")
+                    if os.path.exists(meta_path):
+                        try:
+                            import json
+                            with open(meta_path, "r") as f:
+                                meta = json.load(f)
+                            voices.append({
+                                "id": f"design_{voice_dir}",
+                                "name": meta.get("name", voice_dir),
+                                "type": "design",
+                                "language": meta.get("language", "en"),
+                                "description": meta.get("description", ""),
+                                "created": meta.get("created"),
+                            })
+                        except Exception:
+                            voices.append({
+                                "id": f"design_{voice_dir}",
+                                "name": voice_dir,
+                                "type": "design",
+                                "language": "en",
+                                "description": "Designed voice",
+                            })
+                    else:
+                        # Look for audio files to infer
+                        audio_files = glob.glob(os.path.join(voice_path, "*.wav")) + glob.glob(os.path.join(voice_path, "*.mp3"))
+                        if audio_files:
+                            voices.append({
+                                "id": f"design_{voice_dir}",
+                                "name": voice_dir,
+                                "type": "design",
+                                "language": "en",
+                                "description": "Designed voice (no metadata)",
+                            })
+        
+        return {"voices": voices, "total": len(voices)}
+
     @app.post("/synthesize", dependencies=[Depends(verify_token)])
     async def synthesize(req: SynthesizeRequest):
         """Synthesise speech and return the stored clip's address.
@@ -1968,8 +2029,8 @@ if WORKER_MODE == "tts":
         import subprocess
 
         # `TTS_COMMAND` is the operator's hook: the container ships no model by
-        # default, and pointing it at any `text -> wav` shell command (Kokoro,
-        # Coqui, an in-process server) is all that is needed. Missing means no
+        # default, and pointing it at any `text -> wav` shell command (Qwen3-TTS CLI,
+        # an in-process server) is all that is needed. Missing means no
         # synthesis is configured, which is a 503 rather than a crash.
         command = os.getenv("TTS_COMMAND", "").strip()
         if not command:

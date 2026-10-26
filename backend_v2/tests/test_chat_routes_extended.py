@@ -510,7 +510,7 @@ class TestNarrateMessage:
 
     def test_narrate_with_voice_override(self, client, session, monkeypatch, tts_capable):
         from core.entities import VoiceModel
-        voice = VoiceModel(name="Midnight", voice_profile="midnight_xtts", language="en")
+        voice = VoiceModel(name="Midnight", voice_profile="midnight_voice", language="en")
         session.add(voice)
         session.commit()
         session.refresh(voice)
@@ -566,7 +566,7 @@ class TestNarrateMessage:
 
     def test_narrate_chat_override_fallback(self, client, session, monkeypatch, tts_capable):
         from core.entities import VoiceModel
-        voice = VoiceModel(name="Echo", voice_profile="echo_xtts", language="en")
+        voice = VoiceModel(name="Echo", voice_profile="echo_calm", language="en")
         session.add(voice)
         session.commit()
         session.refresh(voice)
@@ -581,12 +581,12 @@ class TestNarrateMessage:
         resp = client.post(f"/api/v2/chats/{chat.id}/messages/{msg.id}/narrate", json={})
         assert resp.status_code == 200, resp.text
         job = session.get(Job, resp.json()["job_id"])
-        assert job.metadata_["voice_profile"] == "echo_xtts"
+        assert job.metadata_["voice_profile"] == "echo_calm"
         speak = next(
             n for n in job.workflow["prompt"].values()
             if n["class_type"] == "QwenTTSSpeak"
         )
-        assert speak["inputs"]["voice"] == "echo_xtts"
+        assert speak["inputs"]["voice"] == "echo_calm"
 
 
 # ── list_chat_jobs ───────────────────────────────────────────────────────────

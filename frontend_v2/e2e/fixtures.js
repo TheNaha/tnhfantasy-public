@@ -334,7 +334,7 @@ async function seedVoice(page, overrides = {}) {
   return apiPost(page, '/voices', {
     name: overrides.name || uniqueName('e2e-voice'),
     description: overrides.description || 'A test voice model created by the e2e suite.',
-    type: overrides.type || 'xtts',
+    type: overrides.type || 'qwen3_tts',
     voice_profile: overrides.voice_profile ?? 'e2e_speaker',
     language: overrides.language ?? 'en',
     preview_text: overrides.preview_text ?? 'Hello traveler, the e2e suite greets you.',

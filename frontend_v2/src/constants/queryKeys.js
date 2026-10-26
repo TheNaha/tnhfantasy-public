@@ -29,6 +29,7 @@ export const QUERY_KEYS = {
     LOREBOOKS: 'lorebooks',
     SCENARIOS: 'scenarios',
     VOICES: 'voices',
+    VOICE_PRESETS: 'voice_presets',
     MEMORIES: 'memories',
     LOCATIONS: 'locations',
     WORLDS: 'worlds',

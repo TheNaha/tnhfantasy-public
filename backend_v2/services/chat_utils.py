@@ -471,7 +471,7 @@ def resolve_voice_for_character(session: Session, char) -> tuple:
         from core.entities import VoiceModel
         vm = session.get(VoiceModel, voice_model_id)
         if vm:
-            voice_profile = vm.voice_profile or vm.name
+            voice_profile = vm.voice_preset or vm.voice_profile or vm.name
             language = vm.language
     if not voice_profile:
         voice_profile = getattr(char, "voice_profile", None)

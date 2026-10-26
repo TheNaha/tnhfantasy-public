@@ -37,7 +37,7 @@ logger = get_logger("hybrid_engine")
 
 
 class HybridRemoteEngine(InProcessEngine):
-    """Unified engine coordinating ComfyUI, Agent Storage, and LLM on a single node."""
+    """Unified engine coordinating ComfyUI, Agent Storage, LLM, and TTS on a single node."""
 
     worker_mode = "hybrid"
     manages_model_files = True
@@ -54,6 +54,7 @@ class HybridRemoteEngine(InProcessEngine):
         comfy_port: int = 8188,
         agent_port: int = 8001,
         llm_port: int = 8003,
+        tts_port: int = 8004,
         concurrency_policy: str = "auto",
         hf_token: Optional[str] = None,
         civitai_token: Optional[str] = None,
@@ -77,10 +78,12 @@ class HybridRemoteEngine(InProcessEngine):
         self.comfy_port = comfy_port
         self.agent_port = agent_port
         self.llm_port = llm_port
+        self.tts_port = tts_port
 
         self.comfy_url = (comfy_url or f"{scheme}://{host}:{comfy_port}").rstrip("/")
         self.agent_url = (agent_url or f"{scheme}://{host}:{agent_port}").rstrip("/")
         self.llm_url = (llm_url or f"{scheme}://{host}:{llm_port}").rstrip("/")
+        self.tts_url = f"{scheme}://{host}:{tts_port}"
 
         # Child delegate engines
         self.image_engine = DirectComfyEngine(
@@ -143,6 +146,29 @@ class HybridRemoteEngine(InProcessEngine):
                     return True
             except Exception:
                 pass
+        return False
+
+    @staticmethod
+    def _is_tts_workflow(workflow: Dict[str, Any]) -> bool:
+        """Determine if a workflow payload is a TTS generation graph."""
+        if not isinstance(workflow, dict):
+            return False
+        # Check for TTS-specific node types from ComfyUI-QwenTTS
+        tts_node_types = {"QwenTTSVoiceDesign", "QwenTTSSpeak", "QwenTTSVoiceClone"}
+        # ComfyUI prompt graphs have node ID keys mapping to {"class_type": ...}
+        if "prompt" in workflow:
+            prompt = workflow["prompt"]
+            if isinstance(prompt, dict):
+                for node in prompt.values():
+                    if isinstance(node, dict) and node.get("class_type") in tts_node_types:
+                        return True
+        # Also check top-level workflow structure
+        for val in workflow.values():
+            if isinstance(val, dict) and val.get("class_type") in tts_node_types:
+                return True
+        # Check workflow type field
+        if workflow.get("type") == "tts":
+            return True
         return False
 
     # ----------------------------------------------------------------------
@@ -268,12 +294,24 @@ class HybridRemoteEngine(InProcessEngine):
     ) -> AsyncIterator[Dict[str, Any]]:
         """Dispatch inference to the proper engine under GPU policy coordination."""
         policy = await self._resolve_policy()
-        is_image = self._is_image_workflow(workflow)
+        is_tts = self._is_tts_workflow(workflow)
+        is_image = not is_tts and self._is_image_workflow(workflow)
 
         if policy == "exclusive":
             # Strict mutual exclusion for single-GPU budget nodes (e.g. L4, T4)
             async with self._gpu_lock:
-                if is_image:
+                if is_tts:
+                    if self._last_workload != "tts":
+                        await self._prepare_agent_vram("tts")
+                    self._last_workload = "tts"
+                    try:
+                        async for event in self.image_engine.inference(
+                            workflow, job_id=job_id, use_snapshot=use_snapshot, timeout=timeout
+                        ):
+                            yield event
+                    finally:
+                        await self._release_agent_vram("tts")
+                elif is_image:
                     if self._last_workload != "image":
                         await self._prepare_agent_vram("image")
                     self._last_workload = "image"
@@ -318,7 +356,12 @@ class HybridRemoteEngine(InProcessEngine):
                     finally:
                         await self._release_agent_vram("llm")
             else:
-                if is_image:
+                if is_tts:
+                    async for event in self.image_engine.inference(
+                        workflow, job_id=job_id, use_snapshot=use_snapshot, timeout=timeout
+                    ):
+                        yield event
+                elif is_image:
                     async for event in self.image_engine.inference(
                         workflow, job_id=job_id, use_snapshot=use_snapshot, timeout=timeout
                     ):
@@ -331,7 +374,12 @@ class HybridRemoteEngine(InProcessEngine):
 
         else:
             # Concurrent mode (A100-80GB / H100): parallel pass-through
-            if is_image:
+            if is_tts:
+                async for event in self.image_engine.inference(
+                    workflow, job_id=job_id, use_snapshot=use_snapshot, timeout=timeout
+                ):
+                    yield event
+            elif is_image:
                 async for event in self.image_engine.inference(
                     workflow, job_id=job_id, use_snapshot=use_snapshot, timeout=timeout
                 ):
@@ -353,7 +401,7 @@ class HybridRemoteEngine(InProcessEngine):
     # ----------------------------------------------------------------------
 
     async def check_health(self) -> Dict[str, Any]:
-        """Aggregate health probing ComfyUI, Agent, and LLM."""
+        """Aggregate health probing ComfyUI, Agent, LLM, and TTS."""
         t0 = time.monotonic()
         policy = await self._resolve_policy()
         image_health = await self.image_engine.check_health()
@@ -362,6 +410,8 @@ class HybridRemoteEngine(InProcessEngine):
         comfy_ok = image_health.get("comfy_reachable", False) or (image_health.get("status") in ("healthy", "ok"))
         agent_ok = image_health.get("agent_reachable", True) if ("agent_reachable" in image_health) else (image_health.get("status") in ("healthy", "ok"))
         llm_ok = llm_health.get("ready", False) or (llm_health.get("status") in ("healthy", "ok"))
+        # TTS uses the same ComfyUI instance, so it's healthy if ComfyUI is healthy
+        tts_ok = comfy_ok
 
         is_healthy = comfy_ok or llm_ok
         status = "healthy" if (comfy_ok and llm_ok and agent_ok) else ("degraded" if is_healthy else "unhealthy")
@@ -392,6 +442,12 @@ class HybridRemoteEngine(InProcessEngine):
                     "port": self.llm_port,
                     "url": self.llm_url,
                     "latency_ms": llm_health.get("latency_ms", 0),
+                },
+                "tts": {
+                    "status": "healthy" if tts_ok else "unhealthy",
+                    "port": self.tts_port,
+                    "url": self.tts_url,
+                    "latency_ms": image_health.get("latency_ms", 0),
                 },
             },
         }

@@ -490,6 +490,21 @@ class BeamTTSEngine(_BeamLLMEngineBase):
     request_fields = ()
     wants_tts_request = True
 
+    async def list_voices(self) -> list[dict[str, Any]]:
+        """Query the Beam TTS deployment's /v1/voices endpoint."""
+        if not self.gpu_url:
+            return []
+        try:
+            client = self.get_http_client()
+            resp = await client.get(f"{self.gpu_url.rstrip('/')}/v1/voices", timeout=15.0)
+            if resp.status_code == 200:
+                data = resp.json()
+                return data.get("voices", []) if isinstance(data, dict) else []
+            return []
+        except Exception as exc:
+            logger.warning("beam_tts_list_voices_failed", provider_id=self.provider_id, error=str(exc))
+            return []
+
 
 class RemoteLLMEngine(RemoteAgentFileMixin, OpenAICompatLLMEngine):
     """The self-hosted TNHComfy LLM container.
@@ -977,6 +992,21 @@ class RemoteTTSEngine(RemoteAgentFileMixin, InProcessEngine):
         to dismiss.
         """
         return []
+
+    async def list_voices(self) -> list[dict[str, Any]]:
+        """Query the container's /v1/voices endpoint for available voices."""
+        if not self.agent_url:
+            return []
+        try:
+            client = self.get_http_client()
+            resp = await client.get("/v1/voices", timeout=15.0)
+            if resp.status_code == 200:
+                data = resp.json()
+                return data.get("voices", []) if isinstance(data, dict) else []
+            return []
+        except Exception as exc:
+            logger.warning("remote_tts_list_voices_failed", provider_id=self.provider_id, error=str(exc))
+            return []
 
     async def check_health(self) -> dict[str, Any]:
         """Config validity first, then a real round trip.

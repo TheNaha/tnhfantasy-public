@@ -62,7 +62,7 @@ class VoiceModelCreate(BaseModel):
 
     name: str
     description: str | None = None
-    type: str = "xtts"
+    type: str = "qwen3_tts"
     voice_profile: str | None = None
     model_path: str | None = None
     language: str | None = None
@@ -293,3 +293,19 @@ async def design_voices(
 #
 # It duplicated `POST /api/v2/voices/{voice_id}/preview`, which is the one the
 # frontend calls. `VoiceSpeakRequest` went with it: nothing else referenced it.
+
+
+@router.get("/presets")
+async def list_voice_presets():
+    """Return Qwen3-TTS built-in preset timbres."""
+    return [
+        {"id": "friendly", "name": "Friendly", "description": "Warm, approachable tone", "language": "en"},
+        {"id": "professional", "name": "Professional", "description": "Clear, authoritative delivery", "language": "en"},
+        {"id": "cheerful", "name": "Cheerful", "description": "Bright, energetic tone", "language": "en"},
+        {"id": "calm", "name": "Calm", "description": "Relaxed, soothing presence", "language": "en"},
+        {"id": "deep", "name": "Deep", "description": "Rich, resonant bass", "language": "en"},
+        {"id": "bright", "name": "Bright", "description": "Crisp, clear high register", "language": "en"},
+        {"id": "storyteller", "name": "Storyteller", "description": "Expressive, narrative style", "language": "en"},
+        {"id": "whisper", "name": "Whisper", "description": "Intimate, hushed delivery", "language": "en"},
+        {"id": "dramatic", "name": "Dramatic", "description": "Theatrical, emotional range", "language": "en"},
+    ]

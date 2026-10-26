@@ -1462,11 +1462,13 @@ async def _handle_voice_design(job_data: dict[str, Any]):
                 voice = VoiceModel(
                     name=spec["name"],
                     description=spec.get("description"),
-                    sample_audio_path=audio_path,
+                    type="qwen3_tts",
+                    source="design",
+                    voice_profile=spec["name"],
                     preview_path=audio_path,
+                    language=spec.get("language") or metadata.get("language") or "en",
                     character_id=char.id if char else None,
                     world_id=world_id,
-                    provider="qwen3_tts",
                 )
                 session.add(voice)
                 session.flush()

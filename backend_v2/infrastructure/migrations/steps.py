@@ -1961,7 +1961,60 @@ def _get_schema_migration_steps() -> list[MigrationStep]:
             description="Add lorebook_entries.enabled and .secondary_keys so a SillyTavern character_book entry can be disabled, and so its selective matching can be honoured",
             apply_fn=_migration_109_lorebook_entry_semantics,
         ),
+        MigrationStep(
+            version="110_voice_model_schema_update",
+            description="Update voice_models: change type default to qwen3_tts, add voice_preset, voice_style, source columns",
+            apply_fn=_migration_110_voice_model_schema_update,
+        ),
     ]
+
+
+def _migration_110_voice_model_schema_update(conn) -> bool:
+    """Update voice_models table for Qwen3-TTS:
+    - Change type default from 'xtts' to 'qwen3_tts'
+    - Add voice_preset column for Qwen3-TTS preset timbres
+    - Add voice_style column for style control
+    - Add source column (design/preset/clone/manual)
+    - Update existing rows: type='xtts' -> 'qwen3_tts'
+    """
+    inspector = inspect(conn)
+    if "voice_models" not in inspector.get_table_names():
+        return False
+    
+    columns = {col["name"] for col in inspector.get_columns("voice_models")}
+    applied = False
+    
+    # Add voice_preset column
+    if "voice_preset" not in columns:
+        conn.execute(text("ALTER TABLE voice_models ADD COLUMN voice_preset VARCHAR DEFAULT NULL"))
+        logger.info("migration_column_added", table="voice_models", column="voice_preset")
+        applied = True
+    
+    # Add voice_style column
+    if "voice_style" not in columns:
+        conn.execute(text("ALTER TABLE voice_models ADD COLUMN voice_style VARCHAR DEFAULT NULL"))
+        logger.info("migration_column_added", table="voice_models", column="voice_style")
+        applied = True
+    
+    # Add source column
+    if "source" not in columns:
+        conn.execute(text("ALTER TABLE voice_models ADD COLUMN source VARCHAR DEFAULT 'design'"))
+        logger.info("migration_column_added", table="voice_models", column="source")
+        applied = True
+    
+    # Update existing rows: type='xtts' -> 'qwen3_tts'
+    conn.execute(text("""
+        UPDATE voice_models
+        SET type = 'qwen3_tts'
+        WHERE type = 'xtts'
+    """))
+    updated = conn.execute(text("SELECT COUNT(*) FROM voice_models WHERE type = 'qwen3_tts'")).scalar()
+    if updated:
+        logger.info("migration_voice_type_updated", count=updated)
+        applied = True
+    
+    _verify_required_columns(conn, "voice_models", {"voice_preset", "voice_style", "source"})
+    return applied
 
 
 def _migration_090_world_membership_fks(conn) -> bool:

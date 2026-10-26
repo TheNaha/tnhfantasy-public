@@ -251,6 +251,36 @@ class ModalTTSEngine(InProcessEngine):
         """
         return []
 
+    async def list_voices(self) -> List[Dict[str, Any]]:
+        """Query the Modal TTS app's /v1/voices endpoint for available voices."""
+        try:
+            client = await self.get_client_async()
+            # Try to call a voice listing method on the TTSWorker class
+            TTSClass = modal.Cls.from_name(self.app_name, self.cls_name, client=client)
+            instance = TTSClass()
+            # Check if the class has a list_voices method
+            if hasattr(instance, 'list_voices'):
+                result = await instance.list_voices.remote.aio()
+                if isinstance(result, dict) and "voices" in result:
+                    return result["voices"]
+                elif isinstance(result, list):
+                    return result
+            # Fallback: return preset voices known to Qwen3-TTS
+            return [
+                {"id": "friendly", "name": "Friendly", "type": "preset", "language": "en", "description": "Warm, approachable tone"},
+                {"id": "professional", "name": "Professional", "type": "preset", "language": "en", "description": "Clear, authoritative delivery"},
+                {"id": "cheerful", "name": "Cheerful", "type": "preset", "language": "en", "description": "Bright, energetic tone"},
+                {"id": "calm", "name": "Calm", "type": "preset", "language": "en", "description": "Relaxed, soothing presence"},
+                {"id": "deep", "name": "Deep", "type": "preset", "language": "en", "description": "Rich, resonant bass"},
+                {"id": "bright", "name": "Bright", "type": "preset", "language": "en", "description": "Crisp, clear high register"},
+                {"id": "storyteller", "name": "Storyteller", "type": "preset", "language": "en", "description": "Expressive, narrative style"},
+                {"id": "whisper", "name": "Whisper", "type": "preset", "language": "en", "description": "Intimate, hushed delivery"},
+                {"id": "dramatic", "name": "Dramatic", "type": "preset", "language": "en", "description": "Theatrical, emotional range"},
+            ]
+        except Exception as exc:
+            logger.warning("modal_tts_list_voices_failed", provider_id=self.provider_id, error=str(exc))
+            return []
+
     async def get_file_stream(self, path: str) -> AsyncIterator[bytes]:
         """Stream generated audio directly from Modal volume.
 

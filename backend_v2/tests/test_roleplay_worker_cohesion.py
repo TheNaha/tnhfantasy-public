@@ -111,13 +111,13 @@ class TestScenarioWorkerFallbacks:
             name="Fantasy Realm",
             prompt_template="A fantasy realm.",
             default_checkpoint="sdxl_fantasy_v1.safetensors",
-            default_voice_profile="xtts_wizard",
+            default_voice_profile="qwen_wizard",
         )
         chat = _seed(session, _cls=Chat, name="Quest", scenario_id=scenario.id)
 
         ckpt, voice = resolve_scenario_defaults(session, chat)
         assert ckpt == "sdxl_fantasy_v1.safetensors"
-        assert voice == "xtts_wizard"
+        assert voice == "qwen_wizard"
 
     def test_resolve_scenario_defaults_from_story(self, session):
         scenario = _seed(

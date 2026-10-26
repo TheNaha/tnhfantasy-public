@@ -42,7 +42,7 @@ test.describe('Voices (World Vault)', () => {
 
     const form = inlineForm(page, 'New Voice Model');
     await form.getByPlaceholder('Voice model name').fill(name);
-    await form.getByPlaceholder('Select type').fill('xtts');
+    await form.getByPlaceholder('Select type').fill('qwen3_tts');
     await form.getByPlaceholder('e.g. test_speaker, default').fill(profile);
     await form.getByPlaceholder('e.g. en, es, fr').fill('en');
     await form.getByPlaceholder('Sample text for preview').fill(preview);
@@ -53,14 +53,14 @@ test.describe('Voices (World Vault)', () => {
 
     const card = rowCard(page, name);
     await expect(card).toBeVisible({ timeout: 10000 });
-    await expect(card).toContainText('xtts');
+    await expect(card).toContainText('qwen3_tts');
     await expect(card).toContainText(`Profile: ${profile}`);
     await expect(card).toContainText(`Preview: "${preview}"`);
 
     const all = await apiGet(page, '/voices');
     const saved = all.find((v) => v.name === name);
     expect(saved, 'created voice must exist via API').toBeTruthy();
-    expect(saved.type).toBe('xtts');
+    expect(saved.type).toBe('qwen3_tts');
     expect(saved.voice_profile).toBe(profile);
     expect(saved.preview_text).toBe(preview);
     trackEntity(page, 'voice', saved.id);

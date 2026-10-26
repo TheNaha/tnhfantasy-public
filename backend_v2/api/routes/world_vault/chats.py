@@ -1668,7 +1668,7 @@ def _narrate_message_prep_sync(
         voice = session.get(VoiceModel, chosen_voice_id)
         if not voice:
             raise NotFoundError("VoiceModel", chosen_voice_id)
-        voice_profile = voice.voice_profile
+        voice_profile = voice.voice_preset or voice.voice_profile or voice.name
         voice_model_id = voice.id
         language = voice.language
     elif chat.character_id:

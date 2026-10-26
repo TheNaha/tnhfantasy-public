@@ -47,3 +47,10 @@ export const useDesignVoice = () => {
     });
 };
 
+export const useVoicePresets = () => {
+    return useQuery({
+        queryKey: buildQueryKey(QUERY_KEYS.VOICE_PRESETS),
+        queryFn: ({ signal }) => api.get('/api/v2/voices/presets', { signal }),
+    });
+};
+

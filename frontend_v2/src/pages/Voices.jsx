@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Plus, Edit3, Trash2, Play, Volume2, FileText, AlertCircle, Wand2, Loader2, Sparkles, X } from 'lucide-react';
+import { Plus, Edit3, Trash2, Play, Volume2, FileText, AlertCircle, Wand2, Loader2, Sparkles, X, Zap } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useQueryClient } from '@tanstack/react-query';
 import {
@@ -10,6 +10,7 @@ import {
     useDeleteVoice,
     useVoicePreview,
     useDesignVoice,
+    useVoicePresets,
     useWorlds,
 } from '../hooks/useWorldVault';
 import { useJobStatus } from '../hooks/useJobStatus';
@@ -23,11 +24,9 @@ import RoleplayPageShell from '../components/RoleplayPageShell';
 import { QueryErrorState } from '../components/common/QueryState';
 
 const TYPE_OPTIONS = [
-    { value: 'xtts', label: 'XTTS v2' },
-    { value: 'bark', label: 'Bark' },
-    { value: 'coqui', label: 'Coqui' },
-    { value: 'embedding', label: 'Embedding' },
-    { value: 'other', label: 'Other' },
+    { value: 'qwen3_tts', label: 'Qwen3-TTS (Design)' },
+    { value: 'qwen3_preset', label: 'Qwen3-TTS (Preset)' },
+    { value: 'clone', label: 'Voice Clone' },
 ];
 
 export default function Voices() {
@@ -49,6 +48,7 @@ export default function Voices() {
     // "No voice models yet" next to a vault that already had one.
     const { data: voices = [], isLoading, isError, error, refetch } = useVoices();
     const { data: worlds = [] } = useWorlds();
+    const { data: presets = [] } = useVoicePresets();
     const { mutate: createVoice } = useCreateVoice();
     const { mutate: updateVoice } = useUpdateVoice();
     const { mutate: deleteVoice } = useDeleteVoice();
@@ -250,7 +250,7 @@ export default function Voices() {
                         <label htmlFor="voice-type" className="block text-xs text-gray-400 mb-1">Type</label>
                         <select
                             id="voice-type"
-                            value={formData.type || 'xtts'}
+                            value={formData.type || 'qwen3_tts'}
                             onChange={(e) => setFormData({ ...formData, type: e.target.value })}
                             className="w-full px-3 py-2 bg-gray-800 border border-white/10 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500/50 mb-3"
                         >
@@ -282,6 +282,30 @@ export default function Voices() {
                             value={formData.model_path}
                             onChange={(e) => setFormData({ ...formData, model_path: e.target.value })}
                         />
+                        {/* Preset selector - shown when type is qwen3_preset */}
+                        {formData.type === 'qwen3_preset' && presets.length > 0 && (
+                            <div>
+                                <label htmlFor="voice-preset" className="block text-xs text-gray-400 mb-1">Preset Voice</label>
+                                <select
+                                    id="voice-preset"
+                                    value={formData.voice_preset || ''}
+                                    onChange={(e) => setFormData({ ...formData, voice_preset: e.target.value })}
+                                    className="w-full px-3 py-2 bg-gray-800 border border-white/10 rounded-lg text-white text-sm focus:outline-none focus:border-purple-500/50 mb-3"
+                                >
+                                    <option value="">Select a preset voice...</option>
+                                    {presets.map(preset => (
+                                        <option key={preset.id} value={preset.id}>
+                                            {preset.name} — {preset.description}
+                                        </option>
+                                    ))}
+                                </select>
+                                {formData.voice_preset && (
+                                    <p className="text-xs text-purple-400 mt-1">
+                                        Selected: {presets.find(p => p.id === formData.voice_preset)?.name}
+                                    </p>
+                                )}
+                            </div>
+                        )}
                         <FormInput
                             label="Description"
                             placeholder="Optional description"

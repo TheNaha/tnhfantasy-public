@@ -291,7 +291,7 @@ class Provider(SQLModel, table=True):
         """
         if task_type == self.worker_type:
             return True
-        if self.worker_type == "hybrid" and task_type in ("image", "llm"):
+        if self.worker_type == "hybrid" and task_type in ("image", "llm", "tts"):
             return True
         return task_type in (self.capabilities or [])
 
@@ -1168,8 +1168,11 @@ class VoiceModel(SQLModel, table=True):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     name: str = Field(index=True)
     description: str | None = Field(default=None, sa_column=Column(Text))
-    type: str = Field(default="xtts")  # "xtts", "bark", "embedding"
+    type: str = Field(default="qwen3_tts")  # "qwen3_tts", "qwen3_preset", "clone"
     voice_profile: str | None = Field(default=None)  # Profile name or speaker reference
+    voice_preset: str | None = Field(default=None)  # e.g. "friendly", "professional" (Qwen3-TTS preset)
+    voice_style: str | None = Field(default=None)   # Style control parameters
+    source: str = Field(default="design")  # "design" | "preset" | "clone" | "manual"
     model_path: str | None = Field(default=None)  # Path to model files
     language: str | None = Field(default=None)  # e.g. "en", "ja"
     preview_text: str | None = Field(default=None, sa_column=Column(Text))

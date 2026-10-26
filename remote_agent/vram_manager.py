@@ -49,7 +49,7 @@ class VRAMManager:
         self.llm_port = int(os.getenv("LLM_PORT", str(llm_port)))
         self.idle_timeout_seconds = float(os.getenv("LLM_IDLE_TIMEOUT_SECONDS", str(idle_timeout_seconds)))
 
-        self.active_workload: str = "idle"  # "idle" | "image" | "llm" | "decisions"
+        self.active_workload: str = "idle"  # "idle" | "image" | "llm" | "decisions" | "tts"
         self.last_llm_activity: float = time.time()
         self.last_image_activity: float = 0.0
 
@@ -622,15 +622,15 @@ class VRAMManager:
         `_wait_for_drain` (which only waits), so the two can never disagree
         about what counts as a conflict.
         """
-        if workload == "image":
+        if workload in ("image", "tts"):
             # Conflict if LLM inference is actively in-flight
             return (self.active_lease == "llm" and self.in_flight_count > 0)
         if workload == "llm":
-            # Conflict if ComfyUI is actively sampling or an image lease is held
+            # Conflict if ComfyUI is actively sampling or an image/tts lease is held
             if self.is_comfy_generating():
                 return True
-            if self.active_lease == "image" and self.in_flight_count > 0:
-                # Auto-reconcile: if ComfyUI is completely idle, image lease is finished
+            if self.active_lease in ("image", "tts") and self.in_flight_count > 0:
+                # Auto-reconcile: if ComfyUI is completely idle, image/tts lease is finished
                 if not self.is_comfy_generating():
                     self.active_lease = None
                     self.in_flight_count = 0
@@ -657,7 +657,7 @@ class VRAMManager:
         Returns True if the drain completed, False on timeout.
         """
         workload = (workload or "idle").strip().lower()
-        if workload not in ("image", "llm", "decisions"):
+        if workload not in ("image", "llm", "decisions", "tts"):
             return True
         if self.is_multi_gpu or workload == "decisions":
             return True
@@ -694,7 +694,7 @@ class VRAMManager:
         3. Multi-GPU nodes bypass contention since ComfyUI and LLM reside on separate GPUs.
         """
         workload = (workload or "idle").strip().lower()
-        if workload not in ("image", "llm", "decisions"):
+        if workload not in ("image", "llm", "decisions", "tts"):
             return True
 
         if self.is_multi_gpu or workload == "decisions":
@@ -775,29 +775,19 @@ class VRAMManager:
             free_mb = info["vram_free_mb"]
 
             # ==============================================================
-            # CASE A: IMAGE WORKLOAD (ComfyUI)
+            # CASE A: IMAGE OR TTS WORKLOAD (ComfyUI)
             # ==============================================================
-            if workload == "image":
-                self.active_workload = "image"
-                self.last_image_activity = time.time()
+            if workload in ("image", "tts"):
+                self.active_workload = workload
+                if workload == "image":
+                    self.last_image_activity = time.time()
 
                 # The lease is taken HERE, and released by whoever does the
                 # work — the route, or the backend over HTTP. Exactly one
                 # acquire, exactly one release.
-                #
-                # It used to be taken here AND by the caller, and released
-                # once, so `in_flight_count` settled at 1 permanently after
-                # the first chat request. Every later image request then saw
-                # a conflict, blocked for the full 60 s timeout, and proceeded
-                # anyway — killing the llama-server that might have been
-                # streaming an answer.
-                #
-                # Taking it here also closes the window between "the drain
-                # finished" and "the work starts": the lease is held for the
-                # whole of it, so a request arriving in between waits.
-                if not self.acquire_lease("image", timeout=timeout):
+                if not self.acquire_lease(workload, timeout=timeout):
                     logger.warning(
-                        "image_lease_timeout",
+                        f"{workload}_lease_timeout",
                         extra={"timeout": timeout, "active_lease": self.active_lease},
                     )
 
@@ -805,33 +795,32 @@ class VRAMManager:
                 if self.is_multi_gpu:
                     return {
                         "status": "ready",
-                        "workload": "image",
+                        "workload": workload,
                         "policy": "multi_gpu_concurrent",
                         "actions_taken": ["bypassed_llama_eviction_multi_gpu"],
                         "vram": self.get_vram_info(device_idx=self.comfy_gpu_device),
                     }
 
-                # On huge GPUs (e.g. A100 80GB), both image & LLM fit concurrently
+                # On huge GPUs (e.g. A100 80GB), both image/tts & LLM fit concurrently
                 if total_mb >= 70000:
                     return {
                         "status": "ready",
-                        "workload": "image",
+                        "workload": workload,
                         "policy": "concurrent",
                         "actions_taken": [],
                         "vram": self.get_vram_info(),
                     }
 
                 # On constrained GPUs (T4 16GB, L4 24GB, A10 24GB, A100 40GB):
-                # Target free VRAM needed for clean diffusion generation
-                target_free = min_free_vram_mb if min_free_vram_mb > 0 else 10000
+                # Target free VRAM needed for clean diffusion or speech generation
+                # TTS (Qwen3-TTS) requires ~6GB while heavy diffusion models require ~10GB
+                default_target = 6000 if workload == "tts" else 10000
+                target_free = min_free_vram_mb if min_free_vram_mb > 0 else default_target
 
                 actions_taken: List[str] = []
 
                 # COOPERATIVE DRAIN: Wait for any active LLM inference stream to finish!
-                #
-                # Wait only — the lease is taken above, and taking it again
-                # here is what left `in_flight_count` permanently at 1.
-                if not self._wait_for_drain("image", timeout=timeout):
+                if not self._wait_for_drain(workload, timeout=timeout):
                     actions_taken.append("llm_drain_timeout")
                 else:
                     actions_taken.append("waited_for_llm_drain")
@@ -840,12 +829,6 @@ class VRAMManager:
                 if free_mb < target_free and self.is_llama_running():
                     self.stop_llama()
                     actions_taken.append("stopped_llama_server")
-                    # Wait for the memory to ACTUALLY come back rather than
-                    # sleeping a fixed 200 ms and hoping. A llama-server
-                    # honours SIGTERM between token batches, so the release
-                    # is not instantaneous — and a stale reading here is what
-                    # makes the replacement start while the old one still
-                    # holds the card.
                     free_mb = self._wait_for_vram_release(target_free, timeout=8.0)
                     info = self.get_vram_info()
                     free_mb = info["vram_free_mb"]
@@ -862,18 +845,6 @@ class VRAMManager:
                     # Laya is kept running on CUDA!
                     actions_taken.append("preserved_laya_cuda")
 
-                # The status is HONEST. This used to answer "ready"
-                # unconditionally, even when the target free VRAM was never
-                # reached — so the arbiter's whole contract ("enforce strict
-                # VRAM retention/eviction hierarchy before execution") was
-                # not enforced, and the caller dispatched a 17 GB checkpoint
-                # into 9 GB of free VRAM. The backend discards this body
-                # today, so the status is for the agent's own log and for
-                # whoever wires the response through.
-                #
-                # "No GPU at all" is not the same as "not enough VRAM": with
-                # no card there is nothing to enforce and nothing to report,
-                # so it stays "ready".
                 if not info.get("available", True):
                     status = "ready"
                 else:
@@ -883,7 +854,7 @@ class VRAMManager:
 
                 return {
                     "status": status,
-                    "workload": "image",
+                    "workload": workload,
                     "actions_taken": actions_taken,
                     "vram": self.get_vram_info(),
                     "free_mb": free_mb,
