@@ -46,6 +46,8 @@ ENHANCEMENT_NODE_CLASSES: dict[str, tuple[str, ...]] = {
     # all, so the IPAdapter section was offered to every provider and the
     # request failed at dispatch on a provider without the pack.
     "ipadapter": ("IPAdapterApply", "IPAdapterModelLoader"),
+    "grow_mask": ("GrowMask",),
+    "feather_mask": ("FeatherMask",),
 }
 
 # The inputs whose option list is a list of FILE NAMES.

@@ -512,10 +512,30 @@ class WorkflowBuilder:
         elif mode == 'img2img':
             img_str = self._get_image_str(options.inputImage)
             load_image = [self.add_node("LoadImage", {"image": img_str}), 0]
+
+            # Scale image if user requested explicit dimensions to prevent GPU OOM
+            if options.width and options.height:
+                scale_node = self.add_node("ImageScale", {
+                    "image": load_image,
+                    "upscale_method": "lanczos",
+                    "width": options.width,
+                    "height": options.height,
+                    "crop": "disabled"
+                })
+                pixels = [scale_node, 0]
+            else:
+                pixels = load_image
+
             latent_image = [self.add_node("VAEEncode", {
-                "pixels": load_image,
+                "pixels": pixels,
                 "vae": current_vae
             }), 0]
+
+            if options.batchSize > 1:
+                latent_image = [self.add_node("RepeatLatentBatch", {
+                    "samples": latent_image,
+                    "amount": options.batchSize
+                }), 0]
         elif mode == 'inpaint':
             img_str = self._get_image_str(options.inputImage)
             mask_str = self._get_image_str(options.maskImage)
@@ -523,32 +543,46 @@ class WorkflowBuilder:
             load_mask = [self.add_node("LoadImageMask", {"image": mask_str, "channel": "red"}), 0]
             
             processed_mask = load_mask
+            grow_by = 0
+
+            # Check if GrowMask node is supported or if we should use VAEEncodeForInpaint's native grow_mask_by
             if options.growMask > 0:
-                processed_mask = [self.add_node("GrowMask", {
-                    "mask": processed_mask, 
-                    "expand": options.growMask, 
-                    "tapered_corners": True
-                }), 0]
+                if self._supports("grow_mask") is False:
+                    # GrowMask node not available on provider; fall back to VAEEncodeForInpaint's native parameter
+                    grow_by = options.growMask
+                else:
+                    processed_mask = [self.add_node("GrowMask", {
+                        "mask": processed_mask, 
+                        "expand": options.growMask, 
+                        "tapered_corners": True
+                    }), 0]
+
             if options.maskBlur > 0:
-                processed_mask = [self.add_node("FeatherMask", {
-                    "mask": processed_mask, 
-                    "left": options.maskBlur, 
-                    "right": options.maskBlur, 
-                    "top": options.maskBlur, 
-                    "bottom": options.maskBlur
-                }), 0]
+                if self._supports("feather_mask") is False:
+                    self._warn_unsupported("feather_mask", "Mask blur / feathering")
+                else:
+                    processed_mask = [self.add_node("FeatherMask", {
+                        "mask": processed_mask, 
+                        "left": options.maskBlur, 
+                        "right": options.maskBlur, 
+                        "top": options.maskBlur, 
+                        "bottom": options.maskBlur
+                    }), 0]
 
             latent_image = [self.add_node("VAEEncodeForInpaint", {
                 "pixels": load_image,
                 "vae": current_vae,
                 "mask": processed_mask,
-                # The mask has ALREADY been grown, by the GrowMask node
-                # above, with the amount the user asked for. This node grew
-                # it by a hardcoded 6 as well, so the mask grew TWICE: six
-                # pixels from GrowMask and another six from here, twelve in
-                # total, and the user could not change either number.
-                "grow_mask_by": 0
+                # If GrowMask was already applied above, grow_by is 0 to avoid double-expansion.
+                # If GrowMask was unsupported, grow_by carries options.growMask natively.
+                "grow_mask_by": grow_by
             }), 0]
+
+            if options.batchSize > 1:
+                latent_image = [self.add_node("RepeatLatentBatch", {
+                    "samples": latent_image,
+                    "amount": options.batchSize
+                }), 0]
         else:
             raise ValueError(f"Unknown mode: {mode}")
 
