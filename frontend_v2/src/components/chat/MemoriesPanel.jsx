@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, memo } from 'react';
 import { Brain, Plus, Trash2, Search, X, Loader2, Pencil, RotateCcw } from 'lucide-react';
 import toast from 'react-hot-toast';
 import {
@@ -76,9 +76,11 @@ function MemorySkeleton() {
  * the whole stateful subtree on a character change, at every call site
  * (ChatContextPanel and the unkeyed one in pages/Characters.jsx).
  */
-export default function MemoriesPanel({ characterId }) {
+const MemoriesPanel = memo(function MemoriesPanel({ characterId }) {
     return <MemoriesPanelBody key={characterId} characterId={characterId} />;
-}
+});
+
+export default MemoriesPanel;
 
 function MemoriesPanelBody({ characterId }) {
     const [searchQuery, setSearchQuery] = useState('');

@@ -67,7 +67,14 @@ export default function OnboardingWizard({ onClose }) {
                     </button>
                 </div>
 
-                <div className="flex gap-1.5 px-6 pt-3 shrink-0">
+                <div
+                    className="flex gap-1.5 px-6 pt-3 shrink-0"
+                    role="progressbar"
+                    aria-valuenow={stepIndex + 1}
+                    aria-valuemin={1}
+                    aria-valuemax={STEPS.length}
+                    aria-label="Onboarding progress"
+                >
                     {STEPS.map((s, i) => (
                         <div
                             key={s.id}
