@@ -8,7 +8,7 @@
 #
 #   `-V` is not optional in dev: the frontend's node_modules is an ANONYMOUS
 #   volume seeded from the image (see the mount list below), so without
-#   `--renew-anon-volumes` a package-lock.json bump leaves the container serving
+#   `--renew-anon-volumes` a bun.lock bump leaves the container serving
 #   the previous dependency set, silently and with no error.
 #
 #   Backend only (no Docker, faster iteration):
@@ -62,7 +62,7 @@ services:
   frontend_v2:
     build:
       target: dev
-    command: ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "5174"]
+    command: ["bun", "run", "dev", "--", "--host", "0.0.0.0", "--port", "5174"]
     ports:
       # The dev server binds 0.0.0.0 *inside the container* so Traefik can reach
       # it; that is separate from the host-side publishes below, which decide who
@@ -90,15 +90,15 @@ services:
       # Build inputs that change independently of `src`. Without these the
       # container silently uses the image's copies, which reads as a Vite or
       # Tailwind bug rather than a mount gap:
-      #   package.json / package-lock.json -> dependency edits and lockfile
+      #   package.json / bun.lock -> dependency edits and lockfile
       #     bumps are invisible until a rebuild;
       #   postcss.config.js -> a Tailwind change to index.html IS picked up but
       #     runs through the IMAGE's plugin config, so it half-applies;
-      #   eslint.config.js -> `npm run lint` in the container lints the wrong
+      #   eslint.config.js -> `bun run lint` in the container lints the wrong
       #     rules;
-      #   scripts/ -> holds the preinstall npm-only guard.
+      #   scripts/ -> holds the preinstall bun-only guard.
       - ./frontend_v2/package.json:/app/package.json
-      - ./frontend_v2/package-lock.json:/app/package-lock.json
+      - ./frontend_v2/bun.lock:/app/bun.lock
       - ./frontend_v2/postcss.config.js:/app/postcss.config.js
       - ./frontend_v2/eslint.config.js:/app/eslint.config.js
       - ./frontend_v2/scripts:/app/scripts
@@ -108,8 +108,8 @@ services:
       # volume from the image's contents; a *named* volume starts empty. Naming
       # it (`frontend_node_modules:`) for visibility therefore made the container
       # start with no node_modules at all and the dev server died on
-      # `exec: npm: not found` — so the visibility win cost the whole frontend.
-      # A named volume would need an entrypoint that seeds or re-runs `npm ci`,
+      # `exec: bun: not found` — so the visibility win cost the whole frontend.
+      # A named volume would need an entrypoint that seeds or re-runs `bun install`,
       # which is more moving parts than this is worth.
       #
       # The cost of staying anonymous: it is invisible to `docker volume ls`, so
@@ -118,7 +118,7 @@ services:
       # document `-V` for exactly this reason, and `docker volume ls -f
       # dangling=true` will find it. Mounting package.json does NOT fix the
       # stale-dependency case on its own: a changed lockfile still needs the
-      # re-`npm ci` that `-V` triggers.
+      # re-`bun install` that `-V` triggers.
       - /app/node_modules
     # Healthcheck on port 5174
     healthcheck:

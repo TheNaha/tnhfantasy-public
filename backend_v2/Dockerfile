@@ -17,6 +17,9 @@ RUN apt-get update && apt-get install -y \
 # Install Python dependencies.
 # Cache mount persists the uv package cache across builds so a requirements.txt
 # change (or a source-only change) does not re-download or re-resolve the world.
+# UV_INDEX_STRATEGY=unsafe-best-match ensures cross-index package resolution parity
+# with pip when extra-index-url is declared in requirements.txt.
+ENV UV_INDEX_STRATEGY=unsafe-best-match
 COPY requirements.txt .
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv pip install --system -r requirements.txt

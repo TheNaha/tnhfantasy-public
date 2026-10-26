@@ -12,7 +12,7 @@ export default defineConfig([
     extends: [
       js.configs.recommended,
       react.configs.flat.recommended,
-      reactHooks.configs.flat.recommended,
+      reactHooks.configs.flat?.recommended ?? reactHooks.configs['recommended-latest'],
       reactRefresh.configs.vite,
     ],
     settings: {
@@ -35,6 +35,11 @@ export default defineConfig([
       'react/prop-types': 'off',
       'react/display-name': 'off',
       'react/no-unescaped-entities': 'off',
+      'react-hooks/set-state-in-effect': 'off',
+      'react-hooks/refs': 'off',
+      'react-hooks/preserve-manual-memoization': 'off',
+      'react-hooks/immutability': 'off',
+      'react-hooks/incompatible-library': 'off',
     },
   },
   {

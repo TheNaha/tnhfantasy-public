@@ -31,9 +31,9 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build -V -d
 .venv/bin/pytest
 
 # Frontend only (from frontend_v2/)
-npm install && npm run dev -- --host 0.0.0.0 --port 5174
-npm test
-npm run lint
+bun install && bun run dev -- --host 0.0.0.0 --port 5174
+bun test
+bun run lint
 ```
 
 ## Port trap
@@ -42,7 +42,7 @@ The frontend runs on **5174**, not 5173. `setup_jules.sh`, `vite.config.js`, and
 
 ## Package manager
 
-Frontend is npm-only. `pnpm` and `yarn` are rejected by a preinstall guard (`frontend_v2/scripts/enforce-npm.cjs`).
+Frontend is bun-only. `npm`, `pnpm` and `yarn` are rejected by a preinstall guard (`frontend_v2/scripts/enforce-bun.cjs`).
 
 ## CI test triggers
 
@@ -116,8 +116,8 @@ during tests. Use the `session` fixture for ORM work; do not open your own.
 ### Testing
 
 ```bash
-cd frontend_v2 && npm test
-cd frontend_v2 && npm run test:watch
+cd frontend_v2 && bun test
+cd frontend_v2 && bun run test:watch
 ```
 
 Vitest config is in `vite.config.js` (jsdom environment, globals enabled, setup file at `src/test/setup.js`).
@@ -125,7 +125,7 @@ Vitest config is in `vite.config.js` (jsdom environment, globals enabled, setup 
 ### Lint
 
 ```bash
-cd frontend_v2 && npm run lint
+cd frontend_v2 && bun run lint
 ```
 
 ESLint runs on `**/*.{js,jsx}`. Unused vars starting with uppercase or underscore are allowed (`varsIgnorePattern: '^[A-Z_]'`).

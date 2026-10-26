@@ -8,7 +8,11 @@ __pycache__/
 !.env.example
 tests/
 venv/
+.venv/
 test_env/
+data/
+.pytest_cache/
+.ruff_cache/
 scripts/
 .coverage
 *.db

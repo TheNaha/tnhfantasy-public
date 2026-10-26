@@ -85,18 +85,16 @@ jobs:
         echo "--- backend.log ---"; cat /tmp/backend.log
         exit 1
 
-    - name: Use Node.js 20
-      uses: actions/setup-node@v4
+    - name: Set up Bun
+      uses: oven-sh/setup-bun@v2
       with:
-        node-version: '24'
-        cache: 'npm'
-        cache-dependency-path: frontend_v2/package-lock.json
+        bun-version: latest
 
     - name: Install frontend dependencies
-      run: npm ci
+      run: bun install --frozen-lockfile
 
     - name: Install Playwright browsers
-      run: npx playwright install --with-deps chromium
+      run: bun x playwright install --with-deps chromium
 
     - name: Run Playwright tests
       # `--grep-invert @fullstack` is load-bearing, and the backend above is what
@@ -110,10 +108,10 @@ jobs:
       # account, they take minutes, and they are billed per run. This job has none
       # of that, so un-excluding them would turn a red job into a permanently red
       # one. `@fullstack` coverage is a manual/on-prem concern
-      # (`npm run test:e2e:fullstack` against a real stack), and this job's
+      # (`bun run test:e2e:fullstack` against a real stack), and this job's
       # frontend_v2/** AND backend_v2/** trigger is correct because the UI-level
       # tests exercise both.
-      run: npx playwright test --project=chromium --grep-invert @fullstack
+      run: bun x playwright test --project=chromium --grep-invert @fullstack
       env:
         VITE_PROXY_TARGET: http://localhost:8002
 
@@ -131,7 +129,7 @@ jobs:
     # could see it (`mobileLayoutInvariants.test.js` regexed the file and never
     # checked block membership); a real 390px browser run can.
     - name: Mobile layout pass (390px)
-      run: npx playwright test --project=mobile-chromium --grep-invert @fullstack
+      run: bun x playwright test --project=mobile-chromium --grep-invert @fullstack
       env:
         VITE_PROXY_TARGET: http://localhost:8002
 

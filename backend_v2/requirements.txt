@@ -48,7 +48,7 @@ docker>=6.1.0
 modal>=1.5.0
 
 # Image processing
-Pillow>=13.0.0
+Pillow>=10.0.0
 blurhash>=1.1.4
 numpy>=1.24.0
 

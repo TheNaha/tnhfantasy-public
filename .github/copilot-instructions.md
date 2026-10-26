@@ -43,9 +43,9 @@ uvicorn api.main:app --host 0.0.0.0 --port 8002 --reload
 pytest
 
 # Frontend (from frontend_v2/)
-npm ci
-npm run dev -- --host 0.0.0.0 --port 5174
-npm test
+bun install
+bun run dev -- --host 0.0.0.0 --port 5174
+bun test
 ```
 
 ## Conventions

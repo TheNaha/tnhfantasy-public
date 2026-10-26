@@ -21,7 +21,7 @@ on:
       - 'backend_v2/Dockerfile'
       - 'frontend_v2/Dockerfile'
       - 'backend_v2/requirements.txt'
-      - 'frontend_v2/package-lock.json'
+      - 'frontend_v2/bun.lock'
       # The root `.dockerignore` governs the remote agent's build context.
       - '.dockerignore'
   pull_request:
@@ -35,15 +35,15 @@ on:
       - 'backend_v2/Dockerfile'
       - 'frontend_v2/Dockerfile'
       - 'backend_v2/requirements.txt'
-      - 'frontend_v2/package-lock.json'
+      - 'frontend_v2/bun.lock'
       - '.dockerignore'
 
 jobs:
   # ── the two application images ──────────────────────────────────────────────
   # `backend_v2/Dockerfile` and `frontend_v2/Dockerfile` are what actually runs.
   # This job is the only thing in CI that builds them: the host test suites run
-  # in a venv / `npm ci`, so a bad COPY, missing system package, broken lockfile
-  # resolves nothing, or a frontend `npm ci` that breaks on a lockfile bump all
+  # in a venv / `bun install`, so a bad COPY, missing system package, broken lockfile
+  # resolves nothing, or a frontend `bun install` that breaks on a lockfile bump all
   # ship green in `backend-tests.yml` / `frontend-tests.yml` unless we build the
   # image here. A green suite says nothing about whether the image builds.
   app-images:

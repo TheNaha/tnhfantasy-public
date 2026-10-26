@@ -9,7 +9,7 @@ export default defineConfig({
   reporter: [['html', { open: 'never' }]],
   timeout: 90000,
   webServer: {
-    command: 'npm run dev -- --host 0.0.0.0 --port 5174',
+    command: 'bun run dev -- --host 0.0.0.0 --port 5174',
     url: 'http://localhost:5174',
     reuseExistingServer: !process.env.CI,
     timeout: 120000,

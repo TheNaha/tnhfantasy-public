@@ -13,19 +13,19 @@ React + Vite frontend for the TNHComfy serverless ComfyUI stack.
 ## Quick Start
 
 ```bash
-npm install
-npm run dev -- --host 0.0.0.0 --port 5174
+bun install
+bun run dev -- --host 0.0.0.0 --port 5174
 ```
 
 ## Commands
 
 | Command | Description |
 |---------|-------------|
-| `npm run dev` | Start dev server (port 5174) |
-| `npm run build` | Production build |
-| `npm test` | Run tests |
-| `npm run test:watch` | Run tests in watch mode |
-| `npm run lint` | Run ESLint |
+| `bun run dev` | Start dev server (port 5174) |
+| `bun run build` | Production build |
+| `bun test` | Run tests |
+| `bun run test:watch` | Run tests in watch mode |
+| `bun run lint` | Run ESLint |
 
 ## State Management
 
@@ -36,6 +36,6 @@ Read `STATE_MANAGEMENT.md` before changing state logic.
 
 ## Important
 
-- This workspace is **npm-only**. `pnpm` and `yarn` are rejected by a preinstall guard.
+- This workspace is **bun-only**. `npm`, `pnpm`, and `yarn` are rejected by a preinstall guard.
 - The dev server runs on **port 5174** (not 5173).
 - Vite proxy fallback: `VITE_PROXY_TARGET` -> `VITE_API_URL` -> `http://localhost:8002`.

@@ -20,7 +20,7 @@ if [ ! -d "$VENV_DIR" ]; then
 fi
 
 "$VENV_DIR/bin/python" -m pip install -r "$BACKEND_DIR/requirements.txt"
-(cd "$FRONTEND_DIR" && npm ci)
+(cd "$FRONTEND_DIR" && bun install --frozen-lockfile)
 
 if [ -f "$ROOT_DIR/.env" ]; then
     set -a
@@ -60,7 +60,7 @@ fi
 ) &
 BACKEND_PID=$!
 
-(cd "$FRONTEND_DIR" && exec npm run dev -- --host 0.0.0.0 --port 5174) &
+(cd "$FRONTEND_DIR" && exec bun run dev -- --host 0.0.0.0 --port 5174) &
 FRONTEND_PID=$!
 
 printf '%s\n' 'Setup complete. Backend: http://localhost:8002; Frontend: http://localhost:5174'

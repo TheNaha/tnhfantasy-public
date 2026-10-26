@@ -1,11 +1,11 @@
-FROM node:24-slim AS dev
+FROM oven/bun:1-slim AS dev
 WORKDIR /app
 
 # Copy package files first for better layer caching
-COPY package*.json ./
-COPY scripts/enforce-npm.cjs ./scripts/enforce-npm.cjs
+COPY package.json bun.lock ./
+COPY scripts/enforce-bun.cjs ./scripts/enforce-bun.cjs
 RUN apt-get update && apt-get install -y wget curl && rm -rf /var/lib/apt/lists/*
-RUN npm ci
+RUN bun install --frozen-lockfile
 
 # Copy source code
 COPY . .
@@ -14,11 +14,11 @@ COPY . .
 EXPOSE 5174
 
 # Run development server with host binding and HMR
-CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "5174"]
+CMD ["bun", "run", "dev", "--", "--host", "0.0.0.0", "--port", "5174"]
 
 FROM dev AS builder
 # Build static files
-RUN npm run build
+RUN bun run build
 
 FROM nginx:alpine AS prod
 # Install wget for healthcheck support
