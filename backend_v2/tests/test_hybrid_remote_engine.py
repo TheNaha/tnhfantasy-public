@@ -333,4 +333,73 @@ async def test_semi_concurrent_util_locking_and_vram_preparation():
     assert len(release_calls) == 0
 
 
+@pytest.mark.asyncio
+async def test_degraded_health_check_returns_ready_and_ready_for():
+    """When LLM is in standby (unhealthy/idle), status is degraded but ready is True and ready_for lists image/tts."""
+    engine = HybridRemoteEngine("hyb-test", base_url="http://node:8001")
+    engine.image_engine.check_health = AsyncMock(return_value={"status": "healthy", "comfy_reachable": True, "agent_reachable": True})
+    engine.llm_engine.check_health = AsyncMock(return_value={"status": "unhealthy", "ready": False})
+
+    health = await engine.check_health()
+    assert health["status"] == "degraded"
+    assert health["ready"] is True
+    assert "image" in health["ready_for"]
+    assert "tts" in health["ready_for"]
+    assert health["components"]["comfyui"]["status"] == "healthy"
+    assert health["components"]["llm"]["status"] == "unhealthy"
+    assert health["components"]["tts"]["status"] == "healthy"
+    assert health["components"]["tts"]["port"] == 8001
+    assert health["components"]["tts"]["workflow_port"] == 8188
+
+
+@pytest.mark.asyncio
+async def test_hybrid_model_listing_directory_routing():
+    """Verify that models, llm, models/llm route to llm_engine with 'models', and '' merges both."""
+    engine = HybridRemoteEngine("hyb-test", base_url="http://node:8001")
+    engine.image_engine.list_models = AsyncMock(return_value=[{"name": "sdxl.safetensors", "size": 1000}])
+    engine.llm_engine.list_models = AsyncMock(return_value=[{"name": "llama.gguf", "size": 2000}])
+
+    # 1. Query "models" -> routes to llm_engine with "models"
+    models_res = await engine.list_models("models")
+    assert models_res == [{"name": "llama.gguf", "size": 2000}]
+    engine.llm_engine.list_models.assert_awaited_with("models")
+
+    # 2. Query "llm" -> routes to llm_engine with "models"
+    engine.llm_engine.list_models.reset_mock()
+    llm_res = await engine.list_models("llm")
+    assert llm_res == [{"name": "llama.gguf", "size": 2000}]
+    engine.llm_engine.list_models.assert_awaited_with("models")
+
+    # 3. Query "" -> merges image models and llm models
+    engine.llm_engine.list_models.reset_mock()
+    engine.image_engine.list_models.reset_mock()
+    all_res = await engine.list_models("")
+    assert len(all_res) == 2
+    assert {"name": "sdxl.safetensors", "size": 1000} in all_res
+    assert {"name": "llama.gguf", "size": 2000} in all_res
+    engine.image_engine.list_models.assert_awaited_with("")
+    engine.llm_engine.list_models.assert_awaited_with("models")
+
+    # 4. Query image directory "checkpoints" -> delegates to image_engine
+    engine.image_engine.list_models.reset_mock()
+    ckpt_res = await engine.list_models("checkpoints")
+    assert ckpt_res == [{"name": "sdxl.safetensors", "size": 1000}]
+    engine.image_engine.list_models.assert_awaited_with("checkpoints")
+
+
+@pytest.mark.asyncio
+async def test_hybrid_list_voices():
+    """Verify list_voices queries /v1/voices on sidecar agent."""
+    transport = _MockTransport([
+        (200, {"voices": [{"id": "friendly", "name": "Friendly"}], "total": 1}, {}),
+    ])
+    engine = HybridRemoteEngine("hyb-test", base_url="http://node:8001")
+    engine.image_engine._agent_http = httpx.AsyncClient(base_url="http://node:8001", transport=transport)
+
+    voices = await engine.list_voices()
+    assert len(voices) == 1
+    assert voices[0]["id"] == "friendly"
+
+
+
 

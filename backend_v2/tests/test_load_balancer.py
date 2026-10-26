@@ -469,3 +469,42 @@ class TestModalityIsolation:
         # breakdown must not see them.
         assert by_modality["image"]["failing_providers"] == 0
         assert by_modality["tts"]["failing_providers"] == 1
+
+    async def test_degraded_hybrid_provider_is_warm_for_ready_modality(
+        self, session: Session, monkeypatch
+    ):
+        from unittest.mock import AsyncMock
+        from services.load_balancer_factory import create_load_balancer
+
+        provider = Provider(
+            id="hybrid-node-1",
+            type="remote_hybrid",
+            worker_type="hybrid",
+            capabilities=["image", "llm", "tts"],
+            enabled=True,
+            priority=1,
+            credentials={"agent_token": "tok"},
+            config={"base_url": "http://node:8001"},
+        )
+        session.add(provider)
+        session.commit()
+
+        mock_engine = AsyncMock()
+        mock_engine.check_health.return_value = {
+            "status": "degraded",
+            "ready": True,
+            "ready_for": ["image", "tts"],
+        }
+
+        monkeypatch.setattr(
+            "services.engines.engine_factory.get_engine",
+            lambda pid, p: mock_engine,
+        )
+
+        image_lb = create_load_balancer(session, task_type="image")
+        is_warm_image = await image_lb._check_provider_health(provider, task_type="image")
+        assert is_warm_image is True
+
+        selected = await image_lb.get_next_provider(task_type="image")
+        assert selected is not None
+        assert selected.id == "hybrid-node-1"

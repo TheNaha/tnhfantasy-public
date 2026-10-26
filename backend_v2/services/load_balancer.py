@@ -408,7 +408,7 @@ class LoadBalancer:
     
     async def _check_provider_health(self, provider: Provider, task_type: str = "image") -> bool:
         """Probe the provider's in-process engine health, caching the result for 15 seconds."""
-        cache_key = f"in_process:{provider.id}"
+        cache_key = f"in_process:{provider.id}:{task_type}" if task_type else f"in_process:{provider.id}"
 
         # Circuit-breaker: skip providers with a long failure streak. The
         # threshold is per-modality — an LLM endpoint mid-blip must not be
@@ -427,12 +427,20 @@ class LoadBalancer:
             if engine is None:
                 return False
             res = await asyncio.wait_for(engine.check_health(), timeout=_ENGINE_HEALTH_PROBE_TIMEOUT_SECONDS)
-            is_healthy = bool(res.get("ready") or res.get("status") == "healthy")
+            ready_for = res.get("ready_for")
+            if isinstance(ready_for, list) and task_type:
+                is_healthy = task_type in ready_for
+            else:
+                is_healthy = bool(res.get("ready") or res.get("status") in ("healthy", "ok"))
         except Exception as exc:
             logger.warning("in_process_health_failed", provider_id=provider.id, error=str(exc))
             is_healthy = False
+            ready_for = None
 
         _provider_health_cache[cache_key] = is_healthy
+        if isinstance(ready_for, list):
+            for m in ("image", "llm", "tts"):
+                _provider_health_cache[f"in_process:{provider.id}:{m}"] = m in ready_for
         return is_healthy
 
     async def get_next_provider(
@@ -646,8 +654,15 @@ class LoadBalancer:
             return
         try:
             res = await engine.check_health()
-            is_ready = bool(res.get("ready") or res.get("status") == "healthy")
+            ready_for = res.get("ready_for")
+            is_ready = bool(res.get("ready") or res.get("status") in ("healthy", "ok"))
             _provider_health_cache[f"in_process:{provider.id}"] = is_ready
+            if isinstance(ready_for, list):
+                for m in ("image", "llm", "tts"):
+                    _provider_health_cache[f"in_process:{provider.id}:{m}"] = m in ready_for
+            else:
+                for m in ("image", "llm", "tts"):
+                    _provider_health_cache[f"in_process:{provider.id}:{m}"] = is_ready
         except Exception as e:
             logger.warning("lb_in_process_warm_failed", provider_id=provider.id, error=str(e))
 

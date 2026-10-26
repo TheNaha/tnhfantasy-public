@@ -508,7 +508,6 @@ ENGINE_SPECS: Dict[str, Dict[str, Any]] = {
             {"key": "comfy_port", "label": "ComfyUI Port", "type": "number", "default": 8188},
             {"key": "agent_port", "label": "Agent Port", "type": "number", "default": 8001},
             {"key": "llm_port", "label": "LLM Port", "type": "number", "default": 8003},
-            {"key": "tts_port", "label": "TTS Port", "type": "number", "default": 8004},
             {"key": "concurrency_policy", "label": "Concurrency / VRAM Policy", "type": "select", "options": ["auto", "exclusive", "semi_concurrent", "concurrent"], "default": "auto", "help_text": "auto: auto-detect from GPU VRAM. exclusive: VRAM swap for L4/T4. semi_concurrent: concurrent RP + Comfy for A100-40GB. concurrent: unconstrained for A100-80GB."},
         ],
         "aliases": {

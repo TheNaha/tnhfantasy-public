@@ -2863,6 +2863,9 @@ provider_capabilities = {
 if mode_key == "hybrid":
     provider_config = {
         "base_url": base_endpoint,
+        "comfy_url": comfy_endpoint,
+        "agent_url": agent_endpoint,
+        "llm_url": llm_endpoint,
         "comfy_port": comfy_port,
         "agent_port": agent_port,
         "llm_port": llm_port,

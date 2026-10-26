@@ -41,11 +41,11 @@ export function useFavorites() {
   const { mutate } = mutation;
 
   const toggleFavorite = useCallback((filename) => {
-    const current = queryClient.getQueryData(['favorites']) || favorites;
+    const current = queryClient.getQueryData(['favorites']) || EMPTY_ARRAY;
     const isFav = current.includes(filename);
     const newFavorites = isFav ? current.filter(f => f !== filename) : [...current, filename];
     mutate(newFavorites);
-  }, [favorites, mutate, queryClient]);
+  }, [mutate, queryClient]);
 
   // Bulk add in ONE write.
   //

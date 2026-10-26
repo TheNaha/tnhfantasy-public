@@ -54,7 +54,7 @@ class HybridRemoteEngine(InProcessEngine):
         comfy_port: int = 8188,
         agent_port: int = 8001,
         llm_port: int = 8003,
-        tts_port: int = 8004,
+        tts_port: Optional[int] = None,
         concurrency_policy: str = "auto",
         hf_token: Optional[str] = None,
         civitai_token: Optional[str] = None,
@@ -78,12 +78,16 @@ class HybridRemoteEngine(InProcessEngine):
         self.comfy_port = comfy_port
         self.agent_port = agent_port
         self.llm_port = llm_port
-        self.tts_port = tts_port
+        self.tts_port = tts_port or agent_port
 
         self.comfy_url = (comfy_url or f"{scheme}://{host}:{comfy_port}").rstrip("/")
         self.agent_url = (agent_url or f"{scheme}://{host}:{agent_port}").rstrip("/")
         self.llm_url = (llm_url or f"{scheme}://{host}:{llm_port}").rstrip("/")
-        self.tts_url = f"{scheme}://{host}:{tts_port}"
+        self.tts_url = (
+            f"{scheme}://{host}:{tts_port}".rstrip("/")
+            if tts_port and tts_port != 8004
+            else self.agent_url
+        )
 
         # Child delegate engines
         self.image_engine = DirectComfyEngine(
@@ -417,8 +421,17 @@ class HybridRemoteEngine(InProcessEngine):
         status = "healthy" if (comfy_ok and llm_ok and agent_ok) else ("degraded" if is_healthy else "unhealthy")
         latency_ms = round((time.monotonic() - t0) * 1000, 2)
 
+        ready_for: List[str] = []
+        if comfy_ok:
+            ready_for.extend(["image", "tts"])
+        if llm_ok or agent_ok:
+            # If sidecar agent is reachable, llama-server can be launched Just-In-Time
+            ready_for.append("llm")
+
         result = {
             "status": status,
+            "ready": is_healthy,
+            "ready_for": ready_for,
             "engine": "remote_hybrid",
             "latency_ms": latency_ms,
             "concurrency_policy": policy,
@@ -445,8 +458,10 @@ class HybridRemoteEngine(InProcessEngine):
                 },
                 "tts": {
                     "status": "healthy" if tts_ok else "unhealthy",
-                    "port": self.tts_port,
-                    "url": self.tts_url,
+                    "port": self.agent_port,
+                    "url": self.agent_url,
+                    "workflow_port": self.comfy_port,
+                    "workflow_url": self.comfy_url,
                     "latency_ms": image_health.get("latency_ms", 0),
                 },
             },
@@ -479,16 +494,29 @@ class HybridRemoteEngine(InProcessEngine):
     # ----------------------------------------------------------------------
 
     async def list_models(self, directory: str = "") -> List[Dict[str, Any]]:
-        if directory in ("llm", "models/llm"):
-            return await self.llm_engine.list_models(directory)
+        # Handle LLM directory queries (models, llm, models/llm, gguf)
+        if directory in ("llm", "models/llm", "models", "gguf") or (directory and directory.startswith("models/llm")):
+            return await self.llm_engine.list_models("models")
         if not directory:
             img_models = await self.image_engine.list_models("")
             try:
-                llm_models = await self.llm_engine.list_models("")
+                llm_models = await self.llm_engine.list_models("models")
             except Exception:
                 llm_models = []
             return img_models + llm_models
         return await self.image_engine.list_models(directory)
+
+    async def list_voices(self) -> List[Dict[str, Any]]:
+        """List voices from Qwen3-TTS library and designed voices on agent_url."""
+        try:
+            client = self.image_engine.get_agent_client()
+            resp = await client.get("/v1/voices", timeout=10.0)
+            if resp.status_code == 200:
+                payload = resp.json() or {}
+                return payload.get("voices") or []
+        except Exception as exc:
+            logger.warning("hybrid_list_voices_failed", provider_id=self.provider_id, error=str(exc))
+        return []
 
     async def get_storage_stats(self) -> Dict[str, Any]:
         return await self.image_engine.get_storage_stats()
@@ -497,6 +525,15 @@ class HybridRemoteEngine(InProcessEngine):
         return await self.image_engine.get_object_info()
 
     async def list_models_with_metadata(self, directory: str = "") -> List[Dict[str, Any]]:
+        if directory in ("llm", "models/llm", "models", "gguf") or (directory and directory.startswith("models/llm")):
+            return await self.llm_engine.list_models(directory="models")
+        if not directory:
+            img_models = await self.image_engine.list_models_with_metadata("")
+            try:
+                llm_models = await self.llm_engine.list_models(directory="models")
+            except Exception:
+                llm_models = []
+            return img_models + llm_models
         return await self.image_engine.list_models_with_metadata(directory)
 
     async def validate_models(self, directories: Optional[List[str]] = None, delete_invalid: bool = False) -> Dict[str, Any]:
