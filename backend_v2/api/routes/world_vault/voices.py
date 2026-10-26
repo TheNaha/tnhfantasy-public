@@ -296,7 +296,7 @@ async def design_voices(
 
 
 @router.get("/presets")
-async def list_voice_presets():
+def list_voice_presets():
     """Return Qwen3-TTS built-in preset timbres."""
     return [
         {"id": "friendly", "name": "Friendly", "description": "Warm, approachable tone", "language": "en"},
