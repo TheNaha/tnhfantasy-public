@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Loader2, Download, Check, X } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import toast from 'react-hot-toast';
-import DOMPurify from 'dompurify';
+import { sanitizeHtml } from '../../utils/sanitize';
 import { api } from '../../api';
 import { useCheckInstalledVersions } from '../../hooks/useCivitaiSearch';
 import { useEscapeKey } from '../../hooks/useEscapeKey';
@@ -193,7 +193,7 @@ export default function ModelImportCard({ model, onCancel }) {
                             <h3 className="text-sm font-medium text-gray-400 uppercase tracking-wider">Description</h3>
                             <div
                                 className="prose prose-invert prose-sm max-w-none text-gray-300 bg-gray-950/30 p-4 rounded-xl border border-gray-800/50"
-                                dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(model.description) }}
+                                dangerouslySetInnerHTML={{ __html: sanitizeHtml(model.description) }}
                             />
                         </div>
                     )}

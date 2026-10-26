@@ -13,6 +13,11 @@ function configureProxyErrorLogging(proxy, routeName) {
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
+  resolve: {
+    alias: {
+      'motion/react': 'framer-motion',
+    },
+  },
   test: {
     environment: 'jsdom',
     globals: true,

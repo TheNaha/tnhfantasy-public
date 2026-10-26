@@ -1,4 +1,4 @@
-FROM node:20-slim AS dev
+FROM node:24-slim AS dev
 WORKDIR /app
 
 # Copy package files first for better layer caching

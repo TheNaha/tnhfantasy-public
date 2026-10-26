@@ -1,6 +1,6 @@
 # Backend V2 - FastAPI + SQLModel + AsyncIO
-fastapi>=0.104.0
-uvicorn[standard]>=0.24.0
+fastapi>=0.162.0
+uvicorn[standard]>=0.54.0
 # `starlette` is imported directly, not only used through FastAPI:
 # core/upload_validation.py (UploadFile), api/error_handlers.py (HTTPException),
 # api/routes/files.py (BackgroundTask). It was an undeclared transitive
@@ -9,13 +9,13 @@ uvicorn[standard]>=0.24.0
 starlette>=1.6.0
 
 # Database
-sqlmodel>=0.0.14
+sqlmodel>=0.0.48
 # `sqlmodel` is a thin layer over SQLAlchemy and does not re-export it, but the
 # codebase imports `sqlalchemy` directly (core/entities.py:7-8,
 # scripts/migrate_sqlite_to_pg.py:7) and `sqlmodel`'s own version range has moved
 # across sqlalchemy majors. It was previously an undeclared transitive
 # dependency. Pinned to what backend_v2/.venv actually has.
-sqlalchemy>=2.0.52
+sqlalchemy[asyncio]>=2.1.6
 psycopg2-binary>=2.9.9
 # SQLAlchemy 2.1+ defaults `postgresql://` to the psycopg (v3) driver; both
 # psycopg (v3, for SQLAlchemy) and psycopg2-binary (v2, for job_queue.py) are
@@ -24,7 +24,7 @@ psycopg[binary]>=3.2.0
 pgvector>=0.2.5
 
 # Configuration
-pydantic-settings>=2.1.0
+pydantic-settings>=2.16.0
 
 # HTTP Client
 httpx[http2]>=0.25.0
@@ -48,7 +48,7 @@ docker>=6.1.0
 modal>=1.5.0
 
 # Image processing
-Pillow>=10.0.0
+Pillow>=13.0.0
 blurhash>=1.1.4
 numpy>=1.24.0
 

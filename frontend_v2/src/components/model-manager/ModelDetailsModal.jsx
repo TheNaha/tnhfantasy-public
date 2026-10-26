@@ -2,7 +2,7 @@ import { useState, useMemo } from 'react';
 import { X, AlertCircle, ExternalLink, Wand2, RefreshCw, Plus } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
-import DOMPurify from 'dompurify';
+import { sanitizeHtml } from '../../utils/sanitize';
 import { api, modelsApi } from '../../api';
 import ModalOverlay from '../common/ModalOverlay';
 import CivitaiSearchModal from './CivitaiSearchModal';
@@ -526,7 +526,7 @@ export default function ModelDetailsModal({ file, providers = [], onClose }) {
                                     <h3 className="text-sm font-medium text-gray-400 mb-2">Model Description</h3>
                                     <div
                                         className="prose prose-invert prose-sm max-w-none text-gray-300 bg-gray-950/30 p-4 rounded-xl border border-gray-800/50 break-words max-h-40 overflow-y-auto"
-                                        dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(modelDescription) }}
+                                        dangerouslySetInnerHTML={{ __html: sanitizeHtml(modelDescription) }}
                                     />
                                 </div>
                             )}
@@ -539,7 +539,7 @@ export default function ModelDetailsModal({ file, providers = [], onClose }) {
                                     </h3>
                                     <div
                                         className="prose prose-invert prose-sm max-w-none text-gray-300 bg-blue-950/20 p-4 rounded-xl border border-blue-800/30 break-words max-h-40 overflow-y-auto"
-                                        dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(versionDescription) }}
+                                        dangerouslySetInnerHTML={{ __html: sanitizeHtml(versionDescription) }}
                                     />
                                 </div>
                             )}

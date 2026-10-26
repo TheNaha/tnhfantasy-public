@@ -13,6 +13,11 @@ from infrastructure.logging import get_logger
 
 logger = get_logger("image_processor")
 
+# Pillow 13+ introduces Magic Kernel Sharp (MKS2021), specifically optimized
+# for downscaling high-frequency synthetic AI imagery without ringing or moiré.
+# Falls back to LANCZOS on older Pillow runtimes.
+THUMBNAIL_RESAMPLE = getattr(Image.Resampling, "MKS2021", Image.Resampling.LANCZOS)
+
 
 def _safe_component(value: str, default: str) -> str:
     normalized = str(value or default).replace("\\", "/").strip()
@@ -209,7 +214,7 @@ def generate_thumbnails(image_path: str, sizes: dict = None, output_base_dir: st
             else:
                 img = source_img.copy()
 
-            img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
+            img.thumbnail((max_size, max_size), THUMBNAIL_RESAMPLE)
 
             thumb_filename = f"{original_filename}.{thumb_format}"
             thumb_path = os.path.join(thumb_output_dir, thumb_filename)
@@ -317,7 +322,7 @@ def resize_image(image_path: str, max_dimension: int, output_path: str = None, q
         img = img.convert('RGB')
     
     # Resize maintaining aspect ratio
-    img.thumbnail((max_dimension, max_dimension), Image.Resampling.LANCZOS)
+    img.thumbnail((max_dimension, max_dimension), THUMBNAIL_RESAMPLE)
     
     # Save
     img.save(output_path, quality=quality, optimize=True)

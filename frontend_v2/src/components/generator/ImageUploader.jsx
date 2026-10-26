@@ -75,8 +75,20 @@ export default function ImageUploader({
         }
     }, [onImageSelect, providerId]);
 
+    const onDropRejected = useCallback((fileRejections) => {
+        if (fileRejections.length > 0) {
+            const hasTooMany = fileRejections.some(r => r.errors?.some(e => e.code === 'too-many-files'));
+            if (hasTooMany) {
+                toast.error('Only one image can be uploaded at a time');
+            } else {
+                toast.error(fileRejections[0]?.errors?.[0]?.message || 'File upload rejected');
+            }
+        }
+    }, []);
+
     const { getRootProps, getInputProps, isDragActive } = useDropzone({
         onDrop,
+        onDropRejected,
         accept: {
             'image/*': ['.png', '.jpg', '.jpeg', '.webp']
         },

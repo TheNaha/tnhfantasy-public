@@ -19,6 +19,10 @@ import { Suspense, lazy, useEffect, useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation, useParams, Outlet } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Loader2 } from 'lucide-react';
+import * as Lucide from 'lucide-react';
+
+// Adaptively use LucideProvider if available (Lucide v1+), otherwise fallback to passthrough
+const LucideIconProvider = Lucide.LucideProvider || (({ children }) => children);
 import { AnimatePresence, MotionConfig } from 'framer-motion';
 import { Toaster, toast } from 'react-hot-toast';
 import Layout from './components/Layout';
@@ -319,7 +323,8 @@ function App() {
     return (
         <ErrorBoundary>
             <MotionConfig transition={{ duration: animationDuration / 1000 }}>
-                <QueryClientProvider client={queryClient}>
+                <LucideIconProvider strokeWidth={1.75} size={18}>
+                    <QueryClientProvider client={queryClient}>
                     <GlobalHooks />
                     <Router>
                         <Layout>
@@ -359,8 +364,9 @@ function App() {
                         }}
                     />
                 </QueryClientProvider>
-            </MotionConfig>
-        </ErrorBoundary>
+            </LucideIconProvider>
+        </MotionConfig>
+    </ErrorBoundary>
     );
 }
 
