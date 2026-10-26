@@ -239,21 +239,32 @@ class ModelCivitaiSyncService:
                 images = civitai_version.get("images", [])
                 existing_images = existing_images_by_version.get(matched_version.id, [])
 
-                if images and not existing_images:
-                    image_data = images[0]
-                    img_nsfw = image_data.get("nsfw", "None")
-                    img_nsfw_level = image_data.get("nsfwLevel")
-                    if img_nsfw_level is not None:
-                        resolved_nsfw_level = img_nsfw_level
-                    else:
-                        resolved_nsfw_level = 3 if img_nsfw else 1
-                    img = ModelImage(
-                        version_id=matched_version.id,
-                        url=image_data.get("url", ""),
-                        nsfw_level=resolved_nsfw_level,
-                        sort_order=0,
-                    )
-                    self.session.add(img)
+                if images:
+                    existing_urls = {img.url for img in existing_images}
+                    for i, image_data in enumerate(images[:20]):
+                        img_url = image_data.get("url")
+                        if not img_url or img_url in existing_urls:
+                            continue
+                        img_nsfw = image_data.get("nsfw", "None")
+                        img_nsfw_level = image_data.get("nsfwLevel")
+                        if img_nsfw_level is not None:
+                            resolved_nsfw_level = img_nsfw_level
+                        else:
+                            resolved_nsfw_level = 3 if img_nsfw else 1
+                        img = ModelImage(
+                            version_id=matched_version.id,
+                            url=img_url,
+                            width=image_data.get("width"),
+                            height=image_data.get("height"),
+                            blurhash=image_data.get("hash"),
+                            type=image_data.get("type", "image"),
+                            nsfw_level=resolved_nsfw_level,
+                            has_meta=image_data.get("hasMeta", False),
+                            has_positive_prompt=image_data.get("hasPositivePrompt", False),
+                            sort_order=i,
+                        )
+                        self.session.add(img)
+                        existing_urls.add(img_url)
 
         self.session.commit()
         return self.repo.model_to_dict(model)
