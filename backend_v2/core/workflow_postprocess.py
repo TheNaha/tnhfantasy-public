@@ -46,16 +46,43 @@ def embedding_file_exists(name: str) -> bool:
     """Check whether an embedding file exists for `name`.
 
     Tries the name verbatim first, then appends each known extension.
+    Checks the local filesystem first (if models/embeddings/ is present),
+    and falls back to checking registered models in the database catalog
+    (for serverless or remote providers where weights live on worker volumes).
     """
-    embeddings_dir = _resolve_embeddings_dir()
-    if not os.path.isdir(embeddings_dir):
-        return False
     candidates = [name]
     if not os.path.splitext(name)[1]:
         candidates = [name + ext for ext in _EMBEDDING_EXTENSIONS] + [name]
-    for cand in candidates:
-        if os.path.isfile(os.path.join(embeddings_dir, cand)):
-            return True
+
+    embeddings_dir = _resolve_embeddings_dir()
+    if os.path.isdir(embeddings_dir):
+        for cand in candidates:
+            if os.path.isfile(os.path.join(embeddings_dir, cand)):
+                return True
+
+    # Fallback to DB catalog for remote/cloud providers where models are not mounted locally
+    try:
+        from api.deps import get_session_sync
+        from sqlmodel import select
+        from core.entities import ModelFile, ModelV2, ModelVersion
+
+        with get_session_sync() as session:
+            stmt = (
+                select(ModelFile.id)
+                .join(ModelVersion, ModelVersion.id == ModelFile.version_id)
+                .join(ModelV2, ModelV2.id == ModelVersion.model_id)
+                .where(ModelV2.directory.in_(["embeddings", "models/embeddings"]))
+                .where(
+                    (ModelFile.storage_filename.in_(candidates))
+                    | (ModelFile.original_filename.in_(candidates))
+                    | (ModelV2.name.in_(candidates))
+                )
+            )
+            if session.exec(stmt).first():
+                return True
+    except Exception:
+        pass
+
     return False
 
 
