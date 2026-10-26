@@ -23,6 +23,7 @@ from api.deps import get_session, get_prompt_repo
 from core.entities import Prompt
 from core.exceptions import ComfyError, NotFoundError
 from core.sql_search import LIKE_ESCAPE_CHAR, like_contains
+from core.upload_validation import MAX_BATCH_ITEMS, require_batch_size
 from infrastructure.logging import get_logger
 from infrastructure.repositories.prompt_repo import PromptRepository
 
@@ -249,6 +250,7 @@ def increment_usage(prompt_id: str, session: Session = Depends(get_session), pro
 @router.post("/import")
 def import_prompts(data: PromptBulkImport, session: Session = Depends(get_session)):
     """Bulk import prompts (for migration from localStorage)."""
+    require_batch_size(data.prompts, MAX_BATCH_ITEMS, field="prompts")
     imported = []
     
     for prompt_data in data.prompts:

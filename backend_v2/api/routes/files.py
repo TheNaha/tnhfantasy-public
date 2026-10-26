@@ -2370,3 +2370,43 @@ async def batch_get_metadata(request: BatchMetadataRequest):
         "total": len(request.paths),
         "found": sum(1 for r in results.values() if r.get("success"))
     }
+
+
+def _cleanup_expired_inputs_sync(max_age_days: int = 7) -> dict[str, int]:
+    """Remove expired temporary masks and orphaned upload files from INPUT_DIR.
+
+    Files older than max_age_days (by mtime) are unlinked.
+    Returns count of removed files and freed bytes.
+    """
+    import time
+    if not os.path.isdir(INPUT_DIR):
+        return {"removed": 0, "freed_bytes": 0}
+
+    cutoff = time.time() - (max_age_days * 86400)
+    removed = 0
+    freed_bytes = 0
+
+    try:
+        for entry in os.scandir(INPUT_DIR):
+            if not entry.is_file():
+                continue
+            try:
+                stat = entry.stat()
+                if stat.st_mtime < cutoff:
+                    size = stat.st_size
+                    os.unlink(entry.path)
+                    removed += 1
+                    freed_bytes += size
+            except Exception as e:
+                logger.warning("cleanup_input_file_failed", path=entry.path, error=str(e))
+    except Exception as e:
+        logger.warning("cleanup_input_dir_failed", error=str(e))
+
+    return {"removed": removed, "freed_bytes": freed_bytes}
+
+
+@router.post("/api/files/cleanup-inputs")
+async def cleanup_inputs_endpoint(max_age_days: int = Query(7, ge=1, le=365)):
+    """Clean up expired temporary masks and orphaned upload files in INPUT_DIR."""
+    return await asyncio.to_thread(_cleanup_expired_inputs_sync, max_age_days=max_age_days)
+
