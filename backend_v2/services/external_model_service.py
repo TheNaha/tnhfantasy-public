@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 import urllib.parse
 from dataclasses import dataclass
@@ -76,13 +77,29 @@ class ExternalModelServiceError(Exception):
 class ExternalModelService:
     """Service for external model parsing and search APIs."""
 
+    @staticmethod
+    def _civitai_headers() -> dict[str, str]:
+        headers = {"User-Agent": "TNHComfy/1.0"}
+        token = os.getenv("CIVITAI_TOKEN", "").strip()
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        return headers
+
+    @staticmethod
+    def _hf_headers() -> dict[str, str]:
+        token = os.getenv("HF_TOKEN", "").strip()
+        if token:
+            return {"Authorization": f"Bearer {token}"}
+        return {}
+
     async def parse_model_url(self, raw_url: str) -> dict[str, Any]:
         url = (raw_url or "").strip()
         if not url:
             raise ExternalModelServiceError(status_code=400, detail="URL is required")
 
         if "civitai.com" in url or "civitai.red" in url:
-            return await self._parse_civitai_url(url)
+            prefer_red = "civitai.red" in url
+            return await self._parse_civitai_url(url, prefer_red=prefer_red)
 
         if "huggingface.co" in url:
             return await self._parse_huggingface_url(url)
@@ -172,7 +189,7 @@ class ExternalModelService:
         url = f"https://civitai.com/api/v1/models?{qs}"
 
         try:
-            response = await get_http_client().get(url, timeout=10)
+            response = await get_http_client().get(url, headers=self._civitai_headers(), timeout=10)
             if response.status_code == 200:
                 return response.json()
 
@@ -189,7 +206,7 @@ class ExternalModelService:
         """Fetch a specific model version from CivitAI by its SHA256 file hash."""
         url = f"https://civitai.com/api/v1/model-versions/by-hash/{file_hash}"
         try:
-            response = await get_http_client().get(url, timeout=10)
+            response = await get_http_client().get(url, headers=self._civitai_headers(), timeout=10)
             if response.status_code == 200:
                 return response.json()
             if response.status_code == 404:
@@ -207,7 +224,7 @@ class ExternalModelService:
         """Fetch current valid enum values (ModelType, BaseModel, etc.) from CivitAI API."""
         url = "https://civitai.com/api/v1/enums"
         try:
-            response = await get_http_client().get(url, timeout=5)
+            response = await get_http_client().get(url, headers=self._civitai_headers(), timeout=5)
             if response.status_code == 200:
                 return response.json()
             raise ExternalModelServiceError(
@@ -224,7 +241,7 @@ class ExternalModelService:
         url = f"https://huggingface.co/api/models?search={encoded_query}&limit={limit}&filter=diffusers"
 
         try:
-            response = await get_http_client().get(url, timeout=10)
+            response = await get_http_client().get(url, headers=self._hf_headers(), timeout=10)
             if response.status_code != 200:
                 raise ExternalModelServiceError(
                     status_code=response.status_code,
@@ -244,14 +261,14 @@ class ExternalModelService:
         url = f"https://civitai.com/api/v1/tags?limit={limit}"
         client = get_http_client()
         try:
-            response = await client.get(url, timeout=10.0)
+            response = await client.get(url, headers=self._civitai_headers(), timeout=10.0)
             response.raise_for_status()
             return response.json()
         except httpx.HTTPError as exc:
             logger.error(f"Error fetching CivitAI tags: {exc}")
             raise ExternalModelServiceError(status_code=502, detail="Failed to fetch tags from CivitAI")
 
-    async def _parse_civitai_url(self, url: str) -> dict[str, Any]:
+    async def _parse_civitai_url(self, url: str, prefer_red: bool = False) -> dict[str, Any]:
         match = re.search(r"models/(\d+)", url)
         if not match:
             raise ExternalModelServiceError(
@@ -262,7 +279,7 @@ class ExternalModelService:
         model_id = match.group(1)
 
         try:
-            return await self.get_civitai_model(int(model_id))
+            return await self.get_civitai_model(int(model_id), prefer_red=prefer_red)
         except ExternalModelServiceError:
             raise
         except Exception as exc:
@@ -271,42 +288,81 @@ class ExternalModelService:
                 detail=f"Failed to fetch from CivitAI: {exc!s}",
             ) from exc
 
-    async def get_civitai_model(self, model_id: int) -> dict[str, Any]:
-        try:
-            response = await get_http_client().get(
-                f"https://civitai.com/api/v1/models/{model_id}",
-                timeout=15,
-            )
-            response.raise_for_status()
-            return response.json()
-        except httpx.HTTPStatusError as exc:
+    async def get_civitai_model(self, model_id: int, prefer_red: bool = False) -> dict[str, Any]:
+        domains = ["civitai.red", "civitai.com"] if prefer_red else ["civitai.com", "civitai.red"]
+        last_error = None
+        for domain in domains:
+            try:
+                response = await get_http_client().get(
+                    f"https://{domain}/api/v1/models/{model_id}",
+                    headers=self._civitai_headers(),
+                    timeout=15,
+                )
+                if response.status_code == 200:
+                    return response.json()
+                if response.status_code == 404:
+                    last_error = httpx.HTTPStatusError("Not Found", request=getattr(response, "request", None), response=response)
+                    continue
+                response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                last_error = exc
+                if exc.response.status_code == 404:
+                    continue
+                raise ExternalModelServiceError(
+                    status_code=exc.response.status_code,
+                    detail=f"Failed to fetch from CivitAI: {exc!s}",
+                ) from exc
+            except Exception as exc:
+                last_error = exc
+                continue
+
+        if isinstance(last_error, httpx.HTTPStatusError):
             raise ExternalModelServiceError(
-                status_code=exc.response.status_code,
-                detail=f"Failed to fetch from CivitAI: {exc!s}",
-            ) from exc
-        except Exception as exc:
+                status_code=last_error.response.status_code,
+                detail=f"Failed to fetch from CivitAI: {last_error!s}",
+            ) from last_error
+        raise ExternalModelServiceError(
+            status_code=500,
+            detail=f"Failed to fetch from CivitAI: {last_error!s}",
+        )
+
+    async def get_civitai_model_version(self, version_id: int, prefer_red: bool = False) -> dict[str, Any]:
+        domains = ["civitai.red", "civitai.com"] if prefer_red else ["civitai.com", "civitai.red"]
+        last_error = None
+        for domain in domains:
+            try:
+                response = await get_http_client().get(
+                    f"https://{domain}/api/v1/model-versions/{version_id}",
+                    headers=self._civitai_headers(),
+                    timeout=15,
+                )
+                if response.status_code == 200:
+                    return response.json()
+                if response.status_code == 404:
+                    last_error = httpx.HTTPStatusError("Not Found", request=getattr(response, "request", None), response=response)
+                    continue
+                response.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                last_error = exc
+                if exc.response.status_code == 404:
+                    continue
+                raise ExternalModelServiceError(
+                    status_code=exc.response.status_code,
+                    detail=f"Failed to fetch version from CivitAI: {exc!s}",
+                ) from exc
+            except Exception as exc:
+                last_error = exc
+                continue
+
+        if isinstance(last_error, httpx.HTTPStatusError):
             raise ExternalModelServiceError(
-                status_code=500,
-                detail=f"Failed to fetch from CivitAI: {exc!s}",
-            ) from exc
-    async def get_civitai_model_version(self, version_id: int) -> dict[str, Any]:
-        try:
-            response = await get_http_client().get(
-                f"https://civitai.com/api/v1/model-versions/{version_id}",
-                timeout=15,
-            )
-            response.raise_for_status()
-            return response.json()
-        except httpx.HTTPStatusError as exc:
-            raise ExternalModelServiceError(
-                status_code=exc.response.status_code,
-                detail=f"Failed to fetch version from CivitAI: {exc!s}",
-            ) from exc
-        except Exception as exc:
-            raise ExternalModelServiceError(
-                status_code=500,
-                detail=f"Failed to fetch version from CivitAI: {exc!s}",
-            ) from exc
+                status_code=last_error.response.status_code,
+                detail=f"Failed to fetch version from CivitAI: {last_error!s}",
+            ) from last_error
+        raise ExternalModelServiceError(
+            status_code=500,
+            detail=f"Failed to fetch version from CivitAI: {last_error!s}",
+        )
     async def _parse_huggingface_url(self, url: str) -> dict[str, Any]:
         match = re.search(r"huggingface\.co/([^/]+/[^/]+)", url)
         if not match:
@@ -320,6 +376,7 @@ class ExternalModelService:
         try:
             response = await get_http_client().get(
                 f"https://huggingface.co/api/models/{model_path}",
+                headers=self._hf_headers(),
                 timeout=15,
             )
             response.raise_for_status()
