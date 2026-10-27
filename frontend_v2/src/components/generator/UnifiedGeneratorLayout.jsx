@@ -18,6 +18,7 @@ import GeneratorReadinessPanel from './GeneratorReadinessPanel';
 import NoCheckpointCTA from './NoCheckpointCTA';
 import SamplingSettings from './SamplingSettings';
 import ModelMetadataModal from '../ModelMetadataModal';
+import DropMetadataOverlay from './DropMetadataOverlay';
 
 /**
  * Unified Layout for Generator Pages
@@ -121,6 +122,7 @@ export default function UnifiedGeneratorLayout({
 
     return (
         <>
+            <DropMetadataOverlay />
             <NoCheckpointCTA loading={modelsLoading} show={checkpoints.length === 0} />
             <GeneratorShell
                 accentClass={accentClass}
@@ -135,7 +137,7 @@ export default function UnifiedGeneratorLayout({
                     <>
                         {leftColumnTop}
                         
-                        <PromptPanel />
+                        <PromptPanel embeddingModels={embeddingModels} />
 
                         <div className="space-y-4 pb-4 border-b border-gray-800">
                             <ModelSection

@@ -3,6 +3,7 @@ import { Settings2, Plus, Trash2, ChevronDown, Sparkles, Info, ImageIcon } from 
 import ModelSelector from '../../components/ModelSelector';
 import { isFluxModel, isAuraFlowModel, isPonyModel, isUnetModel } from '../../utils/modelType';
 import { formatBytes } from '../../utils/bytes';
+import { isNegativeEmbedding, toggleEmbeddingInPrompt, hasEmbedding } from '../../utils/embeddingHelpers';
 import toast from 'react-hot-toast';
 
 const ModelSection = memo(function ModelSection({
@@ -169,9 +170,9 @@ const ModelSection = memo(function ModelSection({
                     </label>
                     <div className="flex flex-wrap gap-2">
                         {embeddingModels.map(emb => {
-                            const isNegative = emb.name.toLowerCase().includes("negative");
-                            const isInPositive = prompt.includes(`embedding:${emb.name}`);
-                            const isInNegative = negativePrompt.includes(`embedding:${emb.name}`);
+                            const isNegative = isNegativeEmbedding(emb.name);
+                            const isInPositive = hasEmbedding(prompt, emb.name);
+                            const isInNegative = hasEmbedding(negativePrompt, emb.name);
                             const isActive = isInPositive || isInNegative;
 
                             return (
@@ -179,11 +180,15 @@ const ModelSection = memo(function ModelSection({
                                     key={emb.name}
                                     onClick={() => {
                                         if (isNegative) {
-                                            setNegativePrompt(negativePrompt ? `${negativePrompt}, embedding:${emb.name}` : `embedding:${emb.name}`);
-                                            toast.success(`Added ${emb.name} to Negative Prompt`, { icon: '🚫' });
+                                            const next = toggleEmbeddingInPrompt(negativePrompt, emb.name);
+                                            setNegativePrompt(next);
+                                            const wasAdded = hasEmbedding(next, emb.name);
+                                            toast(wasAdded ? `Added ${emb.name} to Negative Prompt` : `Removed ${emb.name} from Negative Prompt`, { icon: '🚫' });
                                         } else {
-                                            setPrompt(prompt ? `${prompt}, embedding:${emb.name}` : `embedding:${emb.name}`);
-                                            toast.success(`Added ${emb.name} to Positive Prompt`, { icon: '✨' });
+                                            const next = toggleEmbeddingInPrompt(prompt, emb.name);
+                                            setPrompt(next);
+                                            const wasAdded = hasEmbedding(next, emb.name);
+                                            toast(wasAdded ? `Added ${emb.name} to Positive Prompt` : `Removed ${emb.name} from Positive Prompt`, { icon: '✨' });
                                         }
                                     }}
                                     className={`text-xs px-3 py-1.5 rounded-lg border transition-all ${isActive
@@ -194,7 +199,7 @@ const ModelSection = memo(function ModelSection({
                                             ? 'bg-red-900/20 border-red-800 text-red-400 hover:bg-red-900/40'
                                             : 'bg-blue-900/20 border-blue-800 text-blue-400 hover:bg-blue-900/40'
                                         }`}
-                                    title={`Click to add to ${isNegative ? "Negative" : "Positive"} Prompt${isActive ? " (Already added)" : ""}`}
+                                    title={`Click to toggle in ${isNegative ? "Negative" : "Positive"} Prompt${isActive ? " (Active)" : ""}`}
                                     type="button"
                                 >
                                     {emb.name}
@@ -297,9 +302,31 @@ Click to insert “${token}” into ${isActive ? "the prompt (already added)" : 
                                             <div className="text-sm font-medium text-white line-clamp-2 leading-tight">
                                                 {lora.display_name || lora.name || 'Select LoRA...'}
                                             </div>
-                                            {lora.base_model && (
-                                                <span className="text-2xs text-gray-500">{lora.base_model}</span>
-                                            )}
+                                            <div className="flex items-center gap-1.5 flex-wrap">
+                                                {lora.base_model && (
+                                                    <span className="text-2xs text-gray-500">{lora.base_model}</span>
+                                                )}
+                                                {(() => {
+                                                    const ckptBase = selectedCheckpoint?.base_model || selectedCheckpoint?.baseModel || (isFluxModel(selectedCheckpoint) ? 'Flux' : (isPonyModel(selectedCheckpoint) ? 'Pony' : null));
+                                                    const loraBase = lora.base_model || lora.baseModel;
+                                                    if (!ckptBase || !loraBase) return null;
+                                                    const norm = (s) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+                                                    const c = norm(ckptBase);
+                                                    const l = norm(loraBase);
+                                                    const isSdxlFam = (s) => s.includes('sdxl') || s.includes('pony') || s.includes('illustrious') || s.includes('noob');
+                                                    if (isSdxlFam(c) && isSdxlFam(l)) return null;
+                                                    if (c === l) return null;
+
+                                                    return (
+                                                        <span
+                                                            className="text-3xs bg-amber-950/60 text-amber-300 border border-amber-800/80 px-1 py-0.2 rounded font-medium inline-flex items-center gap-0.5"
+                                                            title={`Architecture mismatch: LoRA is ${loraBase}, but checkpoint is ${ckptBase}`}
+                                                        >
+                                                            ⚠️ {loraBase} on {ckptBase}
+                                                        </span>
+                                                    );
+                                                })()}
+                                            </div>
                                         </button>
 
                                         <button

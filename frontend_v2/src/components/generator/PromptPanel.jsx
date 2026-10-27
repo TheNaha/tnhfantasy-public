@@ -1,16 +1,19 @@
 import { useEffect, useRef, useState } from 'react';
-import { Wand2, BookOpen, Sparkles, Loader2 } from 'lucide-react';
+import { Wand2, BookOpen, Sparkles, Loader2, ScanEye } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useGeneratorStore } from '../../store/generatorStore';
 import { magicPrompt } from '../../api/promptsApi';
 import PromptLibrary from './PromptLibrary';
+import EmbeddingBar from './EmbeddingBar';
+import InterrogateModal from './InterrogateModal';
 
-export default function PromptPanel() {
+export default function PromptPanel({ embeddingModels = [], onInterrogateClick }) {
     const prompt = useGeneratorStore((state) => state.prompt);
     const setPrompt = useGeneratorStore((state) => state.setPrompt);
     const negativePrompt = useGeneratorStore((state) => state.negativePrompt);
     const setNegativePrompt = useGeneratorStore((state) => state.setNegativePrompt);
     const [showPromptLibrary, setShowPromptLibrary] = useState(false);
+    const [showInterrogate, setShowInterrogate] = useState(false);
     const [isMagicLoading, setIsMagicLoading] = useState(false);
 
     const promptRef = useRef(null);
@@ -63,6 +66,16 @@ export default function PromptPanel() {
                 </h3>
                 <div className="flex items-center gap-2">
                     <button
+                        onClick={onInterrogateClick || (() => setShowInterrogate(true))}
+                        className="px-3 py-2 bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-300 hover:text-white border border-emerald-500/30 text-xs lg:text-sm rounded-xl flex items-center gap-1.5 transition-all shadow-[0_0_10px_rgba(16,185,129,0.1)] hover:shadow-[0_0_15px_rgba(16,185,129,0.3)] hover:-translate-y-0.5"
+                        aria-label="Interrogate Image"
+                        type="button"
+                        title="Extract prompt and tags from an image"
+                    >
+                        <ScanEye size={16} aria-hidden="true" />
+                        <span className="hidden sm:inline font-semibold tracking-wide">Interrogate</span>
+                    </button>
+                    <button
                         onClick={handleMagicPrompt}
                         disabled={isMagicLoading || !prompt.trim()}
                         className="px-4 py-2 bg-purple-600/20 hover:bg-purple-600/40 text-purple-300 hover:text-white border border-purple-500/30 text-xs lg:text-sm rounded-xl flex items-center gap-2 transition-all shadow-[0_0_10px_rgba(168,85,247,0.1)] hover:shadow-[0_0_15px_rgba(168,85,247,0.3)] hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed"
@@ -85,8 +98,8 @@ export default function PromptPanel() {
                 </div>
             </div>
             
-            <div className="space-y-1 group">
-                <label className="block text-2xs font-bold text-blue-400 uppercase tracking-widest mb-2 px-1">Positive Prompt</label>
+            <div className="space-y-1.5 group">
+                <label className="block text-2xs font-bold text-blue-400 uppercase tracking-widest mb-1 px-1">Positive Prompt</label>
                 <textarea
                     ref={promptRef}
                     className="w-full bg-[#0B0E14]/80 border border-white/10 rounded-xl p-3 lg:p-4 text-sm text-white min-h-[4rem] lg:min-h-[8rem] focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500/50 outline-none resize-y overflow-hidden transition-all shadow-inner glow-focus placeholder-gray-600"
@@ -94,10 +107,16 @@ export default function PromptPanel() {
                     onChange={(e) => setPrompt(e.target.value)}
                     placeholder="Describe what you want to create..."
                 />
+                <EmbeddingBar
+                    promptText={prompt}
+                    onChange={setPrompt}
+                    isNegative={false}
+                    embeddings={embeddingModels}
+                />
             </div>
             
-            <div className="space-y-1 group">
-                <label className="block text-2xs font-bold text-pink-400 uppercase tracking-widest mb-2 px-1">Negative Prompt</label>
+            <div className="space-y-1.5 group">
+                <label className="block text-2xs font-bold text-pink-400 uppercase tracking-widest mb-1 px-1">Negative Prompt</label>
                 <textarea
                     ref={negPromptRef}
                     className="w-full bg-[#0B0E14]/80 border border-white/10 rounded-xl p-3 lg:p-4 text-sm text-white min-h-[3rem] lg:min-h-[5rem] focus:ring-2 focus:ring-pink-500/50 focus:border-pink-500/50 outline-none resize-y overflow-hidden transition-all shadow-inner glow-focus placeholder-gray-600"
@@ -105,12 +124,23 @@ export default function PromptPanel() {
                     onChange={(e) => setNegativePrompt(e.target.value)}
                     placeholder="What to avoid..."
                 />
+                <EmbeddingBar
+                    promptText={negativePrompt}
+                    onChange={setNegativePrompt}
+                    isNegative={true}
+                    embeddings={embeddingModels}
+                />
             </div>
             
             <PromptLibrary
                 isOpen={showPromptLibrary}
                 onClose={() => setShowPromptLibrary(false)}
                 onSelectPrompt={handleSelectPromptFromLibrary}
+            />
+
+            <InterrogateModal
+                isOpen={showInterrogate}
+                onClose={() => setShowInterrogate(false)}
             />
         </div>
     );

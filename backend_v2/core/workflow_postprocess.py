@@ -51,8 +51,13 @@ def embedding_file_exists(name: str) -> bool:
     (for serverless or remote providers where weights live on worker volumes).
     """
     candidates = [name]
+    base_name = os.path.basename(name)
     if not os.path.splitext(name)[1]:
         candidates = [name + ext for ext in _EMBEDDING_EXTENSIONS] + [name]
+        if base_name != name:
+            candidates += [base_name + ext for ext in _EMBEDDING_EXTENSIONS] + [base_name]
+    elif base_name != name:
+        candidates.append(base_name)
 
     embeddings_dir = _resolve_embeddings_dir()
     if os.path.isdir(embeddings_dir):
@@ -89,9 +94,13 @@ def embedding_file_exists(name: str) -> bool:
 def extract_embedding_names(text: str) -> list[str]:
     """Extract `embedding:NAME` tokens from a prompt string.
 
-    Returns a list of embedding names (without the `embedding:` prefix).
+    Supports bare syntax (`embedding:name`), optional weights (`(embedding:name:1.1)`),
+    subdirectories, and file extensions. Returns a list of embedding names.
     """
-    return re.findall(r"embedding:([\w_\-]+(?:\.[\w]+)?)", text)
+    return re.findall(
+        r"embedding:([a-zA-Z0-9_\-./]+?)(?::[0-9.]+(?=[)\s,]|$)|(?=[)\s,]|$))",
+        text,
+    )
 
 
 def expand_prompt_shortcuts(text: str) -> str:
@@ -99,7 +108,11 @@ def expand_prompt_shortcuts(text: str) -> str:
 
     Shortcut names are matched on word boundaries, longest-first, so
     `lazypos_v2` takes precedence over `lazypos`. Unmatched text passes
-    through unchanged. Returns the expanded string.
+    through unchanged.
+
+    Tokens preceded by `embedding:` (e.g. `embedding:lazypos` or
+    `(embedding:lazyneg:1.1)`) are preserved untouched so textual inversion
+    files are not corrupted by text shortcut substitutions.
     """
     from config import get_config
 
@@ -107,24 +120,28 @@ def expand_prompt_shortcuts(text: str) -> str:
     if not shortcuts:
         return text
 
-    # Sort by length descending so longer names match first (e.g. lazypos_v2
-    # before lazypos). Word boundaries prevent partial matches inside other
-    # words.
+    # Fixed-width negative lookbehinds prevent rewriting tokens that are part
+    # of an embedding declaration (`embedding:NAME` or `embedding: NAME`).
     pattern = re.compile(
-        r"\b(" + "|".join(re.escape(name) for name in sorted(shortcuts, key=len, reverse=True)) + r")\b"
+        r"(?<!embedding:)(?<!embedding:\s)\b("
+        + "|".join(re.escape(name) for name in sorted(shortcuts, key=len, reverse=True))
+        + r")\b"
     )
     return pattern.sub(lambda m: shortcuts[m.group(0)], text)
 
 
-def postprocess_prompt_text(text: str, *, field: str = "prompt") -> str:
-    """Expand the shortcuts in one prompt string and check its embeddings.
+def postprocess_prompt_text(text: str, *, field: str = "prompt", seed: int | None = None) -> str:
+    """Expand wildcards, shortcuts in one prompt string and check its embeddings.
 
     Raises `ValidationError` when an embedding file is missing - the same
     error the guided path has always raised, and for the same reason: a
     missing embedding is a request that cannot succeed, and the user should
     hear about it now rather than through a provider error later.
     """
-    expanded = expand_prompt_shortcuts(text)
+    from services.wildcard_service import WildcardService
+
+    wildcard_expanded = WildcardService.expand_wildcards(text, seed=seed)
+    expanded = expand_prompt_shortcuts(wildcard_expanded)
 
     embedding_names = extract_embedding_names(expanded)
     if embedding_names:

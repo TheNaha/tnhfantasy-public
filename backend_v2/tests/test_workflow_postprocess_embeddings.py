@@ -1,75 +1,69 @@
 import pytest
-from sqlmodel import Session
-
-from core.entities import ModelFile, ModelV2, ModelVersion
 from core.exceptions import ValidationError
 from core.workflow_postprocess import (
-    embedding_file_exists,
+    expand_prompt_shortcuts,
+    extract_embedding_names,
     postprocess_prompt_text,
 )
 
 
-def test_embedding_file_exists_on_disk(tmp_path, monkeypatch):
-    embed_dir = tmp_path / "models" / "embeddings"
-    embed_dir.mkdir(parents=True)
-    (embed_dir / "badhandv4.safetensors").write_text("dummy")
-
-    input_dir = tmp_path / "input"
-    input_dir.mkdir(parents=True)
-
-    from config import settings
-    monkeypatch.setattr(settings, "input_dir", str(input_dir))
-
-    assert embedding_file_exists("badhandv4") is True
-    assert embedding_file_exists("badhandv4.safetensors") is True
-    assert embedding_file_exists("nonexistent") is False
-
-
-def test_embedding_file_exists_in_database_when_not_on_disk(tmp_path, session: Session, monkeypatch):
-    # Ensure disk path has no embeddings
-    input_dir = tmp_path / "input"
-    input_dir.mkdir(parents=True)
-
-    from config import settings
-    monkeypatch.setattr(settings, "input_dir", str(input_dir))
-
-    # Register embedding in DB
-    model = ModelV2(
-        name="EasyNegative",
-        type="TextualInversion",
-        directory="embeddings",
+def test_expand_prompt_shortcuts_preserves_embeddings(monkeypatch):
+    monkeypatch.setattr(
+        "config.get_config",
+        lambda: {
+            "generator": {
+                "prompt_shortcuts": {
+                    "lazypos": "masterpiece, newest, absurdres",
+                    "lazyneg": "worst quality, bad anatomy",
+                }
+            }
+        },
     )
-    session.add(model)
-    session.flush()
 
-    version = ModelVersion(
-        model_id=model.id,
-        name="v1.0",
-        base_model="SD 1.5",
+    text = "1girl, embedding:lazypos, (embedding:lazyneg:1.1), lazypos, lazyneg"
+    expanded = expand_prompt_shortcuts(text)
+
+    # Embedding tokens must remain untouched
+    assert "embedding:lazypos" in expanded
+    assert "(embedding:lazyneg:1.1)" in expanded
+    assert "embedding:masterpiece" not in expanded
+
+    # Standalone shortcuts should be expanded
+    assert "masterpiece, newest, absurdres" in expanded
+    assert "worst quality, bad anatomy" in expanded
+
+
+def test_extract_embedding_names_variants():
+    text = (
+        "1girl, (embedding:lazypos:1.1), (embedding:style/lazyreal.safetensors:0.9), "
+        "embedding:easynegative, (embedding:lazyneg), embedding:sub-dir_1/badhandv4.pt"
     )
-    session.add(version)
-    session.flush()
+    names = extract_embedding_names(text)
+    assert names == [
+        "lazypos",
+        "style/lazyreal.safetensors",
+        "easynegative",
+        "lazyneg",
+        "sub-dir_1/badhandv4.pt",
+    ]
 
-    file_record = ModelFile(
-        version_id=version.id,
-        original_filename="EasyNegative.pt",
-        storage_filename="EasyNegative.pt",
-        size_kb=100,
-        format="pt",
+
+def test_postprocess_prompt_text_raises_on_missing(monkeypatch):
+    monkeypatch.setattr(
+        "config.get_config",
+        lambda: {"generator": {"prompt_shortcuts": {}}},
     )
-    session.add(file_record)
-    session.commit()
+    monkeypatch.setattr(
+        "core.workflow_postprocess.embedding_file_exists",
+        lambda name: name == "installed_emb",
+    )
 
-    # Should be detected via DB catalog
-    assert embedding_file_exists("EasyNegative") is True
-    assert embedding_file_exists("EasyNegative.pt") is True
-    assert embedding_file_exists("nonexistent_embedding") is False
+    # Succeeds when installed
+    ok = postprocess_prompt_text("1girl, (embedding:installed_emb:1.2)")
+    assert ok == "1girl, (embedding:installed_emb:1.2)"
 
-    # postprocess_prompt_text should succeed without ValidationError
-    expanded = postprocess_prompt_text("masterpiece, embedding:EasyNegative, high quality")
-    assert "embedding:EasyNegative" in expanded
-
-    # Unregistered embedding raises ValidationError
-    with pytest.raises(ValidationError) as exc_info:
-        postprocess_prompt_text("masterpiece, embedding:unknown_embed")
-    assert "unknown_embed" in str(exc_info.value)
+    # Fails when missing
+    with pytest.raises(ValidationError) as exc:
+        postprocess_prompt_text("1girl, embedding:missing_emb")
+    assert "Embedding file(s) not found" in str(exc.value)
+    assert "missing_emb" in str(exc.value)
