@@ -350,7 +350,7 @@ def _is_sidecar(name: str) -> bool:
 # ---------------------------------------------------------------------------
 
 WORKER_MODE = os.getenv("WORKER_MODE", "model").strip().lower()
-WORKER_MODES = ("model", "llm", "tts", "hybrid")
+WORKER_MODES = ("model", "llm", "tts", "hybrid", "storage")
 
 if WORKER_MODE not in WORKER_MODES:
     raise RuntimeError(
@@ -374,6 +374,7 @@ MODE_DATA_ENV = {
     "llm": "LLM_DATA_DIR",
     "tts": "TTS_DATA_DIR",
     "hybrid": "DATA_DIR",
+    "storage": "DATA_DIR",
 }
 
 #: The storage root for THIS worker mode. `MODEL_DIRECTORIES` and every provider
@@ -442,10 +443,13 @@ class SynthesizeRequest(BaseModel):
 
 
 @app.get("/health")
-
-
 async def health():
-    return {"status": "healthy"}
+    return {
+        "status": "healthy",
+        "worker_mode": WORKER_MODE,
+        "inference_enabled": WORKER_MODE != "storage",
+        "ready_for": [] if WORKER_MODE == "storage" else (["image", "llm", "tts"] if WORKER_MODE == "hybrid" else [WORKER_MODE]),
+    }
 
 
 def _detect_gpu() -> dict:
@@ -534,6 +538,7 @@ def _topology() -> dict:
         "worker_mode": WORKER_MODE,
         "storage_root": os.path.abspath(DATA_ROOT),
         "storage_root_env": DATA_ROOT_ENV,
+        "inference_enabled": WORKER_MODE != "storage",
         "gpu": _detect_gpu(),
         "vram": vram_info,
     }
@@ -827,7 +832,7 @@ async def download_model(req: DownloadRequest):
         # return is a failure too, rather than an AttributeError three frames up.
         if not isinstance(result, dict):
             return failed("Download failed")
-        if req.prewarm and result.get("status") in ("success", "exists", "ok"):
+        if req.prewarm and WORKER_MODE != "storage" and result.get("status") in ("success", "exists", "ok"):
             try:
                 from ram_manager import get_ram_manager
                 mgr = get_ram_manager()
@@ -2110,6 +2115,48 @@ if WORKER_MODE in ("tts", "hybrid"):
             "duration": await _bounded_to_thread(_duration),
             "voice": req.voice,
         })
+
+
+
+class ReconcileBackendRequest(BaseModel):
+    backend_url: Optional[str] = None
+    provider_id: Optional[str] = None
+    force: bool = True
+    quick_sync: bool = False
+
+
+@app.post("/reconcile-backend", dependencies=[Depends(verify_token)])
+async def reconcile_with_backend(req: ReconcileBackendRequest):
+    """Trigger reconciliation on the backend for this provider directly from the worker."""
+    backend_url = (req.backend_url or os.getenv("BACKEND_URL", "")).strip().rstrip("/")
+    provider_id = (req.provider_id or os.getenv("PROVIDER_ID", "colab_worker")).strip()
+    if not backend_url:
+        return failed("BACKEND_URL not configured", code=400)
+
+    url = f"{backend_url}/api/v2/providers/{provider_id}/reconcile"
+    params = {"force": str(req.force).lower(), "quick_sync": str(req.quick_sync).lower()}
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(url, params=params)
+            if resp.status_code >= 400:
+                return failed(f"Backend returned HTTP {resp.status_code}: {resp.text}", code=resp.status_code)
+            return ok("Reconciliation triggered on backend", result=resp.json())
+    except Exception as exc:
+        return failed(f"Failed to reach backend: {exc}", code=502)
+
+
+if WORKER_MODE == "storage":
+    @app.api_route("/v1/chat/completions", methods=["POST", "GET"])
+    @app.api_route("/v1/models", methods=["GET"])
+    @app.api_route("/synthesize", methods=["POST"])
+    @app.api_route("/v1/voices", methods=["GET"])
+    @app.api_route("/prompt", methods=["POST"])
+    async def storage_mode_inference_unavailable():
+        raise HTTPException(
+            status_code=503,
+            detail="Worker is running in storage-only / model-manager mode on CPU. Switch Colab runtime to GPU hybrid mode for inference."
+        )
 
 
 if __name__ == "__main__":

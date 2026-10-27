@@ -78,9 +78,9 @@ ERR
 fi
 
 case "$MODE" in
-    model|llm|tts|hybrid) ;;
+    model|llm|tts|hybrid|storage) ;;
     *)
-        echo "error: WORKER_MODE must be one of model|llm|tts|hybrid, got '$MODE'" >&2
+        echo "error: WORKER_MODE must be one of model|llm|tts|hybrid|storage, got '$MODE'" >&2
         echo "hint: bash remote_agent/colab_start.sh hybrid" >&2
         exit 2
         ;;
