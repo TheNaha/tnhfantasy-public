@@ -80,6 +80,8 @@ MODE_ROOT_ENV = {
     "model": "DATA_DIR",
     "llm": "LLM_DATA_DIR",
     "tts": "TTS_DATA_DIR",
+    "hybrid": "DATA_DIR",
+    "storage": "DATA_DIR",
 }
 
 

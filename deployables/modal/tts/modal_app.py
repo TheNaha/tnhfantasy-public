@@ -460,6 +460,20 @@ class TTSWorker:
             timeout_seconds=HEALTHCHECK_TIMEOUT,
         )
 
+    @modal.method()
+    def list_voices(self) -> List[Dict[str, Any]]:
+        return [
+            {"id": "friendly", "name": "Friendly", "type": "preset", "language": "en", "description": "Warm, approachable tone"},
+            {"id": "professional", "name": "Professional", "type": "preset", "language": "en", "description": "Clear, authoritative delivery"},
+            {"id": "cheerful", "name": "Cheerful", "type": "preset", "language": "en", "description": "Bright, energetic tone"},
+            {"id": "calm", "name": "Calm", "type": "preset", "language": "en", "description": "Relaxed, soothing presence"},
+            {"id": "deep", "name": "Deep", "type": "preset", "language": "en", "description": "Rich, resonant bass"},
+            {"id": "bright", "name": "Bright", "type": "preset", "language": "en", "description": "Crisp, clear high register"},
+            {"id": "storyteller", "name": "Storyteller", "type": "preset", "language": "en", "description": "Expressive, narrative style"},
+            {"id": "whisper", "name": "Whisper", "type": "preset", "language": "en", "description": "Intimate, hushed delivery"},
+            {"id": "dramatic", "name": "Dramatic", "type": "preset", "language": "en", "description": "Theatrical, emotional range"},
+        ]
+
 
 # -------------------------------------------------------------------- storage
 #
