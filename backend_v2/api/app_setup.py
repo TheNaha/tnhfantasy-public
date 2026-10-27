@@ -14,6 +14,7 @@ from api.routes import (
     gallery,
     generation,
     health,
+    interrogate,
     jobs,
     models,
     models_external,
@@ -108,6 +109,7 @@ def configure_app(app: FastAPI):
     app.include_router(settings_routes.router)
     app.include_router(statistics.router)
     app.include_router(generation.router)
+    app.include_router(interrogate.router)
     app.include_router(models_external.router)
     app.include_router(models.router)
     app.include_router(prompts.router)
