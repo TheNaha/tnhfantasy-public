@@ -1365,7 +1365,7 @@ async def list_files_endpoint(
         # `asyncio.to_thread` for the other half of the same defect: it is a
         # synchronous query chain inside an `async def` route, so inline it runs
         # on the event loop and the whole container waits for it.
-        want_tags = [t.strip() for t in tags.split(",")] if tags else None
+        want_tags = [t.strip() for t in tags.split(",")] if isinstance(tags, str) and tags else None
         want_base_model = None if base_model in (None, "", "all") else base_model
         want_model_type = None if model_type in (None, "", "all") else model_type
 
@@ -1413,114 +1413,98 @@ async def list_files_endpoint(
                 if not isinstance(model, dict):
                     continue
 
-                # Get versions and find default
                 versions = model.get("versions", [])
-                default_version = next(
-                    (v for v in versions if v.get("is_default")),
-                    versions[0] if versions else None
-                )
 
-                # Extract file info from default version
-                file_info = (default_version.get("file") or {}) if default_version else {}
-                filename = file_info.get("filename", model.get("name", "unknown"))
-                size_kb = file_info.get("size_kb", 0)
+                # For embeddings directory: unpack every enabled version into its own selectable file entry,
+                # because Textual Inversion suites (like Lazy Embeddings) provide distinct positive/negative
+                # embeddings as separate versions within the same model entry.
+                if model_dir_type == "embeddings" and len(versions) > 1:
+                    target_versions = [v for v in versions if v.get("is_enabled", True)]
+                else:
+                    default_version = next(
+                        (v for v in versions if v.get("is_default")),
+                        versions[0] if versions else None
+                    )
+                    target_versions = [default_version] if default_version else []
 
-                # Skip partial/incomplete download artifacts — they must never be
-                # offered as selectable models (preflight would always fail).
-                if any(
-                    filename.lower().endswith(suffix)
-                    for suffix in (".downloading", ".part", ".crdownload", ".tmp", ".temp")
-                ):
-                    continue
+                for version in target_versions:
+                    file_info = (version.get("file") or {}) if isinstance(version, dict) else {}
+                    filename = file_info.get("filename", model.get("name", "unknown"))
+                    size_kb = file_info.get("size_kb", 0)
 
-                # Get preview image URL
-                preview_image = model.get("preview_image") or {}
-                civitai_id = model.get("civitai_model_id")
-                preview_url = (
-                    preview_image.get("url") if preview_image else None
-                ) or (
-                    f"/api/v2/models/preview/{civitai_id}" if civitai_id else ""
-                )
+                    # Skip partial/incomplete download artifacts — they must never be
+                    # offered as selectable models (preflight would always fail).
+                    if any(
+                        filename.lower().endswith(suffix)
+                        for suffix in (".downloading", ".part", ".crdownload", ".tmp", ".temp")
+                    ):
+                        continue
 
-                # Provider statuses
-                provider_statuses = model.get("provider_statuses") or {}
+                    # Get preview image URL
+                    preview_image = None
+                    if isinstance(version, dict) and version.get("images"):
+                        preview_image = version["images"][0]
+                    if not preview_image:
+                        preview_image = model.get("preview_image") or {}
 
-                # `trained_words` and `version_description` ARE carried here, off
-                # the default version, despite a comment that used to sit in this
-                # spot removing them.
-                #
-                # That comment argued every reader treated them as a fallback
-                # that "cannot fire", on the grounds that a consumer would already
-                # hold the same version object. Three readers read them as the
-                # PRIMARY source, and one of them is the only path a user has:
-                #
-                #   ModelSection.jsx:218       `(lora.trained_words || [])` — the
-                #                             LoRA trigger-word pill. The store
-                #                             entry is whatever the picker handed
-                #                             back, which is the RAW model on the
-                #                             single-click path (see below).
-                #   ModelGridCard.jsx:42       `model.trained_words?.length` — the
-                #                             "Found trigger words!" toast, on the
-                #                             raw model, before any selection.
-                #   ModelSelector.jsx:219      the search haystack, so a LoRA could
-                #                             not be found by its own trigger word.
-                #
-                # `getModelWithVersion` (ModelSelector.jsx:180) does resolve
-                # `version.trained_words`, but only `handleVersionSelect` calls it,
-                # and that path is only reachable through the version dropdown —
-                # which renders only when `versions.length > 1`. The live LoRA
-                # directory is 484 files at one version each, so the path that
-                # resolved the field was the path nobody reaches.
-                #
-                # So this is a denormalised convenience the picker relies on, not
-                # a redundant copy. `versions` remains the authoritative list.
-                #
-                # `default_version` is None when `versions` is empty, and the
-                # outer `except` turns that into an empty DEGRADED listing, so a
-                # direct `.get` on it would silently blank a whole directory
-                # rather than fail loudly. Guarded once, here.
-                default_version_fields = default_version if isinstance(default_version, dict) else {}
-                file_data = {
-                    # Actual filename for generator
-                    "name": filename,
-                    # Display name for UI
-                    "display_name": model.get("name", filename),
-                    # Size in bytes and KB
-                    "size": size_kb * 1024 if size_kb else 0,
-                    "size_kb": size_kb,
-                    # Timestamps
-                    "modified_time": model.get("updated_at", 0),
-                    # IDs
-                    "model_id": model.get("id"),
-                    "civitai_id": civitai_id,
-                    # Version info
-                    "base_model": default_version.get("base_model", "") if default_version else "",
-                    "version_count": len(versions),
-                    "default_version": default_version.get("name", "") if default_version else "",
-                    # Default version's own fields, for the readers that hold the
-                    # model rather than the version.
-                    "trained_words": default_version_fields.get("trained_words") or [],
-                    "version_description": default_version_fields.get("description") or "",
-                    # Full versions list for version selector
-                    "versions": versions,
-                    # Model type
-                    "type": model.get("type", ""),
-                    "nsfw": model.get("nsfw", False),
-                    # Preview image
-                    "preview": preview_url,
-                    # Provider sync status
-                    "provider_statuses": provider_statuses,
-                    # Stats
-                    "stats": model.get("stats", {}),
-                    # Tags
-                    "tags": model.get("tags", []),
-                    # Model description
-                    "description": model.get("description", ""),
-                    # Creator
-                    "creator": model.get("creator", {}),
-                }
+                    civitai_id = model.get("civitai_model_id")
+                    preview_url = (
+                        preview_image.get("url") if isinstance(preview_image, dict) else None
+                    ) or (
+                        f"/api/v2/models/preview/{civitai_id}" if civitai_id else ""
+                    )
 
-                valid_files.append(file_data)
+                    # Provider statuses
+                    provider_statuses = model.get("provider_statuses") or {}
+                    version_fields = version if isinstance(version, dict) else {}
+
+                    # For unpacked versions, display name includes the version name if multiple versions exist
+                    vname = version_fields.get("name")
+                    if model_dir_type == "embeddings" and len(versions) > 1 and vname:
+                        disp_name = vname
+                    else:
+                        disp_name = model.get("name", filename)
+
+                    file_data = {
+                        # Actual filename for generator
+                        "name": filename,
+                        # Display name for UI
+                        "display_name": disp_name,
+                        # Size in bytes and KB
+                        "size": size_kb * 1024 if size_kb else 0,
+                        "size_kb": size_kb,
+                        # Timestamps
+                        "modified_time": model.get("updated_at", 0),
+                        # IDs
+                        "model_id": model.get("id"),
+                        "civitai_id": civitai_id,
+                        # Version info
+                        "base_model": version_fields.get("base_model", "") if version_fields else "",
+                        "version_count": len(versions),
+                        "default_version": version_fields.get("name", "") if version_fields else "",
+                        "version_name": version_fields.get("name", "") if version_fields else "",
+                        "trained_words": version_fields.get("trained_words") or [],
+                        "version_description": version_fields.get("description") or "",
+                        # Full versions list for version selector
+                        "versions": versions,
+                        # Model type
+                        "type": model.get("type", ""),
+                        "nsfw": model.get("nsfw", False),
+                        # Preview image
+                        "preview": preview_url,
+                        # Provider sync status
+                        "provider_statuses": provider_statuses,
+                        # Stats
+                        "stats": model.get("stats", {}),
+                        # Tags
+                        "tags": model.get("tags", []),
+                        # Model description
+                        "description": model.get("description", ""),
+                        # Creator
+                        "creator": model.get("creator", {}),
+                    }
+
+                    valid_files.append(file_data)
 
             return {"files": valid_files, "total": total}
 

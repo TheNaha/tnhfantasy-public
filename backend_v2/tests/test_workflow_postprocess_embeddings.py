@@ -67,3 +67,28 @@ def test_postprocess_prompt_text_raises_on_missing(monkeypatch):
         postprocess_prompt_text("1girl, embedding:missing_emb")
     assert "Embedding file(s) not found" in str(exc.value)
     assert "missing_emb" in str(exc.value)
+
+
+def test_postprocess_prompt_text_resolves_friendly_names_to_storage_files(monkeypatch):
+    monkeypatch.setattr(
+        "config.get_config",
+        lambda: {"generator": {"prompt_shortcuts": {}}},
+    )
+    monkeypatch.setattr(
+        "core.workflow_postprocess.embedding_file_exists",
+        lambda name: True,
+    )
+    monkeypatch.setattr(
+        "core.workflow_postprocess.resolve_embedding_filename",
+        lambda name: {
+            "lazypos": "_lazy_embeddings_for_all_illus_lazypos_1833157",
+            "lazyneg": "_lazy_embeddings_for_all_illus_lazyneg_1833160",
+        }.get(name, name),
+    )
+
+    prompt = "1girl, (embedding:lazypos:1.1), embedding:lazyneg, embedding:exact_name"
+    processed = postprocess_prompt_text(prompt)
+
+    assert "(embedding:_lazy_embeddings_for_all_illus_lazypos_1833157:1.1)" in processed
+    assert "embedding:_lazy_embeddings_for_all_illus_lazyneg_1833160" in processed
+    assert "embedding:exact_name" in processed

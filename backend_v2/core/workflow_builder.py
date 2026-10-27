@@ -1,4 +1,6 @@
 import math
+import os
+import re
 from typing import Any, Optional, Union
 from datetime import datetime
 from pydantic import BaseModel, Field
@@ -41,6 +43,89 @@ from core.workflow_postprocess import (  # noqa: F401
 class LoraOption(BaseModel):
     name: str
     strength: float = 1.0
+
+
+def extract_prompt_loras(prompt: str) -> tuple[list[LoraOption], str]:
+    """Extract `<lora:name:weight>` tags from prompt text.
+
+    Returns `(extracted_loras, cleaned_prompt)`.
+    Supports syntax:
+      - `<lora:name:0.8>`
+      - `<lora:name>` (defaults weight to 1.0)
+    Strips the tags from the returned prompt so ComfyUI CLIP text encoder
+    does not receive raw `<lora:...>` syntax as text tokens.
+    """
+    if not prompt or "<lora:" not in prompt:
+        return [], prompt
+
+    pattern = re.compile(r"<lora:([a-zA-Z0-9_\-./]+?)(?::(-?[0-9.]+))?>")
+    loras: list[LoraOption] = []
+
+    for match in pattern.finditer(prompt):
+        name = match.group(1).strip()
+        weight_str = match.group(2)
+        weight = float(weight_str) if weight_str else 1.0
+        loras.append(LoraOption(name=name, strength=weight))
+
+    cleaned = pattern.sub("", prompt)
+    cleaned = re.sub(r",\s*,+", ",", cleaned).strip(", ")
+    return loras, cleaned
+
+
+def resolve_lora_name(name: str) -> str:
+    """Resolve a friendly LoRA name or version alias to the actual storage filename.
+
+    If name matches a file directly on disk, returns it verbatim.
+    Otherwise queries the DB catalog for matching storage_filename, original_filename,
+    version name, or model name under models/loras.
+    """
+    if not name:
+        return name
+
+    candidates = [name]
+    if not os.path.splitext(name)[1]:
+        candidates = [name + ".safetensors", name + ".pt", name]
+    base_name = os.path.basename(name)
+    if base_name != name:
+        candidates.append(base_name)
+
+    data_dir = os.path.dirname(os.path.abspath(settings.input_dir))
+    loras_dir = os.path.join(data_dir, "models", "loras")
+    if os.path.isdir(loras_dir):
+        for cand in candidates:
+            if os.path.isfile(os.path.join(loras_dir, cand)):
+                return cand
+
+    try:
+        from api.deps import get_session_sync
+        from sqlmodel import select, or_, func
+        from core.entities import ModelFile, ModelV2, ModelVersion
+
+        with get_session_sync() as session:
+            stmt = (
+                select(ModelFile.storage_filename)
+                .join(ModelVersion, ModelVersion.id == ModelFile.version_id)
+                .join(ModelV2, ModelV2.id == ModelVersion.model_id)
+                .where(ModelV2.directory.in_(["loras", "models/loras"]))
+                .where(
+                    or_(
+                        ModelFile.storage_filename.in_(candidates),
+                        ModelFile.original_filename.in_(candidates),
+                        ModelVersion.name.in_(candidates),
+                        ModelV2.name.in_(candidates),
+                        func.lower(ModelVersion.name) == name.lower(),
+                        func.lower(ModelFile.original_filename) == name.lower(),
+                        func.lower(ModelFile.original_filename) == f"{name.lower()}.safetensors",
+                    )
+                )
+            )
+            found = session.exec(stmt).first()
+            if found:
+                return found
+    except Exception:
+        pass
+
+    return name
 
 
 class ControlNetOption(BaseModel):
@@ -208,10 +293,11 @@ class WorkflowBuilder:
         for lora in loras:
             if not lora.name:
                 continue
+            resolved_name = resolve_lora_name(lora.name)
             lora_node = self.add_node("LoraLoader", {
                 "model": current_model,
                 "clip": current_clip,
-                "lora_name": lora.name,
+                "lora_name": resolved_name,
                 "strength_model": lora.strength,
                 "strength_clip": lora.strength
             })
@@ -472,6 +558,17 @@ class WorkflowBuilder:
 
     def build_core(self, options: GeneratorOptions) -> dict[str, Any]:
         mode = options.mode
+
+        # Check for <lora:...> tags inside prompt and extract them
+        extracted_loras, cleaned_prompt = extract_prompt_loras(options.prompt)
+        if extracted_loras:
+            options.prompt = cleaned_prompt
+            lora_names = {l.name.lower() for l in options.loras}
+            for el in extracted_loras:
+                if el.name.lower() not in lora_names:
+                    options.loras.append(el)
+                    lora_names.add(el.name.lower())
+
         current_model, current_clip, current_vae = self.load_models(options)
 
         # Enhancements

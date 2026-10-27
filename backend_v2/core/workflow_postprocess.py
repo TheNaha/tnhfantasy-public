@@ -81,6 +81,7 @@ def embedding_file_exists(name: str) -> bool:
                     (ModelFile.storage_filename.in_(candidates))
                     | (ModelFile.original_filename.in_(candidates))
                     | (ModelV2.name.in_(candidates))
+                    | (ModelVersion.name.in_(candidates))
                 )
             )
             if session.exec(stmt).first():
@@ -89,6 +90,62 @@ def embedding_file_exists(name: str) -> bool:
         pass
 
     return False
+
+
+def resolve_embedding_filename(name: str) -> str:
+    """Resolve a friendly embedding name or shortcut to its actual storage filename.
+
+    For example, resolves `lazypos` -> `_lazy_embeddings_for_all_illus_lazypos_1833157`.
+    If no alias is found in the catalog or on disk, returns `name` unchanged.
+    """
+    candidates = [name]
+    base_name = os.path.basename(name)
+    stem, ext = os.path.splitext(name)
+    if not ext:
+        candidates = [name + e for e in _EMBEDDING_EXTENSIONS] + [name]
+        if base_name != name:
+            candidates += [base_name + e for e in _EMBEDDING_EXTENSIONS] + [base_name]
+    elif base_name != name:
+        candidates.append(base_name)
+    if stem and stem not in candidates:
+        candidates.append(stem)
+
+    embeddings_dir = _resolve_embeddings_dir()
+    if os.path.isdir(embeddings_dir):
+        for cand in candidates:
+            if os.path.isfile(os.path.join(embeddings_dir, cand)):
+                return name
+
+    try:
+        from api.deps import get_session_sync
+        from sqlmodel import select, or_, func
+        from core.entities import ModelFile, ModelV2, ModelVersion
+
+        with get_session_sync() as session:
+            stmt = (
+                select(ModelFile.storage_filename)
+                .join(ModelVersion, ModelVersion.id == ModelFile.version_id)
+                .join(ModelV2, ModelV2.id == ModelVersion.model_id)
+                .where(ModelV2.directory.in_(["embeddings", "models/embeddings"]))
+                .where(
+                    or_(
+                        ModelFile.storage_filename.in_(candidates),
+                        ModelFile.original_filename.in_(candidates),
+                        ModelVersion.name.in_(candidates),
+                        ModelV2.name.in_(candidates),
+                        func.lower(ModelVersion.name) == name.lower(),
+                        func.lower(ModelFile.original_filename) == name.lower(),
+                        func.lower(ModelFile.original_filename) == f"{name.lower()}.safetensors",
+                    )
+                )
+            )
+            found = session.exec(stmt).first()
+            if found:
+                return os.path.splitext(found)[0]
+    except Exception:
+        pass
+
+    return name
 
 
 def extract_embedding_names(text: str) -> list[str]:
@@ -152,6 +209,14 @@ def postprocess_prompt_text(text: str, *, field: str = "prompt", seed: int | Non
                 + ", ".join(missing),
                 field=field,
             )
+
+        for original_name in set(embedding_names):
+            resolved = resolve_embedding_filename(original_name)
+            if resolved != original_name:
+                pattern = re.compile(
+                    rf"embedding:{re.escape(original_name)}(?=(:[0-9.]+)?[)\s,]|$)"
+                )
+                expanded = pattern.sub(f"embedding:{resolved}", expanded)
 
     return expanded
 
