@@ -28,12 +28,23 @@ export default function ModelImportCard({ model, onCancel }) {
         : null;
     const previewImage = directPreviewImage || cachedPreviewImage;
 
+    const allVersions = model.modelVersions || [];
+    const uninstalledVersions = allVersions.filter(v => !installedVersions.includes(v.id));
     const isSelectedVersionInstalled = installedVersions.includes(parseInt(selectedVersionId));
 
-    const handleAddToLibrary = async () => {
-        if (!selectedVersion || !primaryFile) return;
+    const handleAddToLibrary = async (installAll = false) => {
+        if (!allVersions.length) return;
 
-        if (isSelectedVersionInstalled) {
+        const versionsToInstall = installAll
+            ? uninstalledVersions
+            : [selectedVersion].filter(Boolean);
+
+        if (!versionsToInstall.length) {
+            toast.error("No uninstalled versions to install.");
+            return;
+        }
+
+        if (!installAll && isSelectedVersionInstalled) {
             toast.error(`${selectedVersion.name} is already installed. Select a different version.`);
             return;
         }
@@ -42,15 +53,18 @@ export default function ModelImportCard({ model, onCancel }) {
         try {
             const payload = {
                 civitai_data: model,
-                selected_versions: [
-                    { version_id: parseInt(selectedVersionId), is_default: true }
-                ]
+                selected_versions: versionsToInstall.map((v, idx) => ({
+                    version_id: v.id,
+                    is_default: idx === 0 && !installedVersions.length
+                }))
             };
 
             // Trailing slash: the collection route is `@router.post("/")`, so
             // the bare path answered 307 and re-issued the POST.
             const result = await api.post('/api/v2/models/', payload);
-            if (result.skipped_versions?.length > 0) {
+            if (installAll) {
+                toast.success(`Installing ${versionsToInstall.length} version(s) of ${model.name}. Workers will download on next sync.`);
+            } else if (result.skipped_versions?.length > 0) {
                 toast.success(`Added ${model.name} (${selectedVersion.name}). Skipped ${result.skipped_versions.length} already installed version(s).`);
             } else {
                 toast.success(`Added ${model.name} (${selectedVersion.name}) to library. Workers will download on next sync.`);
@@ -146,16 +160,25 @@ export default function ModelImportCard({ model, onCancel }) {
                     </div>
 
                     <div className="bg-gray-800/50 p-4 rounded-xl border border-gray-700">
-                        <label className="block text-xs font-medium text-gray-500 mb-2">Select Version</label>
+                        <div className="flex justify-between items-center mb-2">
+                            <label className="block text-xs font-medium text-gray-500">
+                                Select Version
+                                {allVersions.length > 1 && (
+                                    <span className="ml-1 text-gray-400">
+                                        ({allVersions.length} available{uninstalledVersions.length > 0 ? `, ${uninstalledVersions.length} not installed` : ''})
+                                    </span>
+                                )}
+                            </label>
+                        </div>
                         <select
                             value={selectedVersionId}
                             onChange={(e) => {
                                 setSelectedVersionId(e.target.value);
                                 setActiveImageIndex(0);
                             }}
-                            className="w-full bg-gray-900 border border-gray-700 rounded-lg p-2 text-white text-sm focus:ring-2 focus:ring-blue-500 outline-none mb-3"
+                            className="w-full bg-gray-900 border border-gray-700 rounded-lg p-2 text-white text-sm focus:ring-2 focus:ring-blue-500 outline-none mb-2"
                         >
-                            {model.modelVersions?.map(v => {
+                            {allVersions.map(v => {
                                 const vInstalled = installedVersions.includes(v.id);
                                 return (
                                     <option key={v.id} value={v.id}>
@@ -164,6 +187,36 @@ export default function ModelImportCard({ model, onCancel }) {
                                 );
                             })}
                         </select>
+
+                        {allVersions.length > 1 && (
+                            <div className="flex flex-wrap gap-1.5 mb-3 max-h-24 overflow-y-auto pt-1">
+                                {allVersions.map((v) => {
+                                    const isInst = installedVersions.includes(v.id);
+                                    const isCurrent = String(v.id) === String(selectedVersionId);
+                                    return (
+                                        <button
+                                            key={v.id}
+                                            type="button"
+                                            onClick={() => {
+                                                setSelectedVersionId(v.id);
+                                                setActiveImageIndex(0);
+                                            }}
+                                            className={`text-2xs px-2.5 py-1 rounded-md border transition-all flex items-center gap-1 ${
+                                                isCurrent
+                                                    ? 'bg-blue-600/40 border-blue-500 text-blue-200 ring-1 ring-blue-500/50'
+                                                    : isInst
+                                                    ? 'bg-gray-800/80 border-gray-700 text-gray-400 hover:text-gray-200'
+                                                    : 'bg-gray-900 border-gray-700 text-gray-300 hover:border-gray-500'
+                                            }`}
+                                        >
+                                            {isInst && <Check size={11} className="text-green-400 flex-shrink-0" />}
+                                            <span className="truncate max-w-[140px]">{v.name}</span>
+                                            {v.baseModel && <span className="text-gray-500">({v.baseModel})</span>}
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        )}
 
                         {selectedVersion && (
                             <div className="flex gap-4 text-sm text-gray-400 border-t border-gray-700/50 pt-3">
@@ -199,17 +252,28 @@ export default function ModelImportCard({ model, onCancel }) {
                     )}
 
                     {/* Action Bar */}
-                    <div className="absolute bottom-0 left-0 right-0 p-6 bg-gradient-to-t from-gray-900 via-gray-900 to-transparent">
+                    <div className="absolute bottom-0 left-0 right-0 p-4 sm:p-6 bg-gradient-to-t from-gray-900 via-gray-900 to-transparent flex flex-col sm:flex-row gap-2.5">
+                        {allVersions.length > 1 && uninstalledVersions.length > 1 && (
+                            <button
+                                onClick={() => handleAddToLibrary(true)}
+                                disabled={installing}
+                                className="flex-1 py-3 px-4 rounded-xl font-medium flex items-center justify-center gap-2 shadow-lg bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-50 transition-colors"
+                            >
+                                {installing ? <Loader2 className="animate-spin" size={18} /> : <Download size={18} />}
+                                <span>Install All ({uninstalledVersions.length} new)</span>
+                            </button>
+                        )}
                         <button
-                            onClick={handleAddToLibrary}
+                            onClick={() => handleAddToLibrary(false)}
                             disabled={installing || isSelectedVersionInstalled}
-                            className={`w-full py-3 rounded-xl font-medium flex items-center justify-center gap-2 shadow-lg ${isSelectedVersionInstalled
-                                ? 'bg-gray-700 text-gray-400 cursor-not-allowed'
-                                : 'bg-green-600 hover:bg-green-500 disabled:opacity-50 text-white'
+                            className={`flex-1 py-3 px-4 rounded-xl font-medium flex items-center justify-center gap-2 shadow-lg transition-colors ${
+                                isSelectedVersionInstalled
+                                    ? 'bg-gray-700 text-gray-400 cursor-not-allowed'
+                                    : 'bg-green-600 hover:bg-green-500 disabled:opacity-50 text-white'
                             }`}
                         >
-                            {installing ? <Loader2 className="animate-spin" /> : isSelectedVersionInstalled ? <Check size={18} /> : <Download size={18} />}
-                            {isSelectedVersionInstalled ? 'Already Installed' : 'Add to Library'}
+                            {installing ? <Loader2 className="animate-spin" size={18} /> : isSelectedVersionInstalled ? <Check size={18} /> : <Download size={18} />}
+                            <span>{isSelectedVersionInstalled ? `${selectedVersion?.name || 'Version'} Installed` : `Add ${selectedVersion?.name || 'Selected'} to Library`}</span>
                         </button>
                     </div>
                 </div>

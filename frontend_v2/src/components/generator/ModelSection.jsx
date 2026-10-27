@@ -4,6 +4,7 @@ import ModelSelector from '../../components/ModelSelector';
 import { isFluxModel, isAuraFlowModel, isPonyModel, isUnetModel } from '../../utils/modelType';
 import { formatBytes } from '../../utils/bytes';
 import { isNegativeEmbedding, toggleEmbeddingInPrompt, hasEmbedding } from '../../utils/embeddingHelpers';
+import { getModelWithVersion } from '../../utils/modelDisplay';
 import toast from 'react-hot-toast';
 
 const ModelSection = memo(function ModelSection({
@@ -327,6 +328,36 @@ Click to insert “${token}” into ${isActive ? "the prompt (already added)" : 
                                                     );
                                                 })()}
                                             </div>
+
+                                            {lora.versions && lora.versions.length > 1 && (
+                                                <div className="flex items-center gap-1.5 mt-1">
+                                                    <span className="text-3xs uppercase tracking-wider text-gray-500 font-semibold">Outfit:</span>
+                                                    <select
+                                                        aria-label="Select outfit or version"
+                                                        value={lora.selectedVersionId || (lora.versions.find(v => v.is_default) || lora.versions[0])?.id}
+                                                        onChange={(e) => {
+                                                            const targetId = e.target.value;
+                                                            const targetVer = lora.versions.find(v => String(v.id) === targetId || String(v.civitai_version_id) === targetId);
+                                                            if (targetVer) {
+                                                                const original = lora._originalModel || lora;
+                                                                const updated = getModelWithVersion(original, targetVer);
+                                                                updateLora(idx, 'model', updated);
+                                                                if (targetVer.trained_words?.length > 0) {
+                                                                    toast.success(`Switched outfit to "${targetVer.name}"`, { icon: '👗' });
+                                                                }
+                                                            }
+                                                        }}
+                                                        className="text-2xs bg-gray-900 border border-gray-700/80 rounded px-1.5 py-0.5 text-gray-200 outline-none focus:border-blue-500 cursor-pointer max-w-[210px] truncate"
+                                                        onClick={(e) => e.stopPropagation()}
+                                                    >
+                                                        {lora.versions.map((ver) => (
+                                                            <option key={ver.id} value={ver.id}>
+                                                                {ver.name}{ver.base_model ? ` (${ver.base_model})` : ''}
+                                                            </option>
+                                                        ))}
+                                                    </select>
+                                                </div>
+                                            )}
                                         </button>
 
                                         <button
