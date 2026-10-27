@@ -4,10 +4,9 @@ import toast from 'react-hot-toast';
 import { useGeneratorStore } from '../../store/generatorStore';
 import { magicPrompt } from '../../api/promptsApi';
 import PromptLibrary from './PromptLibrary';
-import EmbeddingBar from './EmbeddingBar';
 import InterrogateModal from './InterrogateModal';
 
-export default function PromptPanel({ embeddingModels = [], onInterrogateClick }) {
+export default function PromptPanel({ onInterrogateClick }) {
     const prompt = useGeneratorStore((state) => state.prompt);
     const setPrompt = useGeneratorStore((state) => state.setPrompt);
     const negativePrompt = useGeneratorStore((state) => state.negativePrompt);
@@ -107,12 +106,6 @@ export default function PromptPanel({ embeddingModels = [], onInterrogateClick }
                     onChange={(e) => setPrompt(e.target.value)}
                     placeholder="Describe what you want to create..."
                 />
-                <EmbeddingBar
-                    promptText={prompt}
-                    onChange={setPrompt}
-                    isNegative={false}
-                    embeddings={embeddingModels}
-                />
             </div>
             
             <div className="space-y-1.5 group">
@@ -123,12 +116,6 @@ export default function PromptPanel({ embeddingModels = [], onInterrogateClick }
                     value={negativePrompt}
                     onChange={(e) => setNegativePrompt(e.target.value)}
                     placeholder="What to avoid..."
-                />
-                <EmbeddingBar
-                    promptText={negativePrompt}
-                    onChange={setNegativePrompt}
-                    isNegative={true}
-                    embeddings={embeddingModels}
                 />
             </div>
             

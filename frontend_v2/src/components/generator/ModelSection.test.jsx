@@ -69,5 +69,58 @@ describe('ModelSection LoRA version/outfit switcher', () => {
             })
         );
     });
+
+    it('renders embeddings with shortened names and allows flexible positive/negative targeting', () => {
+        const setPrompt = vi.fn();
+        const setNegativePrompt = vi.fn();
+        const mockEmbeddings = [
+            { name: '_lazy_embeddings_for_all_illus_lazypos_1833157.safetensors', size: 50000 },
+            { name: '_lazy_embeddings_for_all_illus_lazynsfw_1833157.safetensors', size: 50000 },
+        ];
+
+        render(
+            <QueryClientProvider client={queryClient}>
+                <ModelSection
+                    selectedLoras={[]}
+                    updateLora={vi.fn()}
+                    removeLora={vi.fn()}
+                    addLora={vi.fn()}
+                    addTriggerWords={vi.fn()}
+                    prompt="masterpiece, best quality"
+                    negativePrompt="bad hands"
+                    setPrompt={setPrompt}
+                    setNegativePrompt={setNegativePrompt}
+                    checkpoints={[]}
+                    unetModels={[]}
+                    vaeModels={[]}
+                    clipModels={[]}
+                    embeddingModels={mockEmbeddings}
+                    promptShortcuts={{}}
+                />
+            </QueryClientProvider>
+        );
+
+        // Check that names are shortened
+        expect(screen.getByText('lazypos')).toBeInTheDocument();
+        expect(screen.getByText('lazynsfw')).toBeInTheDocument();
+
+        // Check flexible targeting buttons
+        const posButtons = screen.getAllByRole('button', { name: /\+Pos/i });
+        const negButtons = screen.getAllByRole('button', { name: /\+Neg/i });
+        expect(posButtons.length).toBe(2);
+        expect(negButtons.length).toBe(2);
+
+        // Click +Pos on lazynsfw
+        fireEvent.click(posButtons[1]);
+        expect(setPrompt).toHaveBeenCalledWith(
+            expect.stringContaining('embedding:_lazy_embeddings_for_all_illus_lazynsfw_1833157.safetensors')
+        );
+
+        // Click +Neg on lazypos
+        fireEvent.click(negButtons[0]);
+        expect(setNegativePrompt).toHaveBeenCalledWith(
+            expect.stringContaining('embedding:_lazy_embeddings_for_all_illus_lazypos_1833157.safetensors')
+        );
+    });
 });
 

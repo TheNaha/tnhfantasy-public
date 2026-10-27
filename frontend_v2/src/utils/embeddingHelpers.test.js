@@ -2,8 +2,10 @@ import { describe, it, expect } from 'vitest';
 import {
     isNegativeEmbedding,
     cleanPrompt,
+    getShortEmbeddingName,
     parseActiveEmbeddings,
     hasEmbedding,
+    getEmbeddingWeight,
     toggleEmbeddingInPrompt,
     removeEmbeddingFromPrompt,
     setEmbeddingWeightInPrompt,
@@ -36,6 +38,30 @@ describe('embeddingHelpers', () => {
             expect(cleanPrompt(', 1girl, ')).toBe('1girl');
             expect(cleanPrompt('')).toBe('');
         });
+
+        it('strictly preserves newlines and paragraph breaks', () => {
+            const multiline = '1girl, masterpiece\n\ncinematic lighting, ultra detailed';
+            expect(cleanPrompt(multiline)).toBe('1girl, masterpiece\n\ncinematic lighting, ultra detailed');
+
+            const withDanglingCommas = '1girl, ,\nmasterpiece, \n\n, cinematic lighting, 8k, ';
+            expect(cleanPrompt(withDanglingCommas)).toBe('1girl\nmasterpiece\n\ncinematic lighting, 8k');
+        });
+    });
+
+    describe('getShortEmbeddingName', () => {
+        it('shortens CivitAI pack embeddings cleanly', () => {
+            expect(getShortEmbeddingName('_lazy_embeddings_for_all_illus_lazypos_1833157.safetensors')).toBe('lazypos');
+            expect(getShortEmbeddingName('_lazy_embeddings_for_all_illus_lazyneg_1833157.safetensors')).toBe('lazyneg');
+            expect(getShortEmbeddingName('_lazy_embeddings_for_all_illus_lazynsfw_1833157.safetensors')).toBe('lazynsfw');
+            expect(getShortEmbeddingName('_lazy_embeddings_for_all_illus_lazywet_2512494.safetensors')).toBe('lazywet');
+            expect(getShortEmbeddingName('_lazy_embeddings_for_all_illus_lazyhand_1833157.safetensors')).toBe('lazyhand');
+        });
+
+        it('shortens standalone models and strips version IDs and extensions', () => {
+            expect(getShortEmbeddingName('badhandv4.safetensors')).toBe('badhandv4');
+            expect(getShortEmbeddingName('easynegative.pt')).toBe('easynegative');
+            expect(getShortEmbeddingName('muscle_slider_v1_2830869.safetensors')).toBe('muscle_slider_v1');
+        });
     });
 
     describe('parseActiveEmbeddings', () => {
@@ -50,12 +76,15 @@ describe('embeddingHelpers', () => {
         });
     });
 
-    describe('hasEmbedding', () => {
+    describe('hasEmbedding and getEmbeddingWeight', () => {
         it('checks if an embedding is active matching bare name or with extension', () => {
             const prompt = '1girl, (embedding:lazypos:1.1), best quality';
             expect(hasEmbedding(prompt, 'lazypos')).toBe(true);
             expect(hasEmbedding(prompt, 'lazypos.safetensors')).toBe(true);
             expect(hasEmbedding(prompt, 'lazyneg')).toBe(false);
+
+            expect(getEmbeddingWeight(prompt, 'lazypos')).toBe(1.1);
+            expect(getEmbeddingWeight(prompt, 'lazyneg')).toBe(null);
         });
     });
 
@@ -77,12 +106,21 @@ describe('embeddingHelpers', () => {
             const toggled = toggleEmbeddingInPrompt(initial, 'lazypos');
             expect(toggled).toBe('1girl, masterpiece');
         });
+
+        it('strictly preserves line breaks when toggling', () => {
+            const multiline = 'masterpiece, best quality\n1girl, solo, smile';
+            const added = toggleEmbeddingInPrompt(multiline, 'lazypos');
+            expect(added).toBe('masterpiece, best quality\n1girl, solo, smile, embedding:lazypos');
+
+            const removed = toggleEmbeddingInPrompt(added, 'lazypos');
+            expect(removed).toBe('masterpiece, best quality\n1girl, solo, smile');
+        });
     });
 
     describe('removeEmbeddingFromPrompt', () => {
-        it('removes target embedding cleanly', () => {
-            const initial = '1girl, (embedding:lazyneg:0.9), bad hands';
-            expect(removeEmbeddingFromPrompt(initial, 'lazyneg')).toBe('1girl, bad hands');
+        it('removes target embedding cleanly while preserving line breaks', () => {
+            const initial = 'masterpiece, best quality\n1girl, (embedding:lazyneg:0.9), bad hands';
+            expect(removeEmbeddingFromPrompt(initial, 'lazyneg')).toBe('masterpiece, best quality\n1girl, bad hands');
         });
     });
 
@@ -99,10 +137,10 @@ describe('embeddingHelpers', () => {
             expect(updated).toBe('1girl, embedding:lazypos, masterpiece');
         });
 
-        it('appends embedding with weight when absent', () => {
-            const initial = '1girl';
+        it('appends embedding with weight when absent while preserving line breaks', () => {
+            const initial = 'masterpiece\n1girl';
             const updated = setEmbeddingWeightInPrompt(initial, 'lazypos', 1.1);
-            expect(updated).toBe('1girl, (embedding:lazypos:1.1)');
+            expect(updated).toBe('masterpiece\n1girl, (embedding:lazypos:1.1)');
         });
     });
 });

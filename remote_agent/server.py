@@ -266,18 +266,9 @@ class DownloadRequest(BaseModel):
     #: the launcher will not find it.
     model_id: Optional[str] = None
     # Whether to stage the downloaded model into the RAM cache.
-    #
-    # It was False, and no caller ever set it — so the cache was NEVER
-    # populated in the Docker/Modal deployment. The RAM cache is the whole
-    # reason ComfyUI, llama.cpp and Laya can share one 24 GB card: the
-    # weights come from RAM instead of the volume, which is the difference
-    # between a model that loads in ten seconds and one that loads in ten
-    # minutes. With the cache never filled, every reload was a disk read
-    # from a FUSE volume — the "long wait" complaint, with nothing in the
-    # log to explain it.
-    #
-    # A caller that genuinely does not want the copy can still say so.
-    prewarm: bool = True
+    # Defaults to False so general downloads stream directly to storage (e.g. Google Drive)
+    # without redundant RAM copies, preventing FUSE transport drops.
+    prewarm: bool = False
 
 
 class PrewarmModelSpec(BaseModel):
@@ -788,7 +779,13 @@ async def download_model(req: DownloadRequest):
             return await _download_registry_model(req.model_id)
 
         full_path = _data_path(req.path)
-        os.makedirs(os.path.dirname(full_path), exist_ok=True)
+        try:
+            os.makedirs(os.path.dirname(full_path), exist_ok=True)
+        except OSError as exc:
+            if exc.errno == 107 or "Transport endpoint is not connected" in str(exc):
+                logger.error(f"Storage mount disconnected (FUSE crash): {exc}")
+                return failed(f"Storage mount disconnected: {exc}. If in Colab, run '!fusermount -u /content/drive' and remount Google Drive.")
+            return failed(f"Could not create directory for {req.path}: {exc}")
 
         # download_model_to_path resolves HF/CivitAI tokens internally
         # (build_authenticated_download_request), writes a `.downloading` temp file,
@@ -833,7 +830,12 @@ async def download_model(req: DownloadRequest):
         # return is a failure too, rather than an AttributeError three frames up.
         if not isinstance(result, dict):
             return failed("Download failed")
-        if req.prewarm and WORKER_MODE != "storage" and result.get("status") in ("success", "exists", "ok"):
+        # Only prewarm if explicitly requested (prewarm=True) AND the model is a heavyweight
+        # foundation model (checkpoints, unet, gguf) — NEVER prewarm lightweight add-on models
+        # like loras, embeddings, vae, controlnet, or upscalers into RAM cache, which pollutes
+        # RAM budget and exhausts FUSE file descriptors.
+        is_prewarmable_type = any(k in req.path.lower() for k in ("checkpoint", "unet", ".gguf"))
+        if req.prewarm and is_prewarmable_type and WORKER_MODE != "storage" and result.get("status") in ("success", "exists", "ok"):
             try:
                 from ram_manager import get_ram_manager
                 mgr = get_ram_manager()

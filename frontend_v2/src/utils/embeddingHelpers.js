@@ -39,15 +39,56 @@ export function isNegativeEmbedding(name = '') {
 }
 
 /**
- * Clean up leading/trailing/duplicate commas and extra spaces in a prompt.
+ * Clean up leading/trailing/duplicate commas and extra spaces in a prompt,
+ * while strictly preserving line breaks and paragraph spacing.
  */
 export function cleanPrompt(text = '') {
     if (!text || typeof text !== 'string') return '';
-    return text
-        .split(',')
-        .map((part) => part.trim())
-        .filter(Boolean)
-        .join(', ');
+    const lines = text.split('\n');
+    const cleanedLines = lines.map((line) =>
+        line
+            .split(',')
+            .map((part) => part.trim())
+            .filter(Boolean)
+            .join(', ')
+    );
+    // Collapse 3+ newlines to standard double newlines (paragraphs) and trim edges
+    return cleanedLines
+        .join('\n')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+}
+
+/**
+ * Shorten long embedding filenames for clean UI display.
+ * Strips file extensions, trailing CivitAI version IDs (e.g. _1833157),
+ * and redundant pack prefix boilerplate (e.g. _lazy_embeddings_for_all_illus_).
+ */
+export function getShortEmbeddingName(filename = '') {
+    if (!filename || typeof filename !== 'string') return '';
+
+    // 1. Strip file extension
+    let name = filename.replace(/\.(safetensors|pt|bin)$/i, '');
+
+    // 2. Strip trailing CivitAI version numbers (e.g. _1833157, -2512494)
+    name = name.replace(/[_-][0-9]{5,}$/i, '');
+
+    // 3. Strip redundant pack prefixes ending with embeddings or embeddings_for_..._
+    // e.g. _lazy_embeddings_for_all_illus_lazypos -> lazypos
+    name = name.replace(/^[_a-z0-9-]*?embeddings?(?:[_-](?:for[_-])?[a-z0-9]+)*[_-]+/i, '');
+
+    // 4. Clean leading/trailing underscores and dashes
+    name = name.replace(/^[_-\s]+|[_-\s]+$/g, '');
+
+    // 5. Clean multi-separators like _-_ or ___
+    name = name.replace(/[_-]{2,}/g, '_');
+
+    // 6. Truncate nicely if still excessively long
+    if (name.length > 28) {
+        name = name.slice(0, 26) + '…';
+    }
+
+    return name || filename;
 }
 
 /**
@@ -98,8 +139,22 @@ export function hasEmbedding(promptText = '', embeddingName = '') {
 
     return active.some((emb) => {
         const embBase = emb.name.replace(/\.[^/.]+$/, '').toLowerCase();
-        return emb.name === embeddingName || embBase === targetBase;
+        return emb.name.toLowerCase() === embeddingName.toLowerCase() || embBase === targetBase;
     });
+}
+
+/**
+ * Get active weight of an embedding in prompt, or null if absent.
+ */
+export function getEmbeddingWeight(promptText = '', embeddingName = '') {
+    if (!promptText || !embeddingName) return null;
+    const active = parseActiveEmbeddings(promptText);
+    const targetBase = embeddingName.replace(/\.[^/.]+$/, '').toLowerCase();
+    const found = active.find((emb) => {
+        const embBase = emb.name.replace(/\.[^/.]+$/, '').toLowerCase();
+        return emb.name.toLowerCase() === embeddingName.toLowerCase() || embBase === targetBase;
+    });
+    return found ? found.weight : null;
 }
 
 /**

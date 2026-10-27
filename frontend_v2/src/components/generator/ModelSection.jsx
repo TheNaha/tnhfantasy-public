@@ -1,9 +1,15 @@
-import { memo, useState } from 'react';
-import { Settings2, Plus, Trash2, ChevronDown, Sparkles, Info, ImageIcon } from 'lucide-react';
+import { memo, useState, useEffect } from 'react';
+import { Settings2, Plus, Trash2, ChevronDown, Sparkles, Info, ImageIcon, Search, X } from 'lucide-react';
 import ModelSelector from '../../components/ModelSelector';
 import { isFluxModel, isAuraFlowModel, isPonyModel, isUnetModel } from '../../utils/modelType';
 import { formatBytes } from '../../utils/bytes';
-import { isNegativeEmbedding, toggleEmbeddingInPrompt, hasEmbedding } from '../../utils/embeddingHelpers';
+import {
+    getShortEmbeddingName,
+    getEmbeddingWeight,
+    toggleEmbeddingInPrompt,
+    setEmbeddingWeightInPrompt,
+    removeEmbeddingFromPrompt,
+} from '../../utils/embeddingHelpers';
 import { getModelWithVersion } from '../../utils/modelDisplay';
 import toast from 'react-hot-toast';
 
@@ -38,6 +44,18 @@ const ModelSection = memo(function ModelSection({
     setAutoOpenLoraIndex,
 }) {
     const [expandedTriggerGroups, setExpandedTriggerGroups] = useState({});
+    const [embeddingSearch, setEmbeddingSearch] = useState('');
+    const [activeWeightPopup, setActiveWeightPopup] = useState(null); // { name, target: 'pos' | 'neg' }
+
+    useEffect(() => {
+        function handleClickOutside(event) {
+            if (activeWeightPopup && !event.target.closest('.embedding-pill-container')) {
+                setActiveWeightPopup(null);
+            }
+        }
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, [activeWeightPopup]);
 
     const handleAddLora = () => {
         addLora();
@@ -163,54 +181,257 @@ const ModelSection = memo(function ModelSection({
                 </div>
             )}
 
-            {embeddingModels.length > 0 && (
-                <div className="space-y-2">
-                    <label className="text-xs font-medium text-gray-500 flex items-center gap-2">
-                        Embeddings
-                        <span className="text-xs text-gray-600">(Click to add to prompt)</span>
-                    </label>
-                    <div className="flex flex-wrap gap-2">
-                        {embeddingModels.map(emb => {
-                            const isNegative = isNegativeEmbedding(emb.name);
-                            const isInPositive = hasEmbedding(prompt, emb.name);
-                            const isInNegative = hasEmbedding(negativePrompt, emb.name);
-                            const isActive = isInPositive || isInNegative;
+            {embeddingModels.length > 0 && (() => {
+                const filteredEmbeddings = embeddingSearch.trim()
+                    ? embeddingModels.filter((emb) =>
+                          emb.name.toLowerCase().includes(embeddingSearch.toLowerCase()) ||
+                          getShortEmbeddingName(emb.name).toLowerCase().includes(embeddingSearch.toLowerCase())
+                      )
+                    : embeddingModels;
 
-                            return (
-                                <button
-                                    key={emb.name}
-                                    onClick={() => {
-                                        if (isNegative) {
-                                            const next = toggleEmbeddingInPrompt(negativePrompt, emb.name);
-                                            setNegativePrompt(next);
-                                            const wasAdded = hasEmbedding(next, emb.name);
-                                            toast(wasAdded ? `Added ${emb.name} to Negative Prompt` : `Removed ${emb.name} from Negative Prompt`, { icon: '🚫' });
-                                        } else {
-                                            const next = toggleEmbeddingInPrompt(prompt, emb.name);
-                                            setPrompt(next);
-                                            const wasAdded = hasEmbedding(next, emb.name);
-                                            toast(wasAdded ? `Added ${emb.name} to Positive Prompt` : `Removed ${emb.name} from Positive Prompt`, { icon: '✨' });
-                                        }
-                                    }}
-                                    className={`text-xs px-3 py-1.5 rounded-lg border transition-all ${isActive
-                                        ? isNegative
-                                            ? 'bg-red-900/40 border-red-700 text-red-300 ring-1 ring-red-500/50'
-                                            : 'bg-blue-900/40 border-blue-700 text-blue-300 ring-1 ring-blue-500/50'
-                                        : isNegative
-                                            ? 'bg-red-900/20 border-red-800 text-red-400 hover:bg-red-900/40'
-                                            : 'bg-blue-900/20 border-blue-800 text-blue-400 hover:bg-blue-900/40'
-                                        }`}
-                                    title={`Click to toggle in ${isNegative ? "Negative" : "Positive"} Prompt${isActive ? " (Active)" : ""}`}
-                                    type="button"
-                                >
-                                    {emb.name}
-                                    {isActive && <span className="ml-1">✓</span>}
-                                </button>
-                            );
-                        })}
+                return (
+                    <div className="space-y-2.5 pt-2 border-t border-white/5">
+                        <div className="flex items-center justify-between gap-2">
+                            <label className="text-xs font-semibold text-gray-300 flex items-center gap-1.5">
+                                <Sparkles size={13} className="text-purple-400" />
+                                <span>Embeddings</span>
+                                <span className="text-2xs text-gray-500 font-normal">
+                                    ({embeddingModels.length} installed)
+                                </span>
+                            </label>
+
+                            {/* Search filter if more than 3 embeddings */}
+                            {embeddingModels.length > 3 && (
+                                <div className="relative">
+                                    <Search size={11} className="absolute left-2 top-2 text-gray-500" />
+                                    <input
+                                        type="text"
+                                        value={embeddingSearch}
+                                        onChange={(e) => setEmbeddingSearch(e.target.value)}
+                                        placeholder="Filter embeddings..."
+                                        className="bg-gray-900/80 border border-gray-700/50 rounded-lg pl-6 pr-5 py-0.5 text-2xs text-gray-300 placeholder-gray-500 focus:border-purple-500 outline-none w-36 lg:w-44 transition-all"
+                                    />
+                                    {embeddingSearch && (
+                                        <button
+                                            type="button"
+                                            onClick={() => setEmbeddingSearch('')}
+                                            className="absolute right-1.5 top-1.5 text-gray-500 hover:text-gray-300"
+                                            title="Clear search"
+                                        >
+                                            <X size={10} />
+                                        </button>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+
+                        <div className="flex flex-wrap gap-2">
+                            {filteredEmbeddings.length === 0 ? (
+                                <p className="text-2xs text-gray-500 py-1">No embeddings match &ldquo;{embeddingSearch}&rdquo;</p>
+                            ) : (
+                                filteredEmbeddings.map((emb) => {
+                                    const shortName = getShortEmbeddingName(emb.name);
+                                    const posWeight = getEmbeddingWeight(prompt, emb.name);
+                                    const negWeight = getEmbeddingWeight(negativePrompt, emb.name);
+                                    const isInPos = posWeight !== null;
+                                    const isInNeg = negWeight !== null;
+                                    const isPopupOpen = activeWeightPopup?.name === emb.name;
+
+                                    return (
+                                        <div
+                                            key={emb.name}
+                                            className={`embedding-pill-container relative inline-flex items-center rounded-lg border text-xs transition-all shadow-sm ${
+                                                isInPos || isInNeg
+                                                    ? 'bg-purple-950/30 border-purple-500/50 ring-1 ring-purple-500/30 text-white'
+                                                    : 'bg-gray-900/60 border-gray-700/60 text-gray-300 hover:border-gray-600'
+                                            }`}
+                                        >
+                                            {/* Short name with full filename on hover */}
+                                            <span
+                                                className="px-2.5 py-1.5 font-medium cursor-default select-none truncate max-w-[170px]"
+                                                title={`${emb.name} (${formatBytes(emb.size)})`}
+                                            >
+                                                {shortName}
+                                            </span>
+
+                                            {/* Action / Status Controls */}
+                                            <div className="flex items-center border-l border-white/10 pr-1 gap-1">
+                                                {/* Positive Toggle / Weight */}
+                                                <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                        if (isInPos) {
+                                                            setActiveWeightPopup(
+                                                                isPopupOpen && activeWeightPopup?.target === 'pos'
+                                                                    ? null
+                                                                    : { name: emb.name, target: 'pos' }
+                                                            );
+                                                        } else {
+                                                            const next = toggleEmbeddingInPrompt(prompt, emb.name);
+                                                            setPrompt(next);
+                                                            toast(`Added ${shortName} to Positive Prompt`, { icon: '✨' });
+                                                        }
+                                                    }}
+                                                    className={`px-1.5 py-0.5 text-2xs rounded font-semibold transition-all flex items-center gap-0.5 ${
+                                                        isInPos
+                                                            ? 'bg-blue-600/30 border border-blue-500/50 text-blue-300 hover:bg-blue-600/50'
+                                                            : 'text-gray-400 hover:text-blue-300 hover:bg-white/5'
+                                                    }`}
+                                                    title={isInPos ? `Active in Positive (${posWeight.toFixed(1)}). Click to adjust weight.` : `Add ${shortName} to Positive Prompt`}
+                                                >
+                                                    <span>+Pos</span>
+                                                    {isInPos && (
+                                                        <span className="font-mono text-2xs underline ml-0.5">
+                                                            {posWeight.toFixed(1)}
+                                                        </span>
+                                                    )}
+                                                </button>
+
+                                                {/* Remove from Pos button when active */}
+                                                {isInPos && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            const next = removeEmbeddingFromPrompt(prompt, emb.name);
+                                                            setPrompt(next);
+                                                            if (activeWeightPopup?.name === emb.name && activeWeightPopup?.target === 'pos') {
+                                                                setActiveWeightPopup(null);
+                                                            }
+                                                            toast(`Removed ${shortName} from Positive Prompt`, { icon: '🗑️' });
+                                                        }}
+                                                        className="text-gray-400 hover:text-red-400 p-0.5 transition-colors"
+                                                        title={`Remove ${shortName} from Positive Prompt`}
+                                                        aria-label={`Remove ${shortName} from Positive Prompt`}
+                                                    >
+                                                        <X size={10} />
+                                                    </button>
+                                                )}
+
+                                                {/* Negative Toggle / Weight */}
+                                                <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                        if (isInNeg) {
+                                                            setActiveWeightPopup(
+                                                                isPopupOpen && activeWeightPopup?.target === 'neg'
+                                                                    ? null
+                                                                    : { name: emb.name, target: 'neg' }
+                                                            );
+                                                        } else {
+                                                            const next = toggleEmbeddingInPrompt(negativePrompt, emb.name);
+                                                            setNegativePrompt(next);
+                                                            toast(`Added ${shortName} to Negative Prompt`, { icon: '🚫' });
+                                                        }
+                                                    }}
+                                                    className={`px-1.5 py-0.5 text-2xs rounded font-semibold transition-all flex items-center gap-0.5 ${
+                                                        isInNeg
+                                                            ? 'bg-pink-600/30 border border-pink-500/50 text-pink-300 hover:bg-pink-600/50'
+                                                            : 'text-gray-400 hover:text-pink-300 hover:bg-white/5'
+                                                    }`}
+                                                    title={isInNeg ? `Active in Negative (${negWeight.toFixed(1)}). Click to adjust weight.` : `Add ${shortName} to Negative Prompt`}
+                                                >
+                                                    <span>+Neg</span>
+                                                    {isInNeg && (
+                                                        <span className="font-mono text-2xs underline ml-0.5">
+                                                            {negWeight.toFixed(1)}
+                                                        </span>
+                                                    )}
+                                                </button>
+
+                                                {/* Remove from Neg button when active */}
+                                                {isInNeg && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            const next = removeEmbeddingFromPrompt(negativePrompt, emb.name);
+                                                            setNegativePrompt(next);
+                                                            if (activeWeightPopup?.name === emb.name && activeWeightPopup?.target === 'neg') {
+                                                                setActiveWeightPopup(null);
+                                                            }
+                                                            toast(`Removed ${shortName} from Negative Prompt`, { icon: '🗑️' });
+                                                        }}
+                                                        className="text-gray-400 hover:text-red-400 p-0.5 transition-colors"
+                                                        title={`Remove ${shortName} from Negative Prompt`}
+                                                        aria-label={`Remove ${shortName} from Negative Prompt`}
+                                                    >
+                                                        <X size={10} />
+                                                    </button>
+                                                )}
+                                            </div>
+
+                                            {/* Weight Slider Popover */}
+                                            {isPopupOpen && (
+                                                <div
+                                                    className="absolute top-full mt-1.5 left-0 z-50 p-2.5 bg-gray-900/95 backdrop-blur-md border border-white/15 rounded-xl shadow-2xl min-w-[200px] space-y-2 animate-in fade-in zoom-in-95 duration-100"
+                                                >
+                                                    <div className="flex justify-between items-center text-2xs text-gray-300">
+                                                        <span className="font-semibold">
+                                                            {activeWeightPopup.target === 'pos' ? 'Positive Weight:' : 'Negative Weight:'}
+                                                        </span>
+                                                        <span className="font-mono text-purple-400">
+                                                            {(activeWeightPopup.target === 'pos' ? posWeight : negWeight)?.toFixed(2)}
+                                                        </span>
+                                                    </div>
+
+                                                    <input
+                                                        type="range"
+                                                        min="0.4"
+                                                        max="1.8"
+                                                        step="0.05"
+                                                        value={activeWeightPopup.target === 'pos' ? (posWeight ?? 1.0) : (negWeight ?? 1.0)}
+                                                        onChange={(e) => {
+                                                            const w = parseFloat(e.target.value);
+                                                            if (activeWeightPopup.target === 'pos') {
+                                                                const next = setEmbeddingWeightInPrompt(prompt, emb.name, w);
+                                                                setPrompt(next);
+                                                            } else {
+                                                                const next = setEmbeddingWeightInPrompt(negativePrompt, emb.name, w);
+                                                                setNegativePrompt(next);
+                                                            }
+                                                        }}
+                                                        className="w-full accent-purple-500 cursor-pointer h-1.5 bg-gray-700 rounded-lg"
+                                                    />
+
+                                                    <div className="flex justify-between gap-1 pt-1">
+                                                        {[0.8, 0.9, 1.0, 1.1, 1.2].map((preset) => {
+                                                            const currentW = activeWeightPopup.target === 'pos' ? posWeight : negWeight;
+                                                            const isSelected = Math.abs((currentW ?? 1.0) - preset) < 0.01;
+                                                            return (
+                                                                <button
+                                                                    key={preset}
+                                                                    type="button"
+                                                                    onClick={() => {
+                                                                        if (activeWeightPopup.target === 'pos') {
+                                                                            const next = setEmbeddingWeightInPrompt(prompt, emb.name, preset);
+                                                                            setPrompt(next);
+                                                                        } else {
+                                                                            const next = setEmbeddingWeightInPrompt(negativePrompt, emb.name, preset);
+                                                                            setNegativePrompt(next);
+                                                                        }
+                                                                    }}
+                                                                    className={`px-1.5 py-0.5 text-2xs rounded border transition-colors ${
+                                                                        isSelected
+                                                                            ? 'bg-purple-600 border-purple-500 text-white font-bold'
+                                                                            : 'bg-black/30 border-white/10 text-gray-300 hover:bg-white/10'
+                                                                    }`}
+                                                                >
+                                                                    {preset}
+                                                                </button>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })
+                            )}
+                        </div>
                     </div>
-                </div>
-            )}
+                );
+            })()}
 
             {Object.keys(promptShortcuts).length > 0 && (
                 <div className="space-y-2">
