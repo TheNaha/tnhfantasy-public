@@ -39,6 +39,52 @@ router = APIRouter()
 # no confirmation parameter on an unauthenticated API. `reset-status` is the one
 # survivor — the Providers page calls it.
 
+@router.get("/sync-manifest")
+@router.get("/providers/{provider_id}/sync-manifest")
+def get_sync_manifest(
+    provider_id: str | None = None,
+    session: Session = Depends(get_session)
+):
+    """Catalog manifest of all active models and their storage paths.
+    
+    Can be used by remote agents, notebooks, or scripts to bulk-download
+    missing library models directly to the provider storage without manual UI clicks.
+    """
+    model_repo = get_model_repo_v2(session)
+    items = model_repo.get_sync_manifest(provider_id=provider_id)
+    
+    # Also fetch LLM catalog weights from registry
+    llm_items = []
+    try:
+        from services.llm_router import get_router
+        registry = get_router().registry
+        for m in registry.catalog():
+            if m.get("gguf") and m.get("repo"):
+                llm_items.append({
+                    "id": m.get("id"),
+                    "name": m.get("name"),
+                    "repo": m.get("repo"),
+                    "filename": m.get("gguf"),
+                    "volume_dir": m.get("volume_dir", "llm_models"),
+                    "storage_path": f"{m.get('volume_dir', 'llm_models')}/{m.get('gguf')}",
+                    "mmproj": m.get("mmproj"),
+                    "mmproj_repo": m.get("mmproj_repo"),
+                    "roles": m.get("roles", []),
+                })
+    except Exception as exc:
+        logger.warning(f"Could not load LLM registry into sync manifest: {exc}")
+
+    pending_count = sum(1 for i in items if i.get("needs_download"))
+    return {
+        "status": "success",
+        "provider_id": provider_id,
+        "total_models": len(items),
+        "pending_downloads": pending_count,
+        "models": items,
+        "llm_models": llm_items,
+    }
+
+
 @router.delete("/providers/{provider_id}/reset-status")
 def reset_provider_status(
     provider_id: str,

@@ -896,6 +896,75 @@ class ModelRepositoryV2:
                 "hash_sha256": file.hash_sha256
             })
         return results
+
+    def get_sync_manifest(self, provider_id: str | None = None) -> list[dict[str, Any]]:
+        """
+        Get all active models with their download URLs and storage paths.
+        If provider_id is provided, includes status and whether download is needed.
+        """
+        if provider_id:
+            stmt = select(ModelFile, ModelVersion, ModelV2, ProviderVersionStatus).join(
+                ModelVersion, ModelFile.version_id == ModelVersion.id
+            ).join(
+                ModelV2, ModelVersion.model_id == ModelV2.id
+            ).outerjoin(
+                ProviderVersionStatus,
+                and_(
+                    ProviderVersionStatus.file_id == ModelFile.id,
+                    self._provider_match_clause(provider_id)
+                )
+            ).where(
+                ModelVersion.is_enabled == True,
+                ModelFile.download_url != None,
+                ModelFile.download_url != "",
+            )
+            results = []
+            for file, version, model, prov_status in self.session.exec(stmt).all():
+                is_ready = prov_status is not None and prov_status.status == "ready"
+                results.append({
+                    "file_id": file.id,
+                    "version_id": version.id,
+                    "model_id": model.id,
+                    "model_name": model.name,
+                    "version_name": version.name,
+                    "directory": model.directory,
+                    "storage_filename": file.storage_filename,
+                    "storage_path": f"models/{model.directory}/{file.storage_filename}",
+                    "download_url": file.download_url,
+                    "size_kb": file.size_kb,
+                    "hash_sha256": file.hash_sha256,
+                    "status": prov_status.status if prov_status else "missing",
+                    "needs_download": not is_ready,
+                })
+            return results
+        else:
+            stmt = select(ModelFile, ModelVersion, ModelV2).join(
+                ModelVersion, ModelFile.version_id == ModelVersion.id
+            ).join(
+                ModelV2, ModelVersion.model_id == ModelV2.id
+            ).where(
+                ModelVersion.is_enabled == True,
+                ModelFile.download_url != None,
+                ModelFile.download_url != "",
+            )
+            results = []
+            for file, version, model in self.session.exec(stmt).all():
+                results.append({
+                    "file_id": file.id,
+                    "version_id": version.id,
+                    "model_id": model.id,
+                    "model_name": model.name,
+                    "version_name": version.name,
+                    "directory": model.directory,
+                    "storage_filename": file.storage_filename,
+                    "storage_path": f"models/{model.directory}/{file.storage_filename}",
+                    "download_url": file.download_url,
+                    "size_kb": file.size_kb,
+                    "hash_sha256": file.hash_sha256,
+                    "status": "unknown",
+                    "needs_download": True,
+                })
+            return results
     
     def get_provider_status(
         self, 
