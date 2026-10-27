@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import random
 import re
 import json
 import os
@@ -1176,6 +1177,75 @@ def _animate_avatar_prep_sync(
         character_id=character.id,
     )
     return character.id, workflow, metadata
+
+
+class GenerateExpressionsRequest(BaseModel):
+    checkpoint: str | None = None
+    lora: str | None = None
+    emotions: list[str] = Field(
+        default_factory=lambda: ["neutral", "happy", "angry", "blushing", "sad", "serious"]
+    )
+    base_prompt: str | None = None
+    negative_prompt: str | None = None
+    seed: int | None = None
+
+
+@router.post("/{character_id}/expressions/generate")
+async def generate_character_expressions(
+    character_id: str,
+    request: GenerateExpressionsRequest,
+    session: Session = Depends(get_session),
+    character_repo: CharacterRepository = Depends(get_character_repo),
+):
+    """Enqueue batch image generation for character emotional expression avatars."""
+    from services.job_submission_service import submit_job
+    from core.workflow_builder import GeneratorOptions, LoraOption, WorkflowBuilder
+
+    character = character_repo.get(character_id)
+    if not character:
+        raise NotFoundError("Character", character_id)
+
+    checkpoint = request.checkpoint or character.checkpoint or DEFAULT_CHECKPOINT
+    lora_name = request.lora or character.lora
+    loras = [LoraOption(name=lora_name, strength=0.85)] if lora_name else []
+
+    base = request.base_prompt or f"portrait of {character.name}, {character.description or ''}"
+    neg = request.negative_prompt or "worst quality, low quality, bad anatomy, bad hands, blurry"
+    seed = request.seed if request.seed is not None else random.randint(1, 2147483647)
+
+    job_ids = []
+    builder = WorkflowBuilder()
+
+    for emotion in request.emotions:
+        prompt = f"{base}, {emotion} expression, facing viewer, close-up, masterpiece, best quality"
+        opts = GeneratorOptions(
+            prompt=prompt,
+            negativePrompt=neg,
+            checkpoint=checkpoint,
+            loras=loras,
+            seed=seed,
+            steps=20,
+            cfg=7.0,
+            width=512,
+            height=512,
+            filenamePrefix=f"Char_{character.id}_{emotion}",
+        )
+        workflow = builder.build(opts)
+        meta = {
+            "source": "character_expression_generate",
+            "character_id": character.id,
+            "emotion": emotion,
+            "checkpoint": checkpoint,
+        }
+        job = await submit_job(session, workflow, meta, task_type="image")
+        job_ids.append(job.id)
+
+    return {
+        "message": f"Enqueued {len(job_ids)} expression generation jobs",
+        "job_ids": job_ids,
+        "emotions": request.emotions,
+        "seed": seed,
+    }
 
 @router.get("/{character_id}/avatar")
 def get_avatar(character_id: str, session: Session = Depends(get_session), character_repo: CharacterRepository = Depends(get_character_repo)):

@@ -22,6 +22,7 @@ import { CARD_ACCEPT, cardExportFormatLabel } from '../api/characterCards';
 import { useVoices } from '../hooks/useVoices';
 import { useLLMJobResult } from '../hooks/useLLMJobResult';
 import { SortableCharacterCard } from '../components/characters/CharacterCard';
+import ExpressionStudioModal from '../components/characters/ExpressionStudioModal';
 import ModalOverlay from '../components/common/ModalOverlay';
 import CharacterCardImportReport from '../components/characters/CharacterCardImportReport';
 import CharacterCardImportPreview from '../components/characters/CharacterCardImportPreview';
@@ -869,6 +870,7 @@ export default function Characters() {
     const [importPreviewError, setImportPreviewError] = useState(null);
     const fileInputRef = useRef(null);
     const [cloningId, setCloningId] = useState(null);
+    const [expressionStudioChar, setExpressionStudioChar] = useState(null);
 
     const navigate = useNavigate();
     const setActiveChat = useWorldVaultStore(state => state.setActiveChat);
@@ -1189,6 +1191,7 @@ export default function Characters() {
                                             onDelete: handleDelete,
                                             onExport: handleExportCard,
                                             onClone: handleCloneCharacter,
+                                            onExpressions: (char) => setExpressionStudioChar(char),
                                             isCloning: cloningId === character.id,
                                         }}
                                     />
@@ -1242,6 +1245,12 @@ export default function Characters() {
                     }}
                 />
             )}
+
+            <ExpressionStudioModal
+                character={expressionStudioChar}
+                isOpen={Boolean(expressionStudioChar)}
+                onClose={() => setExpressionStudioChar(null)}
+            />
 
         </RoleplayPageShell>
     );

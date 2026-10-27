@@ -1,7 +1,7 @@
 import { motion } from 'framer-motion';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Copy, Edit3, ExternalLink, GripVertical, Loader2, MessageSquare, Trash2, User } from 'lucide-react';
+import { Copy, Edit3, ExternalLink, GripVertical, Loader2, MessageSquare, Smile, Trash2, User } from 'lucide-react';
 
 import SceneGallery, { SceneCount } from '../SceneGallery';
 import { getAvatarUrl } from '../../hooks/useWorldVault';
@@ -112,6 +112,20 @@ export default function CharacterCard({
                 character={character}
                 onExport={manageActions.onExport}
             />
+        );
+    }
+
+    if (manageActions.onExpressions) {
+        actionButtons.push(
+            <button
+                key="expressions"
+                type="button"
+                onClick={() => manageActions.onExpressions(character)}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs bg-purple-500/10 text-purple-300 rounded-lg hover:bg-purple-500/20 hover:text-white transition-colors"
+                title="Generate Expression Pack"
+            >
+                <Smile size={14} /> Expressions
+            </button>
         );
     }
 
