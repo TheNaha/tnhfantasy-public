@@ -69,7 +69,14 @@ const ModelSelector = memo(function ModelSelector({
   // ('name'), so this component's keys did not match `modelListKey`'s documented
   // 'name_asc' contract — fine while the two pickers are separated by
   // `directory`, a collision the moment they are unified.
-  const SORT_MAP = { name: "name_asc", date: "date_desc", size: "size_desc", rating: "rating_desc" };
+  const SORT_MAP = {
+    name: "name_asc",
+    date: "date_updated_desc",
+    date_added: "date_added_desc",
+    date_updated: "date_updated_desc",
+    size: "size_desc",
+    rating: "rating_desc",
+  };
   const finalSort = sortBy.startsWith("random") ? sortBy : (SORT_MAP[sortBy] || "name_asc");
 
   const {
@@ -271,25 +278,25 @@ const ModelSelector = memo(function ModelSelector({
       {/* Modal */}
       {isOpen && createPortal(
         <div
-          className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4"
+          className="fixed inset-0 z-50 bg-black/80 flex items-end sm:items-center justify-center p-0 sm:p-4 backdrop-blur-sm"
           role="dialog"
           aria-modal="true"
           aria-labelledby="model-selector-title"
           onClick={handleClose}
         >
           <div
-            className="bg-gray-900 w-full max-w-4xl h-[80vh] rounded-2xl border border-gray-800 flex flex-col shadow-2xl"
+            className="bg-gray-900 w-full sm:max-w-4xl h-[92vh] sm:h-[85vh] rounded-t-2xl sm:rounded-2xl border-t sm:border border-gray-800 flex flex-col shadow-2xl overflow-hidden"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Header */}
-            <div className="p-4 border-b border-gray-800 space-y-3">
-              <div className="flex justify-between items-center gap-4">
-                <h3 id="model-selector-title" className="text-lg font-bold text-white">
+            <div className="p-3 sm:p-4 border-b border-gray-800 space-y-2.5 sm:space-y-3 shrink-0">
+              <div className="flex justify-between items-center gap-3">
+                <h3 id="model-selector-title" className="text-base sm:text-lg font-bold text-white truncate">
                   Select {label}
                 </h3>
                 <button
                   onClick={handleClose}
-                  className="p-2 hover:bg-gray-800 rounded-full text-gray-400 hover:text-white"
+                  className="p-1.5 sm:p-2 hover:bg-gray-800 rounded-full text-gray-400 hover:text-white transition-colors"
                   aria-label="Close modal"
                 >
                   ✕
@@ -317,7 +324,7 @@ const ModelSelector = memo(function ModelSelector({
             </div>
 
             {/* Grid */}
-            <div className="flex-1 overflow-y-auto p-4">
+            <div className="flex-1 overflow-y-auto p-3 sm:p-4">
               {isFetching && !isFetchingNextPage ? (
                 <div className="flex justify-center py-20 text-gray-500">
                   <Loader2 className="animate-spin" />
@@ -341,7 +348,7 @@ const ModelSelector = memo(function ModelSelector({
                   {models.length === 0 ? "No models found" : "No models match your filters"}
                 </div>
               ) : (
-                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2.5 sm:gap-4">
                   {filteredAndSortedModels.map((model) => (
                     <ModelGridCard
                       key={model.model_id || model.name}

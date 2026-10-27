@@ -106,6 +106,19 @@ describe('the shared request builder', () => {
         expect(options.loras[0].strength).toBe(0);
     });
 
+    it('preserves LoRA strengths beyond 2.0 and negative strengths without clamping', () => {
+        const { options } = buildGeneratorPayload('t2i', {
+            prompt: 'a cat',
+            selectedLoras: [
+                { name: 'slider_heavy.safetensors', strength: 3.0 },
+                { name: 'slider_neg.safetensors', strength: -2.5 },
+            ],
+        });
+
+        expect(options.loras[0].strength).toBe(3.0);
+        expect(options.loras[1].strength).toBe(-2.5);
+    });
+
     it('keeps an IP adapter\'s "Stop At"', () => {
         const { options } = buildGeneratorPayload('t2i', {
             prompt: 'a cat',

@@ -394,6 +394,39 @@ function normalizeControlnets(controlnets) {
         .filter(Boolean);
 }
 
+function normalizeIpAdapters(ipAdapters) {
+    if (!Array.isArray(ipAdapters)) {
+        return [];
+    }
+
+    return ipAdapters
+        .map((ip) => {
+            if (!ip || typeof ip !== 'object') {
+                return null;
+            }
+
+            const model = ip.model || ip.ipadapter || ip.name || '';
+            const clipVision = ip.clipVision || ip.clip_vision || ip.clip_vision_model || '';
+            const weight = toFiniteNumber(firstDefined(ip, ['weight', 'strength']));
+            const stopAt = toFiniteNumber(firstDefined(ip, ['stopAt', 'stop_at', 'end_at']));
+            const image = ip.image || null;
+
+            if (!model && !clipVision && !image) {
+                return null;
+            }
+
+            return {
+                ...ip,
+                model,
+                clipVision,
+                weight: weight ?? 1.0,
+                stopAt: stopAt ?? 1.0,
+                image,
+            };
+        })
+        .filter(Boolean);
+}
+
 function extractWorkflowHints(workflowInput) {
     const nodes = toNodeMap(workflowInput);
     if (!nodes) {
@@ -414,6 +447,15 @@ function extractWorkflowHints(workflowInput) {
             clip2: undefined,
             loras: [],
             controlnets: [],
+            ipAdapters: [],
+            hiresFix: null,
+            hiresUpscaler: undefined,
+            hiresUpscale: null,
+            hiresDenoise: null,
+            hiresSteps: null,
+            enableFreeU: null,
+            enablePAG: null,
+            pagScale: null,
             adetailer: null,
             adetailerModel: undefined,
         };
@@ -532,6 +574,85 @@ function extractWorkflowHints(workflowInput) {
         adetailerModel = detectorModel.split('/').pop();
     }
 
+    const ipAdapters = [];
+    findAllNodes(nodes, ['IPAdapterApply', 'IPAdapterUnifiedLoader', 'IPAdapterAdvanced', 'IPAdapterApplyAdvanced']).forEach(([, node]) => {
+        const inputs = node.inputs || {};
+        const ipModelId = linkedNodeId(inputs.ipadapter);
+        const clipVisionId = linkedNodeId(inputs.clip_vision);
+
+        let ipModelName = inputs.ipadapter_file || inputs.model_name || '';
+        if (!ipModelName && ipModelId && nodes[ipModelId]) {
+            ipModelName = nodes[ipModelId]?.inputs?.ipadapter_file || nodes[ipModelId]?.inputs?.model_name || '';
+        }
+
+        let clipVisionName = inputs.clip_name || '';
+        if (!clipVisionName && clipVisionId && nodes[clipVisionId]) {
+            clipVisionName = nodes[clipVisionId]?.inputs?.clip_name || '';
+        }
+
+        const weight = toFiniteNumber(inputs.weight) ?? 1.0;
+        const stopAt = toFiniteNumber(firstDefined(inputs, ['stop_at', 'end_at', 'weight_type'])) ?? 1.0;
+
+        if (ipModelName || clipVisionName) {
+            ipAdapters.push({
+                model: typeof ipModelName === 'string' ? ipModelName.split('/').pop() : '',
+                clipVision: typeof clipVisionName === 'string' ? clipVisionName.split('/').pop() : '',
+                weight,
+                stopAt,
+                image: null,
+            });
+        }
+    });
+
+    let hiresFix = false;
+    let hiresUpscaler;
+    let hiresUpscale = null;
+    let hiresDenoise = null;
+    let hiresSteps = null;
+
+    const latentUpscaleEntry = findFirstNode(nodes, ['LatentUpscaleBy', 'LatentUpscale']);
+    if (latentUpscaleEntry) {
+        hiresFix = true;
+        hiresUpscaler = 'Latent';
+        const inputs = latentUpscaleEntry[1]?.inputs || {};
+        hiresUpscale = toFiniteNumber(inputs.scale_by ?? inputs.scale);
+    }
+
+    const imageScaleEntry = findFirstNode(nodes, ['ImageScaleBy', 'ImageScale']);
+    if (imageScaleEntry) {
+        hiresFix = true;
+        hiresUpscaler = hiresUpscaler || 'Pixel';
+        const inputs = imageScaleEntry[1]?.inputs || {};
+        hiresUpscale = hiresUpscale ?? toFiniteNumber(inputs.scale_by ?? inputs.scale);
+    }
+
+    const upscaleModelEntry = findFirstNode(nodes, ['UpscaleModelLoader']);
+    if (upscaleModelEntry) {
+        hiresFix = true;
+        const modelName = upscaleModelEntry[1]?.inputs?.model_name;
+        if (typeof modelName === 'string') {
+            hiresUpscaler = modelName.split('/').pop();
+        }
+    }
+
+    const allSamplers = findAllNodes(nodes, ['KSampler', 'KSamplerAdvanced']);
+    if (allSamplers.length > 1) {
+        hiresFix = true;
+        const hiresSamplerInputs = allSamplers[1][1]?.inputs || {};
+        hiresDenoise = toFiniteNumber(hiresSamplerInputs.denoise);
+        hiresSteps = toFiniteNumber(hiresSamplerInputs.steps);
+    }
+
+    const enableFreeU = Boolean(findFirstNode(nodes, ['FreeU', 'FreeU_V2']));
+
+    let enablePAG = false;
+    let pagScale = null;
+    const pagEntry = findFirstNode(nodes, ['PerturbedAttentionGuidance', 'PAG']);
+    if (pagEntry) {
+        enablePAG = true;
+        pagScale = toFiniteNumber(pagEntry[1]?.inputs?.scale);
+    }
+
     return {
         prompt,
         negativePrompt,
@@ -550,6 +671,15 @@ function extractWorkflowHints(workflowInput) {
         clip2,
         loras,
         controlnets,
+        ipAdapters,
+        hiresFix: hiresFix || null,
+        hiresUpscaler,
+        hiresUpscale,
+        hiresDenoise,
+        hiresSteps,
+        enableFreeU: enableFreeU || null,
+        enablePAG: enablePAG || null,
+        pagScale,
         adetailer,
         adetailerModel,
     };
@@ -677,29 +807,50 @@ export function buildGeneratorStateFromMetadata(metadataInput) {
         updates.controlnets = normalizeControlnets(rawControlnets);
     }
 
-    const hiresFix = toBoolean(firstDefined(metadata, ['hiresFix', 'hires_fix']));
+    const explicitIpAdapters = hasOwn(metadata, 'ipAdapters') ? metadata.ipAdapters : metadata.ip_adapters;
+    if (explicitIpAdapters !== undefined || (workflowHints.ipAdapters && workflowHints.ipAdapters.length > 0)) {
+        const rawIpAdapters = explicitIpAdapters !== undefined ? explicitIpAdapters : workflowHints.ipAdapters;
+        updates.ipAdapters = normalizeIpAdapters(rawIpAdapters);
+    }
+
+    const hiresFix = toBoolean(firstDefined(metadata, ['hiresFix', 'hires_fix']) ?? workflowHints.hiresFix);
     if (hiresFix !== null) {
         updates.hiresFix = hiresFix;
     }
 
-    const hiresUpscaler = firstDefined(metadata, ['hiresUpscaler', 'hires_upscaler']);
+    const hiresUpscaler = firstDefined(metadata, ['hiresUpscaler', 'hires_upscaler']) ?? workflowHints.hiresUpscaler;
     if (typeof hiresUpscaler === 'string' && hiresUpscaler) {
         updates.hiresUpscaler = hiresUpscaler;
     }
 
-    const hiresDenoise = toFiniteNumber(firstDefined(metadata, ['hiresDenoise', 'hires_denoise']));
+    const hiresDenoise = toFiniteNumber(firstDefined(metadata, ['hiresDenoise', 'hires_denoise']) ?? workflowHints.hiresDenoise);
     if (hiresDenoise !== null) {
         updates.hiresDenoise = hiresDenoise;
     }
 
-    const hiresUpscale = toFiniteNumber(firstDefined(metadata, ['hiresUpscale', 'hires_upscale']));
+    const hiresUpscale = toFiniteNumber(firstDefined(metadata, ['hiresUpscale', 'hires_upscale']) ?? workflowHints.hiresUpscale);
     if (hiresUpscale !== null) {
         updates.hiresUpscale = hiresUpscale;
     }
 
-    const hiresSteps = toFiniteNumber(firstDefined(metadata, ['hiresSteps', 'hires_steps']));
+    const hiresSteps = toFiniteNumber(firstDefined(metadata, ['hiresSteps', 'hires_steps']) ?? workflowHints.hiresSteps);
     if (hiresSteps !== null) {
         updates.hiresSteps = Math.floor(hiresSteps);
+    }
+
+    const enableFreeU = toBoolean(firstDefined(metadata, ['enableFreeU', 'enable_freeu', 'freeu']) ?? workflowHints.enableFreeU);
+    if (enableFreeU !== null) {
+        updates.enableFreeU = enableFreeU;
+    }
+
+    const enablePAG = toBoolean(firstDefined(metadata, ['enablePAG', 'enable_pag', 'pag']) ?? workflowHints.enablePAG);
+    if (enablePAG !== null) {
+        updates.enablePAG = enablePAG;
+    }
+
+    const pagScale = toFiniteNumber(firstDefined(metadata, ['pagScale', 'pag_scale']) ?? workflowHints.pagScale);
+    if (pagScale !== null) {
+        updates.pagScale = pagScale;
     }
 
     const adetailer = toBoolean(firstDefined(metadata, ['adetailer', 'aDetailer']) ?? workflowHints.adetailer);

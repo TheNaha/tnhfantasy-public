@@ -637,8 +637,10 @@ def _scan_local_model_directory(model_type, search, sort, limit, offset):
                 })
 
         # Sort
-        if sort == "date_desc":
+        if sort in ("date_desc", "date_updated_desc", "date_added_desc"):
             valid_files.sort(key=lambda x: x.get("modified_time", 0), reverse=True)
+        elif sort in ("date_asc", "date_updated_asc", "date_added_asc"):
+            valid_files.sort(key=lambda x: x.get("modified_time", 0))
         elif sort == "name_asc":
             valid_files.sort(key=lambda x: x.get("name", ""))
         elif sort == "size_desc":

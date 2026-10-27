@@ -509,6 +509,10 @@ class ModelRepositoryV2:
     _DIRECTORY_COLUMN_SORTS = {
         "date_desc": ModelV2.updated_at,
         "date_asc": ModelV2.updated_at,
+        "date_added_desc": ModelV2.created_at,
+        "date_added_asc": ModelV2.created_at,
+        "date_updated_desc": ModelV2.updated_at,
+        "date_updated_asc": ModelV2.updated_at,
         "rating_desc": ModelV2.stats_thumbs_up,
     }
 

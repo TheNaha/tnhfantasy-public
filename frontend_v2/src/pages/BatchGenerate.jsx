@@ -760,19 +760,32 @@ export default function BatchGenerate() {
                                                     type="range"
                                                     min={-2}
                                                     max={2}
-                                                    step={0.1}
-                                                    value={Math.max(-2, Math.min(2, lora.strength ?? 1))}
+                                                    step={0.05}
+                                                    value={Math.max(-2, Math.min(2, typeof lora.strength === 'number' ? lora.strength : (parseFloat(lora.strength) || 1.0)))}
                                                     onChange={(event) => updateLora(index, 'strength', parseFloat(event.target.value))}
                                                     aria-label={`LoRA ${index + 1} strength slider`}
-                                                    className="flex-1 min-w-0 h-1.5 accent-blue-500 touch-none"
+                                                    className="flex-1 min-w-0 h-2 accent-blue-500 touch-none cursor-pointer"
                                                 />
                                                 <input
                                                     type="number"
-                                                    step={0.1}
+                                                    step={0.05}
                                                     value={lora.strength ?? 1}
-                                                    onChange={(event) => updateLora(index, 'strength', parseFloat(event.target.value) || 0)}
+                                                    onChange={(event) => {
+                                                        const val = event.target.value;
+                                                        if (val === '' || val === '-') {
+                                                            updateLora(index, 'strength', val);
+                                                        } else {
+                                                            const parsed = parseFloat(val);
+                                                            updateLora(index, 'strength', isNaN(parsed) ? val : parsed);
+                                                        }
+                                                    }}
+                                                    onBlur={() => {
+                                                        if (typeof lora.strength !== 'number' || isNaN(lora.strength)) {
+                                                            updateLora(index, 'strength', parseFloat(lora.strength) || 1.0);
+                                                        }
+                                                    }}
                                                     aria-label={`LoRA ${index + 1} strength`}
-                                                    className="w-14 bg-gray-800 border border-white/10 rounded px-1.5 py-0.5 text-xs text-white text-center"
+                                                    className="w-16 bg-gray-800 border border-white/10 rounded px-1.5 py-1 text-xs text-white text-center focus:border-blue-500 outline-none"
                                                 />
                                             </div>
                                         </div>

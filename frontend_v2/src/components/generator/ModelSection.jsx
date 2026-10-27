@@ -508,14 +508,14 @@ Click to insert “${token}” into ${isActive ? "the prompt (already added)" : 
                                     />
                                 ) : (
                                     <div
-                                        className="w-16 min-h-full bg-gray-800 flex items-center justify-center text-gray-600 flex-shrink-0 cursor-pointer"
+                                        className="w-14 sm:w-16 min-h-full bg-gray-800 flex items-center justify-center text-gray-600 flex-shrink-0 cursor-pointer overflow-hidden"
                                         onClick={() => setAutoOpenLoraIndex(idx)}
                                     >
                                         <ImageIcon size={20} />
                                     </div>
                                 )}
 
-                                <div className="flex-1 min-w-0 p-2 space-y-1.5">
+                                <div className="flex-1 min-w-0 p-2 sm:p-2.5 space-y-2">
                                     <div className="flex items-start gap-1">
                                         <button
                                             onClick={() => setAutoOpenLoraIndex(idx)}
@@ -551,7 +551,7 @@ Click to insert “${token}” into ${isActive ? "the prompt (already added)" : 
                                             </div>
 
                                             {lora.versions && lora.versions.length > 1 && (
-                                                <div className="flex items-center gap-1.5 mt-1">
+                                                <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
                                                     <span className="text-3xs uppercase tracking-wider text-gray-500 font-semibold">Outfit:</span>
                                                     <select
                                                         aria-label="Select outfit or version"
@@ -568,7 +568,7 @@ Click to insert “${token}” into ${isActive ? "the prompt (already added)" : 
                                                                 }
                                                             }
                                                         }}
-                                                        className="text-2xs bg-gray-900 border border-gray-700/80 rounded px-1.5 py-0.5 text-gray-200 outline-none focus:border-blue-500 cursor-pointer max-w-[210px] truncate"
+                                                        className="text-2xs bg-gray-900 border border-gray-700/80 rounded px-1.5 py-1 text-gray-200 outline-none focus:border-blue-500 cursor-pointer w-full sm:max-w-[210px] truncate"
                                                         onClick={(e) => e.stopPropagation()}
                                                     >
                                                         {lora.versions.map((ver) => (
@@ -583,39 +583,53 @@ Click to insert “${token}” into ${isActive ? "the prompt (already added)" : 
 
                                         <button
                                             onClick={() => setViewingMetadata(lora)}
-                                            className="p-1 text-gray-500 hover:text-blue-400 transition-colors flex-shrink-0"
+                                            className="p-1.5 text-gray-400 hover:text-blue-400 min-h-[32px] min-w-[32px] flex items-center justify-center transition-colors flex-shrink-0"
                                             title="View info"
                                         >
-                                            <Info size={14} />
+                                            <Info size={15} />
                                         </button>
 
                                         <button
                                             onClick={() => removeLora(idx)}
-                                            className="p-1 text-gray-500 hover:text-red-400 transition-colors flex-shrink-0"
+                                            className="p-1.5 text-gray-400 hover:text-red-400 min-h-[32px] min-w-[32px] flex items-center justify-center transition-colors flex-shrink-0"
                                             title="Remove"
                                         >
-                                            <Trash2 size={14} />
+                                            <Trash2 size={15} />
                                         </button>
                                     </div>
 
-                                    <div className="flex items-center gap-2">
+                                    <div className="flex items-center gap-2 pt-0.5">
                                         <input
                                             type="range"
                                             min="-2"
                                             max="2"
-                                            step="0.1"
-                                            className="flex-1 min-w-0 h-1.5 accent-blue-500 touch-none"
+                                            step="0.05"
+                                            className="flex-1 min-w-0 h-2 accent-blue-500 touch-none cursor-pointer"
                                             onTouchStart={(e) => e.stopPropagation()}
                                             onTouchMove={(e) => e.stopPropagation()}
-                                            value={Math.max(-2, Math.min(2, lora.strength))}
+                                            value={Math.max(-2, Math.min(2, typeof lora.strength === 'number' ? lora.strength : (parseFloat(lora.strength) || 1.0)))}
                                             onChange={(e) => handleLoraChange(idx, 'strength', parseFloat(e.target.value))}
                                         />
                                         <input
                                             type="number"
-                                            step="0.1"
-                                            className="w-12 bg-gray-800 border border-gray-600 rounded px-1.5 py-0.5 text-xs text-white text-center flex-shrink-0"
-                                            value={lora.strength}
-                                            onChange={(e) => handleLoraChange(idx, 'strength', parseFloat(e.target.value) || 0)}
+                                            step="0.05"
+                                            className="w-16 bg-gray-800 border border-gray-600 rounded px-1.5 py-1 text-xs text-white text-center flex-shrink-0 focus:border-blue-500 outline-none"
+                                            value={lora.strength ?? 1.0}
+                                            onChange={(e) => {
+                                                const val = e.target.value;
+                                                if (val === '' || val === '-') {
+                                                    handleLoraChange(idx, 'strength', val);
+                                                } else {
+                                                    const parsed = parseFloat(val);
+                                                    handleLoraChange(idx, 'strength', isNaN(parsed) ? val : parsed);
+                                                }
+                                            }}
+                                            onBlur={() => {
+                                                if (typeof lora.strength !== 'number' || isNaN(lora.strength)) {
+                                                    handleLoraChange(idx, 'strength', parseFloat(lora.strength) || 1.0);
+                                                }
+                                            }}
+                                            title="LoRA Strength (Enter any value or use slider)"
                                         />
                                     </div>
 

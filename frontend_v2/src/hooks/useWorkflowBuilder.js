@@ -162,7 +162,7 @@ export function buildGeneratorPayload(mode, storeSnapshot = {}, additionalOverri
         metadata = {
             ...metadata,
             width, height, batchSize,
-            hiresFix, hiresUpscaler
+            hiresFix, hiresUpscaler, hiresDenoise, hiresUpscale, hiresSteps,
         };
     } else if (mode === 'img2img') {
         options = {

@@ -460,6 +460,75 @@ export default memo(function ImageLightbox({
                                     </div>
                                 )}
 
+                                {/* ControlNet */}
+                                {metadata.controlnets?.length > 0 && (
+                                    <div>
+                                        <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">ControlNet</h4>
+                                        <div className="flex flex-wrap gap-2">
+                                            {metadata.controlnets.map((cn, i) => (
+                                                <span key={i} className="px-2 py-1 bg-cyan-500/20 text-cyan-300 rounded text-xs border border-cyan-500/30 flex items-center gap-1" title={cn.name}>
+                                                    <span className="font-medium truncate max-w-[180px]">{cn.name ? cn.name.split('/').pop() : 'ControlNet'}</span>
+                                                    <span className="text-cyan-400/80 font-mono">({cn.strength ?? 1.0})</span>
+                                                </span>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* IP-Adapter */}
+                                {metadata.ipAdapters?.length > 0 && (
+                                    <div>
+                                        <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">IP-Adapter</h4>
+                                        <div className="flex flex-wrap gap-2">
+                                            {metadata.ipAdapters.map((ip, i) => (
+                                                <span key={i} className="px-2 py-1 bg-violet-500/20 text-violet-300 rounded text-xs border border-violet-500/30 flex items-center gap-1" title={ip.model}>
+                                                    <span className="font-medium truncate max-w-[180px]">{ip.model ? ip.model.split('/').pop() : 'IP-Adapter'}</span>
+                                                    <span className="text-violet-400/80 font-mono">({ip.weight ?? 1.0})</span>
+                                                </span>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Enhancements */}
+                                {(metadata.hiresFix || metadata.adetailer || metadata.enableFreeU || metadata.enablePAG) && (
+                                    <div>
+                                        <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Enhancements</h4>
+                                        <div className="flex flex-wrap gap-2">
+                                            {metadata.hiresFix && (
+                                                <span className="px-2 py-1 bg-amber-500/20 text-amber-300 rounded text-xs border border-amber-500/30 flex items-center gap-1">
+                                                    <span className="font-medium">✨ Hi-Res Fix:</span>
+                                                    <span className="text-amber-200 font-mono">
+                                                        {metadata.hiresUpscaler || "Active"}
+                                                        {metadata.hiresUpscale ? ` (${metadata.hiresUpscale}x)` : ''}
+                                                        {metadata.hiresDenoise !== undefined && metadata.hiresDenoise !== null ? ` • Denoise ${metadata.hiresDenoise}` : ''}
+                                                        {metadata.hiresSteps ? ` • ${metadata.hiresSteps} steps` : ''}
+                                                    </span>
+                                                </span>
+                                            )}
+                                            {metadata.adetailer && (
+                                                <span className="px-2 py-1 bg-emerald-500/20 text-emerald-300 rounded text-xs border border-emerald-500/30 flex items-center gap-1">
+                                                    <span className="font-medium">👤 Face Detailer:</span>
+                                                    <span className="text-emerald-200 font-mono">
+                                                        {metadata.adetailerModel || "Active"}
+                                                        {metadata.adetailerDenoise !== undefined && metadata.adetailerDenoise !== null ? ` • Denoise ${metadata.adetailerDenoise}` : ''}
+                                                    </span>
+                                                </span>
+                                            )}
+                                            {metadata.enableFreeU && (
+                                                <span className="px-2 py-1 bg-indigo-500/20 text-indigo-300 rounded text-xs border border-indigo-500/30 font-medium">
+                                                    FreeU
+                                                </span>
+                                            )}
+                                            {metadata.enablePAG && (
+                                                <span className="px-2 py-1 bg-pink-500/20 text-pink-300 rounded text-xs border border-pink-500/30 font-medium">
+                                                    PAG ({metadata.pagScale ?? 3.0})
+                                                </span>
+                                            )}
+                                        </div>
+                                    </div>
+                                )}
+
                                 {/* Prompts */}
                                 <div>
                                     <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Prompt</h4>

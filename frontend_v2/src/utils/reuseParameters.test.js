@@ -21,6 +21,15 @@ describe('buildGeneratorStateFromMetadata', () => {
             checkpoint: 'model_xl.safetensors',
             loras: [{ name: 'detail_lora.safetensors', weight: 0.8 }],
             controlnets: [{ control_net_name: 'lineart.safetensors', input: 'line.png', weight: 0.7 }],
+            ipAdapters: [{ model: 'ip-adapter_sdxl.safetensors', clipVision: 'clip_vision.safetensors', weight: 0.85, stopAt: 0.9 }],
+            hiresFix: true,
+            hiresUpscaler: 'Latent',
+            hiresUpscale: 1.5,
+            hiresDenoise: 0.5,
+            hiresSteps: 15,
+            enableFreeU: true,
+            enablePAG: true,
+            pagScale: 2.5,
             batchSize: 2,
         });
 
@@ -52,6 +61,23 @@ describe('buildGeneratorStateFromMetadata', () => {
                 preprocessor: 'None',
             },
         ]);
+        expect(updates.ipAdapters).toEqual([
+            {
+                model: 'ip-adapter_sdxl.safetensors',
+                clipVision: 'clip_vision.safetensors',
+                weight: 0.85,
+                stopAt: 0.9,
+                image: null,
+            },
+        ]);
+        expect(updates.hiresFix).toBe(true);
+        expect(updates.hiresUpscaler).toBe('Latent');
+        expect(updates.hiresUpscale).toBe(1.5);
+        expect(updates.hiresDenoise).toBe(0.5);
+        expect(updates.hiresSteps).toBe(15);
+        expect(updates.enableFreeU).toBe(true);
+        expect(updates.enablePAG).toBe(true);
+        expect(updates.pagScale).toBe(2.5);
     });
 
     it('extracts reusable params from workflow when top-level metadata is incomplete', () => {
@@ -114,6 +140,35 @@ describe('buildGeneratorStateFromMetadata', () => {
                         latent_image: ['8', 0],
                     },
                 },
+                '10': {
+                    class_type: 'IPAdapterModelLoader',
+                    inputs: { ipadapter_file: 'ip-adapter-plus.safetensors' },
+                },
+                '11': {
+                    class_type: 'CLIPVisionLoader',
+                    inputs: { clip_name: 'clip_vision_g.safetensors' },
+                },
+                '12': {
+                    class_type: 'IPAdapterApply',
+                    inputs: {
+                        ipadapter: ['10', 0],
+                        clip_vision: ['11', 0],
+                        weight: 0.8,
+                        end_at: 0.95,
+                    },
+                },
+                '13': {
+                    class_type: 'LatentUpscaleBy',
+                    inputs: { scale_by: 1.5 },
+                },
+                '14': {
+                    class_type: 'FreeU',
+                    inputs: {},
+                },
+                '15': {
+                    class_type: 'PerturbedAttentionGuidance',
+                    inputs: { scale: 3.5 },
+                },
             },
         };
 
@@ -141,16 +196,33 @@ describe('buildGeneratorStateFromMetadata', () => {
                 preprocessor: 'None',
             },
         ]);
+        expect(updates.ipAdapters).toEqual([
+            {
+                model: 'ip-adapter-plus.safetensors',
+                clipVision: 'clip_vision_g.safetensors',
+                weight: 0.8,
+                stopAt: 0.95,
+                image: null,
+            },
+        ]);
+        expect(updates.hiresFix).toBe(true);
+        expect(updates.hiresUpscaler).toBe('Latent');
+        expect(updates.hiresUpscale).toBe(1.5);
+        expect(updates.enableFreeU).toBe(true);
+        expect(updates.enablePAG).toBe(true);
+        expect(updates.pagScale).toBe(3.5);
     });
 
-    it('retains explicit empty loras/controlnets to clear previous state', () => {
+    it('retains explicit empty loras/controlnets/ipAdapters to clear previous state', () => {
         const updates = buildGeneratorStateFromMetadata({
             loras: [],
             controlnets: [],
+            ipAdapters: [],
         });
 
         expect(updates.selectedLoras).toEqual([]);
         expect(updates.controlnets).toEqual([]);
+        expect(updates.ipAdapters).toEqual([]);
     });
 
     it('returns empty updates for invalid metadata payloads', () => {

@@ -82,12 +82,18 @@ const IPAdapterSection = memo(function IPAdapterSection({
                                     <div className="space-y-1.5">
                                         <div className="flex justify-between items-center px-1">
                                             <label className="text-2xs font-bold text-pink-400 uppercase tracking-widest">Weight</label>
-                                            <span className="text-2xs text-gray-400 font-mono">{Number(ip.weight).toFixed(2)}</span>
+                                            <input
+                                                type="number"
+                                                step="0.05"
+                                                value={ip.weight}
+                                                onChange={(e) => updateIpAdapter(index, 'weight', parseFloat(e.target.value) || 0)}
+                                                className="w-16 px-1.5 py-0.5 text-xs text-center font-mono bg-black/40 text-pink-300 rounded border border-white/10 focus:border-pink-500 focus:outline-none"
+                                            />
                                         </div>
                                         <input
                                             type="range"
                                             min="0" max="2" step="0.05"
-                                            value={ip.weight}
+                                            value={Math.max(0, Math.min(2, typeof ip.weight === 'number' ? ip.weight : (parseFloat(ip.weight) || 1.0)))}
                                             onChange={(e) => updateIpAdapter(index, 'weight', parseFloat(e.target.value))}
                                             className="w-full accent-pink-500"
                                         />

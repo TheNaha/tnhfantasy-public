@@ -40,7 +40,7 @@ export default function ModelFilterBar({
       </div>
 
       {/* Sort and Filter */}
-      <div className="flex gap-2 flex-wrap">
+      <div className="flex gap-2 flex-wrap items-center">
         <div className="flex items-center gap-2 w-full sm:w-auto flex-wrap">
           <select
             value={sortBy?.startsWith('random') ? 'random' : sortBy}
@@ -54,10 +54,11 @@ export default function ModelFilterBar({
                 }
                 onSortChange(val);
             }}
-            className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-blue-500"
+            className="bg-gray-800 border border-gray-700 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-blue-500 flex-1 sm:flex-none"
           >
             <option value="name">Sort: Name</option>
-            <option value="date">Sort: Date</option>
+            <option value="date_added">Sort: Date Added</option>
+            <option value="date_updated">Sort: Date Updated</option>
             <option value="size">Sort: Size</option>
             <option value="rating">Sort: Rating</option>
             <option value="random">Sort: Random</option>
@@ -96,7 +97,7 @@ export default function ModelFilterBar({
         <select
           value={filterBaseModel}
           onChange={(e) => onFilterBaseModelChange(e.target.value)}
-          className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-blue-500"
+          className="bg-gray-800 border border-gray-700 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-blue-500 flex-1 sm:flex-none"
         >
           <option value="all">All Base Models</option>
           <option value="SD 1.5">SD 1.5</option>
@@ -114,7 +115,7 @@ export default function ModelFilterBar({
         <select
           value={filterType}
           onChange={(e) => onFilterTypeChange(e.target.value)}
-          className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-blue-500"
+          className="bg-gray-800 border border-gray-700 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-blue-500 flex-1 sm:flex-none"
         >
           <option value="all">All Types</option>
           <option value="Checkpoint">Checkpoint</option>
@@ -122,7 +123,7 @@ export default function ModelFilterBar({
           <option value="TextualInversion">Embedding</option>
         </select>
 
-        <label className="flex items-center gap-2 bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-white cursor-pointer hover:border-blue-500">
+        <label className="flex items-center gap-2 bg-gray-800 border border-gray-700 rounded-lg px-2.5 py-1.5 text-xs text-white cursor-pointer hover:border-blue-500 shrink-0">
           <input
             type="checkbox"
             checked={showNSFW}

@@ -85,7 +85,7 @@ const TriggerBox = memo(function TriggerBox({
 
             {/* Version Dropdown */}
             {showVersionDropdown && (
-              <div className="absolute z-50 top-full mt-1 right-0 min-w-[280px] bg-gray-800 border border-gray-700 rounded-lg shadow-xl overflow-hidden">
+              <div className="absolute z-50 top-full mt-1 right-0 min-w-[260px] sm:min-w-[280px] max-w-[calc(100vw-2rem)] bg-gray-800 border border-gray-700 rounded-lg shadow-xl overflow-hidden">
                 <div className="p-2 border-b border-gray-700 flex justify-between items-center">
                   <span className="text-xs text-gray-400 font-medium">Select Version</span>
                   <button

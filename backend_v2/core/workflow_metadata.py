@@ -255,16 +255,63 @@ def derive_metadata_from_workflow(workflow: dict) -> dict[str, Any]:
     if controlnets:
         metadata["controlnets"] = controlnets
 
+    # IP-Adapter
+    ip_adapters = []
+    for _node_id, ip_node in _all_nodes(nodes, ["IPAdapterApply"]):
+        ip_inputs = _inputs(ip_node)
+        loader_id = _linked_node_id(ip_inputs.get("ipadapter"))
+        model = None
+        if loader_id and loader_id in nodes:
+            model = _inputs(nodes[loader_id]).get("ipadapter_file")
+        
+        weight = _as_number(ip_inputs.get("weight"))
+        stop_at = _as_number(ip_inputs.get("end_at"))
+        
+        clip_loader_id = _linked_node_id(ip_inputs.get("clip_vision"))
+        clip_vision = None
+        if clip_loader_id and clip_loader_id in nodes:
+            clip_vision = _inputs(nodes[clip_loader_id]).get("clip_name")
+            
+        if isinstance(model, str) and model:
+            ip_adapters.append({
+                "model": model,
+                "clipVision": clip_vision or "",
+                "weight": weight if weight is not None else 1.0,
+                "stopAt": stop_at if stop_at is not None else 1.0,
+            })
+    if ip_adapters:
+        metadata["ipAdapters"] = ip_adapters
+
     # The enhancements. Each one is present in the graph as a node, and
     # absent from the graph as its absence, so the flags can be derived
     # exactly rather than guessed.
     if _all_nodes(nodes, ["FreeU_V2", "FreeU"]):
         metadata["enableFreeU"] = True
-    if _all_nodes(nodes, ["PerturbedAttentionGuidance"]):
+    pag_nodes = _all_nodes(nodes, ["PerturbedAttentionGuidance"])
+    if pag_nodes:
         metadata["enablePAG"] = True
+        pag_scale = _as_number(_inputs(pag_nodes[0][1]).get("scale"))
+        if pag_scale is not None:
+            metadata["pagScale"] = pag_scale
     if _all_nodes(nodes, ["LatentUpscale"]):
         metadata["enableLatentUpscale"] = True
         metadata["hiresFix"] = True
+
+    latent_upscale_nodes = _all_nodes(nodes, ["LatentUpscaleBy"])
+    if latent_upscale_nodes:
+        metadata["hiresFix"] = True
+        metadata["hiresUpscaler"] = "Latent"
+        scale = _as_number(_inputs(latent_upscale_nodes[0][1]).get("scale_by"))
+        if scale is not None:
+            metadata["hiresUpscale"] = scale
+
+    pixel_upscale_nodes = _all_nodes(nodes, ["ImageScaleBy"])
+    if pixel_upscale_nodes:
+        metadata["hiresFix"] = True
+        metadata["hiresUpscaler"] = "Pixel"
+        scale = _as_number(_inputs(pixel_upscale_nodes[0][1]).get("scale_by"))
+        if scale is not None:
+            metadata["hiresUpscale"] = scale
 
     _upscale_id, upscale_node = _first_node(nodes, ["UpscaleModelLoader"])
     if upscale_node is not None:
@@ -273,8 +320,32 @@ def derive_metadata_from_workflow(workflow: dict) -> dict[str, Any]:
             metadata["hiresFix"] = True
             metadata["hiresUpscaler"] = upscale_model
 
-    if _all_nodes(nodes, ["FaceDetailer"]):
+    ksamplers = _all_nodes(nodes, ["KSampler", "KSamplerAdvanced"])
+    if metadata.get("hiresFix") and len(ksamplers) > 1:
+        hires_sampler_inputs = _inputs(ksamplers[-1][1])
+        h_steps = _as_number(hires_sampler_inputs.get("steps"))
+        h_denoise = _as_number(hires_sampler_inputs.get("denoise"))
+        if h_steps is not None:
+            metadata["hiresSteps"] = int(h_steps)
+        if h_denoise is not None:
+            metadata["hiresDenoise"] = h_denoise
+
+    fd_nodes = _all_nodes(nodes, ["FaceDetailer"])
+    if fd_nodes:
         metadata["adetailer"] = True
+        fd_inputs = _inputs(fd_nodes[0][1])
+        fd_steps = _as_number(fd_inputs.get("steps"))
+        fd_denoise = _as_number(fd_inputs.get("denoise"))
+        fd_prompt = fd_inputs.get("wildcard")
+        fd_noise_mask = fd_inputs.get("noise_mask")
+        if fd_steps is not None:
+            metadata["adetailerSteps"] = int(fd_steps)
+        if fd_denoise is not None:
+            metadata["adetailerDenoise"] = fd_denoise
+        if isinstance(fd_prompt, str) and fd_prompt:
+            metadata["adetailerPrompt"] = fd_prompt
+        if fd_noise_mask is not None:
+            metadata["adetailerInpaintMasked"] = bool(fd_noise_mask)
         _bbox_id, bbox_node = _first_node(nodes, ["UltralyticsDetectorProvider"])
         if bbox_node is not None:
             detector = _inputs(bbox_node).get("model_name")

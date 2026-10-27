@@ -101,6 +101,16 @@ describe('LoRA weights', () => {
             .toEqual([{ name: 'style.safetensors', strength: -0.35 }]);
     });
 
+    it('preserves strengths beyond the standard -2..2 slider range (e.g. 3.0 or -2.5)', () => {
+        expect(lorasFromSelectedLoras([
+            { name: 'slider_extreme.safetensors', strength: 3.0 },
+            { name: 'slider_negative.safetensors', strength: -2.5 },
+        ])).toEqual([
+            { filename: 'slider_extreme.safetensors', strength: 3.0 },
+            { filename: 'slider_negative.safetensors', strength: -2.5 },
+        ]);
+    });
+
     it('round-trips a preset weight through the store shape and back', () => {
         const preset = normalizePreset({ loras: [{ filename: 'style.safetensors', strength: 0.65 }] });
         const inStore = lorasToSelectedLoras(preset.loras);

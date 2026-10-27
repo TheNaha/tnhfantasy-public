@@ -85,7 +85,7 @@ const LIMITS = {
     clipSkip: [1, 4],
     batchSize: [1, 16],
     dimension: [64, 4096],
-    strength: [-2, 2],
+    strength: [-100, 100],
 };
 
 export const PRESET_FILE_KIND = 'tnhcomfy.batch-preset';
