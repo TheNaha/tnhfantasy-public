@@ -20,6 +20,8 @@ import toast from 'react-hot-toast';
 const SUPPORTED_PREPROCESSORS = [
     { value: 'None', label: 'None (Raw Image)' },
     { value: 'Canny', label: 'Canny Edge' },
+    { value: 'Depth', label: 'Depth (MiDaS / Depth Anything)' },
+    { value: 'OpenPose', label: 'OpenPose (Body & Face)' },
 ];
 
 const ControlNetSection = memo(function ControlNetSection({

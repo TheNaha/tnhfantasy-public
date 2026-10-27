@@ -6,7 +6,7 @@
  */
 
 import { useRef, useEffect, useState, useCallback } from 'react';
-import { Brush, Eraser, Undo2, Redo2, Trash2 } from 'lucide-react';
+import { Brush, Eraser, Undo2, Redo2, Trash2, ArrowLeftRight } from 'lucide-react';
 
 export default function InpaintCanvas({
     sourceImageUrl,
@@ -256,6 +256,40 @@ export default function InpaintCanvas({
         redrawCanvas();
     }, [sourceWidth, sourceHeight, saveToHistory, onMaskChange, redrawCanvas]);
 
+    // Invert mask (toggle between regenerate and preserve areas)
+    const handleInvert = useCallback(() => {
+        if (!maskCanvasRef.current) return;
+
+        const maskCtx = maskCanvasRef.current.getContext('2d');
+        const imgData = maskCtx.getImageData(0, 0, sourceWidth, sourceHeight);
+        const data = imgData.data;
+
+        for (let i = 0; i < data.length; i += 4) {
+            data[i] = 255 - data[i];
+            data[i + 1] = 255 - data[i + 1];
+            data[i + 2] = 255 - data[i + 2];
+        }
+
+        maskCtx.putImageData(imgData, 0, 0);
+        saveToHistory();
+        exportMask();
+        redrawCanvas();
+    }, [sourceWidth, sourceHeight, saveToHistory, exportMask, redrawCanvas]);
+
+    // Keyboard shortcuts for brush size and undo
+    useEffect(() => {
+        function handleKeyDown(e) {
+            if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+            if (e.key === '[') {
+                setBrushSize((s) => Math.max(5, s - 5));
+            } else if (e.key === ']') {
+                setBrushSize((s) => Math.min(150, s + 5));
+            }
+        }
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, []);
+
     if (!sourceImageUrl) {
         return (
             <div className={`flex items-center justify-center bg-gray-900 rounded-xl border border-gray-700 h-64 ${className}`}>
@@ -327,10 +361,20 @@ export default function InpaintCanvas({
                     </button>
                 </div>
 
+                {/* Invert */}
+                <button
+                    onClick={handleInvert}
+                    className="p-2 bg-gray-800 rounded-lg text-purple-400 hover:text-purple-300 hover:bg-gray-700 transition-colors"
+                    title="Invert mask"
+                    aria-label="Invert mask"
+                >
+                    <ArrowLeftRight size={18} />
+                </button>
+
                 {/* Clear */}
                 <button
                     onClick={handleClear}
-                    className="p-2 bg-gray-800 rounded-lg text-red-400 hover:text-red-300 hover:bg-gray-700"
+                    className="p-2 bg-gray-800 rounded-lg text-red-400 hover:text-red-300 hover:bg-gray-700 transition-colors"
                     title="Clear mask"
                     aria-label="Clear mask"
                 >

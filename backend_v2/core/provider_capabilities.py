@@ -48,6 +48,10 @@ ENHANCEMENT_NODE_CLASSES: dict[str, tuple[str, ...]] = {
     "ipadapter": ("IPAdapterApply", "IPAdapterModelLoader"),
     "grow_mask": ("GrowMask",),
     "feather_mask": ("FeatherMask",),
+    "canny": ("CannyEdgePreprocessor",),
+    "depth": ("MiDaS-DepthMapPreprocessor", "Zoe-DepthMapPreprocessor", "DepthAnythingPreprocessor", "DepthPreprocessor"),
+    "openpose": ("OpenposePreprocessor", "DWPreprocessor"),
+    "tiled_vae": ("VAEDecodeTiled", "VAEDecode"),
 }
 
 # The inputs whose option list is a list of FILE NAMES.

@@ -112,6 +112,10 @@ class GeneratorOptions(BaseModel):
     denoise: float = 0.7
     growMask: int = 0
     maskBlur: int = 0
+    outpaintLeft: int = 0
+    outpaintRight: int = 0
+    outpaintTop: int = 0
+    outpaintBottom: int = 0
     
     # Upscale / Hires Fix
     hiresFix: bool = False
@@ -257,13 +261,39 @@ class WorkflowBuilder:
 
             processed_image = [image_loader, 0]
             if cn.preprocessor == "Canny":
-                canny = self.add_node("CannyEdgePreprocessor", {
-                    "image": [image_loader, 0],
-                    "low_threshold": 100,
-                    "high_threshold": 200,
-                    "resolution": 512
-                })
-                processed_image = [canny, 0]
+                if self._supports("canny") is False:
+                    self._warn_unsupported("canny", "Canny Edge Preprocessor")
+                else:
+                    canny = self.add_node("CannyEdgePreprocessor", {
+                        "image": [image_loader, 0],
+                        "low_threshold": 100,
+                        "high_threshold": 200,
+                        "resolution": 512,
+                    })
+                    processed_image = [canny, 0]
+            elif cn.preprocessor in ("Depth", "DepthAnything", "MiDaS"):
+                if self._supports("depth") is False:
+                    self._warn_unsupported("depth", "Depth Preprocessor")
+                else:
+                    depth = self.add_node("MiDaS-DepthMapPreprocessor", {
+                        "image": [image_loader, 0],
+                        "a": 6.28,
+                        "bg_threshold": 0.1,
+                        "resolution": 512,
+                    })
+                    processed_image = [depth, 0]
+            elif cn.preprocessor in ("OpenPose", "DWPose"):
+                if self._supports("openpose") is False:
+                    self._warn_unsupported("openpose", "OpenPose Preprocessor")
+                else:
+                    openpose = self.add_node("OpenposePreprocessor", {
+                        "image": [image_loader, 0],
+                        "detect_hand": "enable",
+                        "detect_body": "enable",
+                        "detect_face": "enable",
+                        "resolution": 512,
+                    })
+                    processed_image = [openpose, 0]
 
             cn_apply = self.add_node("ControlNetApply", {
                 "conditioning": current_cond,
@@ -541,9 +571,22 @@ class WorkflowBuilder:
             mask_str = self._get_image_str(options.maskImage)
             load_image = [self.add_node("LoadImage", {"image": img_str}), 0]
             load_mask = [self.add_node("LoadImageMask", {"image": mask_str, "channel": "red"}), 0]
-            
+
             processed_mask = load_mask
             grow_by = 0
+
+            # Outpainting: expand boundaries using ImagePadForOutpaint
+            if any((options.outpaintLeft, options.outpaintRight, options.outpaintTop, options.outpaintBottom)):
+                pad_node = self.add_node("ImagePadForOutpaint", {
+                    "image": load_image,
+                    "left": options.outpaintLeft,
+                    "top": options.outpaintTop,
+                    "right": options.outpaintRight,
+                    "bottom": options.outpaintBottom,
+                    "feathering": 40,
+                })
+                load_image = [pad_node, 0]
+                processed_mask = [pad_node, 1]
 
             # Check if GrowMask node is supported or if we should use VAEEncodeForInpaint's native grow_mask_by
             if options.growMask > 0:
@@ -673,7 +716,16 @@ class WorkflowBuilder:
                 "latent_image": final_latent
             }), 0]
 
-        final_image = [self.add_node("VAEDecode", {"samples": final_latent, "vae": current_vae}), 0]
+        # Decode Latents (use VAEDecodeTiled for large or hires outputs when supported)
+        is_large_res = (options.width * options.height) >= (1536 * 1536)
+        if (is_large_res or options.hiresFix) and self._supports("tiled_vae"):
+            final_image = [self.add_node("VAEDecodeTiled", {
+                "samples": final_latent,
+                "vae": current_vae,
+                "tile_size": 512,
+            }), 0]
+        else:
+            final_image = [self.add_node("VAEDecode", {"samples": final_latent, "vae": current_vae}), 0]
 
         if options.adetailer:
             # Both nodes have to exist on the provider: the detailer AND the
