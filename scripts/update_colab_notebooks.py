@@ -101,7 +101,9 @@ try:
         else:
             print("⚡ Single GPU Topology: Managed dynamically via cooperative VRAM Arbiter.")
     else:
-        print("⚠️ WARNING: No CUDA GPU detected! Ensure GPU acceleration is enabled.")
+        print("ℹ️ Operating in CPU Mode (No CUDA GPU detected).")
+        print("   -> Perfect for 'models_only' storage populator / model manager (0 GPU compute units burnt!).")
+        print("   -> (To run image generation or LLMs later, switch runtime to T4/L4/A100 GPU).")
 except Exception as exc:
     print(f"⚠️ PyTorch GPU check notice: {exc}")
 print("=" * 65 + "\\n")
@@ -150,7 +152,7 @@ def build_cell_2_source() -> list[str]:
     code = """#@title 2. ⚙️ Worker Configuration { run: "client" }
 #@markdown Choose your worker mode and networking setup:
 
-WORKER_MODE = "hybrid (all-in-one: image + llm + tts)" #@param ["hybrid (all-in-one: image + llm + tts)", "image (remote_comfy)", "llm (remote_llm)", "tts (remote_tts)"]
+WORKER_MODE = "hybrid (all-in-one: image + llm + tts)" #@param ["hybrid (all-in-one: image + llm + tts)", "image (remote_comfy)", "llm (remote_llm)", "tts (remote_tts)", "models_only (storage populator / model manager - CPU friendly)"]
 TUNNEL_METHOD = "netbird (private mesh VPN)" #@param ["netbird (private mesh VPN)", "cloudflared (free, no setup)", "direct_port (Modal / public IP)"]
 
 #@markdown ---
@@ -180,12 +182,14 @@ NETBIRD_ADMIN_URL = "" #@param {type:"string"}
 #@markdown #### 🌐 TNHComfy Backend Sync (Backend as Single Source of Truth):
 #@markdown Enter your TNHComfy backend URL (e.g. http://100.150.0.1:8002 via NetBird or domain). If left blank, uses local curated catalog:
 BACKEND_URL = "" #@param {type:"string"}
+PROVIDER_ID = "colab_worker" #@param {type:"string"}
 
 #@markdown ---
 #@markdown #### 🔒 Credentials & Private Repository Access:
 #@markdown Enter a GitHub Personal Access Token (PAT) with repo read permissions (or save as GITHUB_TOKEN in Secrets):
 GITHUB_TOKEN = "" #@param {type:"string"}
 HF_TOKEN = "" #@param {type:"string"}
+CIVITAI_TOKEN = "" #@param {type:"string"}
 
 #@markdown ---
 #@markdown #### ⚡ Model Storage & Download Strategy:
@@ -231,9 +235,15 @@ NETBIRD_SETUP_KEY = resolve_secret("NETBIRD_SETUP_KEY", NETBIRD_SETUP_KEY)
 NETBIRD_MANAGEMENT_URL = resolve_secret("NETBIRD_MANAGEMENT_URL", NETBIRD_MANAGEMENT_URL)
 NETBIRD_ADMIN_URL = resolve_secret("NETBIRD_ADMIN_URL", NETBIRD_ADMIN_URL)
 BACKEND_URL = resolve_secret("BACKEND_URL", BACKEND_URL)
+PROVIDER_ID = resolve_secret("PROVIDER_ID", PROVIDER_ID)
 HF_TOKEN = resolve_secret("HF_TOKEN", HF_TOKEN)
+CIVITAI_TOKEN = resolve_secret("CIVITAI_TOKEN", CIVITAI_TOKEN)
 if HF_TOKEN:
     os.environ["HF_TOKEN"] = HF_TOKEN
+if CIVITAI_TOKEN:
+    os.environ["CIVITAI_TOKEN"] = CIVITAI_TOKEN
+if PROVIDER_ID:
+    os.environ["PROVIDER_ID"] = PROVIDER_ID
 
 def _mask_sec(s):
     if not s:
@@ -254,11 +264,15 @@ print(f"• RP Model: {LLM_RP_MODEL}")
 print(f"• Util Model: {LLM_UTIL_MODEL}")
 print(f"• GITHUB_TOKEN: {_mask_sec(GITHUB_TOKEN)}")
 print(f"• HF_TOKEN: {_mask_sec(HF_TOKEN)}")
+if CIVITAI_TOKEN:
+    print(f"• CIVITAI_TOKEN: {_mask_sec(CIVITAI_TOKEN)}")
 print(f"• NETBIRD_SETUP_KEY: {_mask_sec(NETBIRD_SETUP_KEY)}")
 if NETBIRD_MANAGEMENT_URL:
     print(f"• NetBird Management: {NETBIRD_MANAGEMENT_URL}")
 if BACKEND_URL:
     print(f"• Backend Sync: {BACKEND_URL} (Sole source of truth for active models)")
+if PROVIDER_ID:
+    print(f"• Provider ID: {PROVIDER_ID}")
 if os.path.exists(GDRIVE_COMFY_PATH):
     print(f"• Google Drive ComfyUI: {GDRIVE_COMFY_PATH} [VERIFIED PRESENT]")
 else:
@@ -398,7 +412,12 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 # Set PyTorch CUDA memory allocator to reduce fragmentation during multi-task workflows
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
-mode_key = "hybrid" if "hybrid" in WORKER_MODE else ("model" if "image" in WORKER_MODE else ("llm" if "llm" in WORKER_MODE else "tts"))
+mode_key = (
+    "storage" if ("storage" in WORKER_MODE or "models_only" in WORKER_MODE)
+    else ("hybrid" if "hybrid" in WORKER_MODE
+    else ("model" if "image" in WORKER_MODE
+    else ("llm" if "llm" in WORKER_MODE else "tts")))
+)
 tunnel_key = "netbird" if "netbird" in TUNNEL_METHOD else "cloudflared"
 
 print(f"📦 Setting up environment for {WORKER_MODE} via {TUNNEL_METHOD}...")
@@ -649,7 +668,23 @@ agent_dir = os.path.join(WORKSPACE_ROOT, "tnhcomfy", "remote_agent")
 collected_reqs = [f"{agent_dir}/requirements.txt"]
 extra_packages = []
 
-if mode_key in ("model", "hybrid", "tts"):
+if mode_key == "storage":
+    print("📂 Storage Populator & Model Manager mode active (CPU-friendly, 0 GPU CU).")
+    comfy_dir = GDRIVE_COMFY_PATH.strip() if os.path.exists(GDRIVE_COMFY_PATH.strip()) else os.path.join(WORKSPACE_ROOT, "comfyui")
+    os.makedirs(comfy_dir, exist_ok=True)
+    models_base = os.path.join(comfy_dir, "models")
+    model_dirs = [
+        "checkpoints", "loras", "vae", "controlnet", "unet", "clip",
+        "upscale_models", "embeddings", "hypernetworks", "aesthetics",
+        "poses", "wildcards"
+    ]
+    for d in model_dirs:
+        os.makedirs(os.path.join(models_base, d), exist_ok=True)
+    llm_dir = GDRIVE_LLM_PATH.strip() if os.path.exists(GDRIVE_LLM_PATH.strip()) else os.path.join(WORKSPACE_ROOT, "tnhcomfy", "llm_models")
+    os.makedirs(llm_dir, exist_ok=True)
+    print(f"✅ Storage directories verified at {models_base} and {llm_dir}")
+    extra_packages = ["pysocks", "psutil", "huggingface_hub"]
+elif mode_key in ("model", "hybrid", "tts"):
     comfy_dir = os.path.join(WORKSPACE_ROOT, "ComfyUI")
     gdrive_path = GDRIVE_COMFY_PATH.strip()
     
@@ -1131,7 +1166,12 @@ import uuid
 import ssl
 from IPython.display import display, HTML
 
-mode_key = "hybrid" if "hybrid" in WORKER_MODE else ("model" if "image" in WORKER_MODE else ("llm" if "llm" in WORKER_MODE else "tts"))
+mode_key = (
+    "storage" if ("storage" in WORKER_MODE or "models_only" in WORKER_MODE)
+    else ("hybrid" if "hybrid" in WORKER_MODE
+    else ("model" if "image" in WORKER_MODE
+    else ("llm" if "llm" in WORKER_MODE else "tts")))
+)
 tunnel_key = "netbird" if "netbird" in TUNNEL_METHOD else "cloudflared"
 policy_key = "auto" if "auto" in CONCURRENCY_POLICY else ("exclusive" if "exclusive" in CONCURRENCY_POLICY else ("semi_concurrent" if "semi_concurrent" in CONCURRENCY_POLICY else "concurrent"))
 # 0. Persistent Storage & Multi-GPU Topology
@@ -1254,7 +1294,7 @@ log_comfy = os.path.join(WORKSPACE_ROOT, "comfyui.log")
 log_agent = os.path.join(WORKSPACE_ROOT, "agent.log")
 log_llm = os.path.join(WORKSPACE_ROOT, "llama_server.log")
 comfy_port = 8188
-agent_port = 8001 if mode_key in ("model", "hybrid") else (8003 if mode_key == "llm" else 8002)
+agent_port = 8001 if mode_key in ("model", "hybrid", "storage") else (8003 if mode_key == "llm" else 8002)
 llm_port = 8003
 
 # 2. Networking Setup (Connect NetBird VPN Mesh First)
@@ -2396,8 +2436,8 @@ worker_procs = {}
 
 def start_remote_agent():
     print(f"🚀 Starting Remote Storage Agent on :{agent_port} (DATA_DIR={comfy_dir})...")
-    agent_work_mode = "hybrid" if mode_key == "hybrid" else mode_key
-    data_path = comfy_dir if mode_key in ("hybrid", "model") else os.path.join(WORKSPACE_ROOT, "agent-data", "llm" if mode_key == "llm" else "tts")
+    agent_work_mode = "hybrid" if mode_key == "hybrid" else ("storage" if mode_key == "storage" else mode_key)
+    data_path = comfy_dir if mode_key in ("hybrid", "model", "storage") else os.path.join(WORKSPACE_ROOT, "agent-data", "llm" if mode_key == "llm" else "tts")
     os.makedirs(data_path, exist_ok=True)
     env_agent = dict(
         os.environ,
@@ -2405,6 +2445,11 @@ def start_remote_agent():
         WORKER_MODE=agent_work_mode,
         PORT=str(agent_port),
         HOST="127.0.0.1",
+        BACKEND_URL=BACKEND_URL.strip() if ("BACKEND_URL" in locals() and BACKEND_URL) else "",
+        PROVIDER_ID=PROVIDER_ID.strip() if ("PROVIDER_ID" in locals() and PROVIDER_ID) else "colab_worker",
+        CIVITAI_TOKEN=CIVITAI_TOKEN.strip() if ("CIVITAI_TOKEN" in locals() and CIVITAI_TOKEN) else os.environ.get("CIVITAI_TOKEN", ""),
+        HF_TOKEN=HF_TOKEN.strip() if ("HF_TOKEN" in locals() and HF_TOKEN) else os.environ.get("HF_TOKEN", ""),
+        LLM_DATA_DIR=GDRIVE_LLM_PATH.strip() if ("GDRIVE_LLM_PATH" in locals() and GDRIVE_LLM_PATH) else "/content/drive/MyDrive/tnhcomfy/llm_models",
         LLM_UPSTREAM_BASE=f"http://127.0.0.1:{llm_port}/v1",
         RAM_CACHE_DIR="/dev/shm/tnh_ram_cache",
         RAM_CACHE_BUDGET_GB="40" if enable_ram_cache else "0",
@@ -2649,9 +2694,10 @@ if mode_key in ("hybrid", "llm"):
     t_llm.start()
     active_threads.append(t_llm)
 
-t_laya = threading.Thread(target=launch_laya_track, daemon=True)
-t_laya.start()
-active_threads.append(t_laya)
+if mode_key != "storage":
+    t_laya = threading.Thread(target=launch_laya_track, daemon=True)
+    t_laya.start()
+    active_threads.append(t_laya)
 
 # Asynchronous Tier 2 Background Sync (populates local NVMe cache while ComfyUI is live)
 if mode_key in ("hybrid", "model"):
@@ -2776,8 +2822,8 @@ if tunnel_key == "cloudflared":
         print("⚠️ Could not extract Cloudflare URL; check /content/cloudflared.log.")
 
 # 8. Worker Credentials & Visual Banner with Live Stream Box
-provider_category = "Hybrid" if mode_key == "hybrid" else ("Image" if mode_key == "model" else ("LLM" if mode_key == "llm" else "TTS"))
-provider_type = "remote_hybrid" if mode_key == "hybrid" else ("remote_comfy" if mode_key == "model" else ("remote_llm" if mode_key == "llm" else "remote_tts"))
+provider_category = "Hybrid" if mode_key == "hybrid" else ("Storage" if mode_key == "storage" else ("Image" if mode_key == "model" else ("LLM" if mode_key == "llm" else "TTS")))
+provider_type = "remote_hybrid" if mode_key == "hybrid" else ("remote_comfy" if mode_key in ("model", "storage") else ("remote_llm" if mode_key == "llm" else "remote_tts"))
 
 if tunnel_key == "netbird" and assigned_ip:
     base_endpoint = f"http://{assigned_ip}"
@@ -2820,6 +2866,9 @@ if mode_key == "hybrid":
             <div style="font-family: monospace; font-size: 14px; color: #f59e0b; margin-top: 2px;">{policy_key}</div>
         </div>
     '''
+elif mode_key == "storage":
+    rows_html += _credential_row("Remote Storage Agent URL (agent_url)", agent_endpoint)
+    rows_html += _credential_row("Google Drive Storage Root", GDRIVE_COMFY_PATH)
 elif mode_key == "model":
     rows_html += _credential_row("ComfyUI Server URL (comfy_url)", comfy_endpoint)
     rows_html += _credential_row("Remote Storage Agent URL (agent_url)", agent_endpoint)
@@ -2844,18 +2893,21 @@ rows_html += _credential_row("Remote Agent Token (agent_token)", agent_token, co
 provider_type = {
     "hybrid": "remote_hybrid",
     "model": "remote_comfy",
+    "storage": "remote_comfy",
     "llm": "remote_llm",
     "tts": "remote_tts",
 }.get(mode_key, "remote_hybrid")
 provider_worker_type = {
     "hybrid": "hybrid",
     "model": "image",
+    "storage": "image",
     "llm": "llm",
     "tts": "tts",
 }.get(mode_key, "hybrid")
 provider_capabilities = {
     "hybrid": ["image", "llm", "tts"],
     "model": ["image"],
+    "storage": [],
     "llm": ["llm"],
     "tts": ["tts"],
 }.get(mode_key, ["image", "llm", "tts"])
@@ -2872,6 +2924,9 @@ if mode_key == "hybrid":
         "concurrency_policy": policy_key,
     }
     provider_credentials = {"agent_token": agent_token}
+elif mode_key == "storage":
+    provider_config = {"agent_url": agent_endpoint, "remote_agent_url": agent_endpoint}
+    provider_credentials = {"remote_agent_token": agent_token}
 elif mode_key == "model":
     provider_config = {"comfy_url": comfy_endpoint, "remote_agent_url": agent_endpoint}
     provider_credentials = {"remote_agent_token": agent_token}
@@ -2883,7 +2938,10 @@ else:
     provider_credentials = {"agent_token": agent_token}
 
 # A stable id, so a re-run updates rather than duplicates.
-provider_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"tnhcomfy-remote-{mode_key}-{agent_endpoint}"))
+provider_id = (
+    PROVIDER_ID.strip() if ("PROVIDER_ID" in locals() and PROVIDER_ID.strip())
+    else str(uuid.uuid5(uuid.NAMESPACE_URL, f"tnhcomfy-remote-{mode_key}-{agent_endpoint}"))
+)
 
 def _register_provider():
     # Create or update this worker's provider row on the backend.
@@ -3156,7 +3214,7 @@ def build_cell_6_source() -> list[str]:
     code = """#@title 6. 📥 (Optional) Live Models-in-RAM Dashboard & Model Manager
 #@markdown Manage, view high-speed RAM cache residency, or pre-warm models on the fly:
 
-OPERATION = "📊 View Models-in-RAM Dashboard & Status" #@param ["📊 View Models-in-RAM Dashboard & Status", "⚡ Pre-Warm Model into RAM Cache", "🧹 Evict Model from RAM Cache", "📥 Download Model from URL", "🔍 List Checkpoints in Persistent Storage"]
+OPERATION = "📊 View Models-in-RAM Dashboard & Status" #@param ["📊 View Models-in-RAM Dashboard & Status", "⚡ Pre-Warm Model into RAM Cache", "🧹 Evict Model from RAM Cache", "📥 Download Model from URL", "🔍 List Checkpoints in Persistent Storage", "🔄 Trigger Backend Reconciliation (Bulk Download to Provider)", "📥 Direct Bulk Download from Backend Manifest to Drive"]
 MODEL_OR_CHECKPOINT_FILTER = "" #@param {type:"string"}
 DOWNLOAD_TARGET = "ComfyUI Checkpoint" #@param ["ComfyUI Checkpoint", "ComfyUI LoRA", "ComfyUI VAE", "LLM GGUF Model"]
 DOWNLOAD_URL = "" #@param {type:"string"}
@@ -3167,6 +3225,9 @@ import sys
 import time
 import shutil
 import subprocess
+import json
+import urllib.request
+import urllib.error
 from IPython.display import display, HTML
 
 is_modal = os.path.exists("/mnt/data") or ("MODAL_ENVIRONMENT" in os.environ)
@@ -3340,6 +3401,128 @@ elif OPERATION == "📥 Download Model from URL":
             print("⚠️ Download was empty or failed.")
     else:
         print("Please enter a valid DOWNLOAD_URL.")
+
+elif OPERATION == "🔄 Trigger Backend Reconciliation (Bulk Download to Provider)":
+    api_base = (BACKEND_URL.strip() if "BACKEND_URL" in locals() and BACKEND_URL else "").rstrip("/")
+    if not api_base:
+        print("⚠️ BACKEND_URL is not set. Please configure BACKEND_URL in Cell 2 to trigger reconciliation.")
+    else:
+        pid = (PROVIDER_ID.strip() if "PROVIDER_ID" in locals() and PROVIDER_ID.strip() else locals().get("provider_id", "colab_worker"))
+        print(f"🔄 Triggering model reconciliation on backend ({api_base}) for provider '{pid}'...")
+        reconcile_url = f"{api_base}/api/v2/providers/{pid}/reconcile?force=true&quick_sync=false"
+        try:
+            req = urllib.request.Request(reconcile_url, data=b"", headers={"Accept": "application/json"}, method="POST")
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                data = json.loads(resp.read().decode("utf-8", errors="replace"))
+                print(f"🚀 Reconciliation successfully started: {data.get('message', 'Running')}")
+
+            status_url = f"{api_base}/api/v2/providers/{pid}/reconciliation-status"
+            print("⏳ Monitoring reconciliation progress from backend...")
+            last_msg = ""
+            for _ in range(300):
+                time.sleep(3)
+                try:
+                    s_req = urllib.request.Request(status_url, headers={"Accept": "application/json"})
+                    with urllib.request.urlopen(s_req, timeout=10) as s_resp:
+                        s_data = json.loads(s_resp.read().decode("utf-8", errors="replace"))
+                        cur_status = s_data.get("status", "unknown")
+                        phase = s_data.get("phase", "")
+                        msg = s_data.get("message", "")
+                        stats = s_data.get("stats", {})
+                        if msg and msg != last_msg:
+                            print(f"  • [{cur_status.upper()}] Phase: {phase} | {msg}")
+                            last_msg = msg
+                        if cur_status in ("completed", "failed", "idle"):
+                            print(f"\\n🏁 Reconciliation finished with status: {cur_status}!")
+                            if stats:
+                                print(f"  📊 Stats: {stats.get('downloads_completed', 0)} downloaded, {stats.get('total_models', 0)} total models in storage.")
+                            break
+                except Exception as err:
+                    print(f"  ⚠️ Polling update: {err}")
+        except urllib.error.HTTPError as http_err:
+            err_body = http_err.read().decode("utf-8", errors="replace")
+            print(f"❌ Backend returned HTTP {http_err.code}: {err_body}")
+        except Exception as exc:
+            print(f"❌ Failed to trigger reconciliation: {exc}")
+
+elif OPERATION == "📥 Direct Bulk Download from Backend Manifest to Drive":
+    api_base = (BACKEND_URL.strip() if "BACKEND_URL" in locals() and BACKEND_URL else "").rstrip("/")
+    if not api_base:
+        print("⚠️ BACKEND_URL is not set. Please configure BACKEND_URL in Cell 2 to sync from backend.")
+    else:
+        pid = (PROVIDER_ID.strip() if "PROVIDER_ID" in locals() and PROVIDER_ID.strip() else locals().get("provider_id", "colab_worker"))
+        manifest_url = f"{api_base}/api/v2/models/sync-manifest?provider_id={pid}"
+        print(f"🔍 Fetching sync manifest from {manifest_url}...")
+        try:
+            m_req = urllib.request.Request(manifest_url, headers={"Accept": "application/json"})
+            with urllib.request.urlopen(m_req, timeout=15) as m_resp:
+                manifest = json.loads(m_resp.read().decode("utf-8", errors="replace"))
+
+            models_to_download = [m for m in manifest.get("models", []) if m.get("needs_download") and m.get("download_url")]
+            print(f"📋 Manifest retrieved: {len(manifest.get('models', []))} total library models, {len(models_to_download)} missing on provider.")
+
+            if not models_to_download:
+                print("🎉 All library models are already present on provider storage!")
+            else:
+                total_mb = sum((m.get("size_kb") or 0) / 1024 for m in models_to_download)
+                print(f"📦 Starting high-speed download of {len(models_to_download)} models ({total_mb:.1f} MB total)...\\n")
+
+                gdrive_comfy = GDRIVE_COMFY_PATH.strip() if "GDRIVE_COMFY_PATH" in locals() and GDRIVE_COMFY_PATH.strip() else "/content/drive/MyDrive/comfyui"
+                civitai_tok = CIVITAI_TOKEN.strip() if "CIVITAI_TOKEN" in locals() and CIVITAI_TOKEN else os.environ.get("CIVITAI_TOKEN", "")
+                hf_tok = HF_TOKEN.strip() if "HF_TOKEN" in locals() and HF_TOKEN else os.environ.get("HF_TOKEN", "")
+
+                downloaded_count = 0
+                failed_count = 0
+                for idx, item in enumerate(models_to_download, 1):
+                    rel_dir = item.get("directory", "checkpoints")
+                    fname = item.get("storage_filename") or item.get("filename")
+                    url = item.get("download_url", "")
+                    target_dir = os.path.join(gdrive_comfy, "models", rel_dir)
+                    os.makedirs(target_dir, exist_ok=True)
+                    dest_file = os.path.join(target_dir, fname)
+
+                    if os.path.exists(dest_file) and os.path.getsize(dest_file) > 10000:
+                        print(f"[{idx}/{len(models_to_download)}] ⏭️ Already exists: {fname}")
+                        downloaded_count += 1
+                        continue
+
+                    print(f"[{idx}/{len(models_to_download)}] 📥 Downloading {item.get('model_name')} -> {rel_dir}/{fname}...")
+
+                    auth_headers = []
+                    if "civitai.com" in url and civitai_tok:
+                        auth_headers = ["-H", f"Authorization: Bearer {civitai_tok}"]
+                    elif "huggingface.co" in url and hf_tok:
+                        auth_headers = ["-H", f"Authorization: Bearer {hf_tok}"]
+
+                    scratch_dir = os.path.join(workspace_root, "tmp_downloads")
+                    os.makedirs(scratch_dir, exist_ok=True)
+                    tmp_dest = os.path.join(scratch_dir, f"{fname}.downloading")
+                    curl_cmd = ["curl", "-fSL", "--connect-timeout", "15", "--retry", "3", "-o", tmp_dest] + auth_headers + [url]
+                    t0 = time.time()
+                    res = subprocess.run(curl_cmd)
+                    if res.returncode == 0 and os.path.exists(tmp_dest) and os.path.getsize(tmp_dest) > 1000:
+                        shutil.move(tmp_dest, dest_file)
+                        sz_mb = os.path.getsize(dest_file) / (1024 * 1024)
+                        dt = max(time.time() - t0, 0.1)
+                        print(f"    ✅ Downloaded {sz_mb:.1f} MB in {dt:.1f}s ({sz_mb/dt:.1f} MB/s)")
+                        downloaded_count += 1
+                    else:
+                        if os.path.exists(tmp_dest):
+                            try: os.remove(tmp_dest)
+                            except Exception: pass
+                        print(f"    ❌ Download failed for {fname}")
+                        failed_count += 1
+
+                print(f"\\n🏁 Bulk download finished: {downloaded_count} succeeded, {failed_count} failed.")
+                print(f"⚡ Notifying backend ({api_base}) with quick-sync...")
+                try:
+                    q_req = urllib.request.Request(f"{api_base}/api/v2/providers/{pid}/reconcile?force=true&quick_sync=true", data=b"", headers={"Accept": "application/json"}, method="POST")
+                    with urllib.request.urlopen(q_req, timeout=15) as q_resp:
+                        print("✅ Backend updated! All new models marked as READY.")
+                except Exception as sync_err:
+                    print(f"⚠️ Quick sync notice: {sync_err}")
+        except Exception as exc:
+            print(f"❌ Failed to fetch manifest: {exc}")
 """
     return [line + "\n" for line in code.split("\n")[:-1]]
 
