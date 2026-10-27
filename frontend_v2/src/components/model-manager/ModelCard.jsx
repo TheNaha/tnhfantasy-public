@@ -12,6 +12,8 @@ function ModelCard({ model, onSelect, source, installedInfo = null }) {
     const optimizedImage = previewImage ? getOptimizedImageUrl(previewImage, 450) : null;
     
     const isInstalled = installedInfo?.model_installed;
+    const totalVersions = model.modelVersions?.length || 1;
+    const installedCount = installedInfo?.version_ids?.length || (isInstalled ? 1 : 0);
 
     return (
         <div
@@ -49,11 +51,18 @@ function ModelCard({ model, onSelect, source, installedInfo = null }) {
                     </div>
                 )}
 
+                {/* Version count badge */}
+                {totalVersions > 1 && !isInstalled && (
+                    <div className="absolute top-3 right-3 bg-black/60 text-gray-300 px-2.5 py-1.5 rounded-full text-2xs font-bold uppercase tracking-wider border border-white/10 shadow-lg backdrop-blur-md">
+                        {totalVersions} Versions
+                    </div>
+                )}
+
                 {/* Installed badge */}
                 {isInstalled && (
                     <div className="absolute top-3 right-3 bg-green-500/20 text-green-400 px-3 py-1.5 rounded-full text-xs font-bold uppercase tracking-widest border border-green-500/30 shadow-lg flex items-center gap-1.5 backdrop-blur-md">
                         <Check size={14} strokeWidth={3} />
-                        Installed
+                        {totalVersions > 1 ? `${installedCount}/${totalVersions} Installed` : 'Installed'}
                     </div>
                 )}
 

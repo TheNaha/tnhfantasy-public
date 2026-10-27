@@ -146,6 +146,33 @@ class ProviderLifecycleService:
             ),
         }
 
+    async def trigger_model_downloads(
+        self,
+        provider_id: str,
+        file_ids: list[str],
+    ) -> dict[str, Any]:
+        provider = await self.provider_service.get_provider(provider_id)
+        runtime = await resolve_provider_runtime_async(provider)
+        if getattr(runtime, "mode", "") != "in_process":
+            raise ProviderError(
+                provider_id,
+                "Model downloads are only available for providers with an reachable in-process engine",
+            )
+        from services.engines.engine_factory import get_engine
+        from services.in_process_reconciliation import trigger_targeted_model_downloads
+
+        engine = get_engine(provider_id, provider)
+        if engine is None:
+            raise ProviderError(provider_id, "No in-process engine available for model download")
+        result = await trigger_targeted_model_downloads(
+            provider_id,
+            file_ids,
+            provider=provider,
+            engine=engine,
+        )
+        self.invalidate_caches(provider_id)
+        return result
+
     async def get_reconciliation_status(self, provider_id: str) -> dict[str, Any]:
         await self.provider_service.get_provider(provider_id)
         persisted_state = await self.provider_service.get_provider_reconciliation_state(provider_id)

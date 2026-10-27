@@ -86,6 +86,25 @@ export const providersApi = {
     reconcile: (providerId) => api.post(`${P}/${providerId}/reconcile?force=true`),
     quickSync: (providerId) => api.post(`${P}/${providerId}/reconcile?force=true&quick_sync=true`),
 
+    /**
+     * Trigger targeted model download for a single provider.
+     * @param {string} providerId
+     * @param {object} payload - { file_ids: string[], model_ids?: string[] }
+     */
+    downloadModels: (providerId, { file_ids = [], model_ids = [] } = {}) =>
+        api.post(`${P}/${providerId}/models/download`, { file_ids, model_ids }),
+
+    /**
+     * Fetch sync manifest for a provider to inspect model statuses and missing items.
+     * @param {string} providerId
+     */
+    getSyncManifest: (providerId = '', options = {}) => {
+        const url = providerId
+            ? `${API_V2_BASE}/models/providers/${providerId}/sync-manifest`
+            : `${API_V2_BASE}/models/sync-manifest`;
+        return api.get(url, options);
+    },
+
     /** Clear persisted provider model sync status to force a clean reconciliation pass. */
     resetModelStatus: (providerId) => api.delete(`${API_V2_BASE}/models/providers/${providerId}/reset-status`),
 

@@ -863,9 +863,223 @@ async def _run_reconciliation(
             logger.warning("reconciler_session_close_failed", provider_id=provider_id, error=str(exc))
 
 
+
 #: Mirror the legacy worker's 2h force-reconcile interval
 #: driven by the app scheduler.
 IN_PROCESS_RECONCILE_INTERVAL_SECONDS = 7200
+
+
+async def trigger_targeted_model_downloads(
+    provider_id: str,
+    file_ids: list[str],
+    *,
+    provider: Any = None,
+    engine: Any = None,
+) -> dict[str, Any]:
+    """Trigger targeted download of specific model files to a provider in the background.
+
+    Unlike full reconciliation, this does not scan the entire filesystem or
+    sweep other directories. It directly queues the selected files for download,
+    emits progress events, and updates provider status.
+    """
+    from api import deps as api_deps
+    from core.entities import ModelFile, ModelVersion, ModelV2
+    from services.engines.engine_factory import get_engine
+    from sqlmodel import select
+
+    if not file_ids:
+        return {"status": "error", "message": "No file_ids provided"}
+
+    resolved_engine = engine or get_engine(provider_id, provider)
+    if resolved_engine is None:
+        return {
+            "status": "failed",
+            "provider_id": provider_id,
+            "message": "No in-process engine available for provider",
+        }
+
+    if not getattr(resolved_engine, "manages_model_files", False):
+        return {
+            "status": "skipped",
+            "provider_id": provider_id,
+            "message": "Provider has no model tree to download into",
+        }
+
+    session = api_deps.get_session_sync()
+    try:
+        stmt = (
+            select(ModelFile, ModelVersion, ModelV2)
+            .join(ModelVersion, ModelFile.version_id == ModelVersion.id)
+            .join(ModelV2, ModelVersion.model_id == ModelV2.id)
+            .where(ModelFile.id.in_(file_ids))  # type: ignore
+        )
+        file_records = session.exec(stmt).all()
+        files_to_download: list[dict[str, Any]] = []
+        for file, version, model in file_records:
+            if not file.download_url:
+                continue
+            files_to_download.append({
+                "file_id": file.id,
+                "model_name": model.name,
+                "version_name": version.name,
+                "directory": model.directory,
+                "storage_filename": file.storage_filename,
+                "storage_path": f"models/{model.directory}/{file.storage_filename}",
+                "download_url": file.download_url,
+                "size_kb": file.size_kb,
+            })
+    finally:
+        session.close()
+
+    if not files_to_download:
+        return {
+            "status": "empty",
+            "provider_id": provider_id,
+            "message": "No downloadable files matched the provided IDs",
+        }
+
+    task = asyncio.create_task(
+        _run_targeted_downloads(provider_id, resolved_engine, provider, files_to_download),
+        name=f"targeted-download:{provider_id}:{len(files_to_download)}",
+    )
+    _RECONCILE_TASKS.add(task)
+    task.add_done_callback(_RECONCILE_TASKS.discard)
+
+    return {
+        "status": "started",
+        "provider_id": provider_id,
+        "queued_count": len(files_to_download),
+        "files": files_to_download,
+    }
+
+
+async def _run_targeted_downloads(
+    provider_id: str,
+    engine: Any,
+    provider: Any,
+    files_to_download: list[dict[str, Any]],
+) -> None:
+    from api import deps as api_deps
+    from core.events import EventType
+
+    session = api_deps.get_session_sync()
+    try:
+        model_service = api_deps.get_model_service_v2(session)
+        concurrency = _max_concurrent_downloads(provider)
+        semaphore = asyncio.Semaphore(concurrency)
+        total = len(files_to_download)
+        token_for = getattr(engine, "download_token_for_url", None)
+
+        async def _download_one(file_info: dict[str, Any], index: int) -> None:
+            file_id = file_info["file_id"]
+            display_name = f"{file_info.get('model_name', 'Unknown')} ({file_info.get('version_name', 'v1')})"
+            storage_path = file_info["storage_path"]
+            download_url = file_info["download_url"]
+
+            async with semaphore:
+                def _mark_downloading() -> None:
+                    _write_provider_status(
+                        model_service,
+                        file_id=file_id,
+                        provider_id=provider_id,
+                        status="downloading",
+                        storage_path=storage_path,
+                        force_create=True,
+                    )
+
+                await asyncio.to_thread(_mark_downloading)
+                await emit_model_status_update(
+                    provider_id=provider_id,
+                    file_id=file_id,
+                    status="downloading",
+                    extra={"storage_path": storage_path},
+                )
+                await emit_model_sync_event(
+                    EventType.MODEL_SYNC_STARTED,
+                    provider_id=provider_id,
+                    file_id=file_id,
+                    model_name=display_name,
+                    directory=file_info.get("directory"),
+                    size_bytes=int((file_info.get("size_kb") or 0) * 1024),
+                    progress=0,
+                )
+
+                try:
+                    token = token_for(download_url) if callable(token_for) else None
+                    await engine.download_file(download_url, storage_path, token)
+
+                    def _mark_ready() -> None:
+                        _write_provider_status(
+                            model_service,
+                            file_id=file_id,
+                            provider_id=provider_id,
+                            status="ready",
+                            storage_path=storage_path,
+                            size_bytes=int((file_info.get("size_kb") or 0) * 1024),
+                            force_create=True,
+                        )
+
+                    await asyncio.to_thread(_mark_ready)
+                    await emit_model_status_update(
+                        provider_id=provider_id,
+                        file_id=file_id,
+                        status="ready",
+                        extra={
+                            "storage_path": storage_path,
+                            "size_bytes": int((file_info.get("size_kb") or 0) * 1024),
+                        },
+                    )
+                    await emit_model_sync_event(
+                        EventType.MODEL_SYNC_COMPLETED,
+                        provider_id=provider_id,
+                        file_id=file_id,
+                        model_name=display_name,
+                        directory=file_info.get("directory"),
+                        size_bytes=int((file_info.get("size_kb") or 0) * 1024),
+                        progress=100,
+                        completed=index + 1,
+                        total=total,
+                    )
+                except Exception as exc:
+                    logger.error(
+                        "targeted_download_failed",
+                        provider_id=provider_id,
+                        file_id=file_id,
+                        error=str(exc),
+                    )
+
+                    def _mark_failed(_err: str = str(exc)) -> None:
+                        _write_provider_status(
+                            model_service,
+                            file_id=file_id,
+                            provider_id=provider_id,
+                            status="failed",
+                            error_message=_err,
+                            force_create=True,
+                        )
+
+                    await asyncio.to_thread(_mark_failed)
+                    await emit_model_status_update(
+                        provider_id=provider_id,
+                        file_id=file_id,
+                        status="failed",
+                        extra={"storage_path": storage_path, "error_message": str(exc)},
+                    )
+                    await emit_model_sync_event(
+                        EventType.MODEL_SYNC_FAILED,
+                        provider_id=provider_id,
+                        file_id=file_id,
+                        model_name=display_name,
+                        directory=file_info.get("directory"),
+                        error=str(exc),
+                    )
+
+        await asyncio.gather(*[_download_one(f, idx) for idx, f in enumerate(files_to_download)])
+    finally:
+        try:
+            session.close()
+        except Exception as exc:
+            logger.warning("targeted_downloads_session_close_failed", error=str(exc))
 
 
 async def run_periodic_in_process_reconciliation() -> dict[str, Any]:
@@ -876,7 +1090,7 @@ async def run_periodic_in_process_reconciliation() -> dict[str, Any]:
     never blocks the next tick.
     """
     from api import deps as api_deps
-    from infrastructure.models.provider import Provider
+    from core.entities import Provider
     from sqlmodel import select
 
     session = api_deps.get_session_sync()

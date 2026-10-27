@@ -15,11 +15,13 @@ from typing import Any
 import httpx
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
+from sqlmodel import Session
 
 from api.deps import (
     get_event_bus,
     get_provider_lifecycle_service,
     get_provider_service,
+    get_session,
 )
 from core.events import Event, EventType, emit_provider_stats
 from core.exceptions import ComfyError, ProviderError, ValidationError
@@ -84,6 +86,46 @@ async def get_reconciliation_status(
         return await lifecycle.get_reconciliation_status(provider_id)
     except httpx.HTTPStatusError as exc:
         raise ProviderError(provider_id, "Failed to get reconciliation status") from exc
+
+
+class DownloadProviderModelsRequest(BaseModel):
+    file_ids: list[str] = []
+    model_ids: list[str] = []
+
+
+@router.post("/{provider_id}/models/download")
+async def download_provider_models(
+    provider_id: str,
+    request: DownloadProviderModelsRequest,
+    lifecycle = Depends(get_provider_lifecycle_service),
+    session: Session = Depends(get_session),
+):
+    """Trigger targeted download of specific model files to a provider."""
+    file_ids = list(request.file_ids)
+    if request.model_ids:
+        from core.entities import ModelFile, ModelVersion
+        from sqlmodel import select
+        stmt = (
+            select(ModelFile.id)
+            .join(ModelVersion, ModelFile.version_id == ModelVersion.id)
+            .where(
+                ModelVersion.model_id.in_(request.model_ids),  # type: ignore
+                ModelVersion.is_enabled == True,
+                ModelFile.download_url != None,
+                ModelFile.download_url != "",
+            )
+        )
+        resolved_file_ids = [fid for fid in session.exec(stmt).all() if fid]
+        file_ids.extend([f for f in resolved_file_ids if f not in file_ids])
+
+    if not file_ids:
+        raise ValidationError("At least one valid file_id or model_id is required")
+
+    try:
+        result = await lifecycle.trigger_model_downloads(provider_id, file_ids)
+    except ProviderError as exc:
+        raise ComfyError(str(exc)) from exc
+    return result
 
 
 class ReconciliationEventRequest(BaseModel):

@@ -10,6 +10,15 @@ import { useDebounce } from '../../hooks/useDebounce';
 
 const SORT_OPTIONS = [['', 'Relevance'], ['Newest', 'Newest'], ['Most Downloaded', 'Downloads'], ['Most Liked', 'Likes']];
 const PERIOD_OPTIONS = [['', 'All Time'], ['Year', 'Year'], ['Month', 'Month'], ['Week', 'Week'], ['Day', 'Day']];
+const QUICK_BASE_MODELS = [
+    { label: 'All Architectures', value: '' },
+    { label: 'Illustrious', value: 'Illustrious' },
+    { label: 'Pony', value: 'Pony' },
+    { label: 'SDXL 1.0', value: 'SDXL 1.0' },
+    { label: 'Flux.1 D', value: 'Flux.1 D' },
+    { label: 'SD 1.5', value: 'SD 1.5' },
+    { label: 'Animagine', value: 'Animagine' },
+];
 
 function MultiSelectDropdown({ label, options, selected, onChange }) {
     const [open, setOpen] = useState(false);
@@ -251,6 +260,44 @@ export default function DiscoverTab() {
                     </button>
                 </div>
             </div>
+
+            {/* Quick Architecture Pills (CivitAI only) */}
+            {source === 'civitai' && (
+                <div className="flex overflow-x-auto no-scrollbar items-center gap-2 pb-1 px-1">
+                    <span className="text-2xs font-bold text-gray-500 uppercase tracking-widest whitespace-nowrap sticky left-0 bg-[#0B0E14] pr-3 z-10 shrink-0">
+                        Base Model
+                    </span>
+                    {QUICK_BASE_MODELS.map(arch => {
+                        const isSelected = arch.value === ''
+                            ? filterBaseModels.length === 0
+                            : filterBaseModels.includes(arch.value);
+                        return (
+                            <button
+                                key={arch.label}
+                                type="button"
+                                onClick={() => {
+                                    if (arch.value === '') {
+                                        setFilterBaseModels([]);
+                                    } else {
+                                        if (filterBaseModels.includes(arch.value)) {
+                                            setFilterBaseModels(filterBaseModels.filter(v => v !== arch.value));
+                                        } else {
+                                            setFilterBaseModels([arch.value]);
+                                        }
+                                    }
+                                }}
+                                className={`shrink-0 whitespace-nowrap px-3.5 py-1.5 rounded-full text-2xs font-bold tracking-wider uppercase transition-all duration-300 shadow-inner ${
+                                    isSelected
+                                        ? 'bg-blue-600/25 border border-blue-500 text-blue-300 shadow-[0_0_10px_rgba(59,130,246,0.3)]'
+                                        : 'bg-[#0B0E14]/80 border border-white/5 text-gray-400 hover:bg-white/5 hover:text-white hover:border-white/10'
+                                }`}
+                            >
+                                {arch.label}
+                            </button>
+                        );
+                    })}
+                </div>
+            )}
 
             {/* Popular Tags & Active Filters (CivitAI only) */}
             {source === 'civitai' && (

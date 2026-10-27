@@ -1477,6 +1477,8 @@ async def list_files_endpoint(
                         "modified_time": model.get("updated_at", 0),
                         # IDs
                         "model_id": model.get("id"),
+                        "file_id": file_info.get("id"),
+                        "version_id": version_fields.get("id"),
                         "civitai_id": civitai_id,
                         # Version info
                         "base_model": version_fields.get("base_model", "") if version_fields else "",

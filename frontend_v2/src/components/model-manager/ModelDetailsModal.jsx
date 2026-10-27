@@ -1,9 +1,9 @@
 import { useState, useMemo } from 'react';
-import { X, AlertCircle, ExternalLink, Wand2, RefreshCw, Plus } from 'lucide-react';
+import { X, AlertCircle, ExternalLink, Wand2, RefreshCw, Plus, Download, Loader2, Check } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import { sanitizeHtml } from '../../utils/sanitize';
-import { api, modelsApi } from '../../api';
+import { api, modelsApi, providersApi } from '../../api';
 import ModalOverlay from '../common/ModalOverlay';
 import CivitaiSearchModal from './CivitaiSearchModal';
 import AutopopulateSelector from './AutopopulateSelector';
@@ -227,6 +227,52 @@ export default function ModelDetailsModal({ file, providers = [], onClose }) {
     // It reads nothing from `file` — the id is passed per call — so hoisting it
     // changes nothing but the hook order.
     const autopopulate = useAutopopulateModel();
+    const [localProviderStatuses, setLocalProviderStatuses] = useState(() => ({ ...(file?.provider_statuses || {}) }));
+    const [syncingProviders, setSyncingProviders] = useState(new Set());
+
+    const compatibleProviders = useMemo(() => {
+        const isLlmFile = file?.path?.startsWith('models/llm') || file?.directory?.startsWith('llm');
+        const active = (providers || []).filter(p => {
+            if (!p.enabled) return false;
+            const servesLlm = p.worker_type === 'llm' || p.worker_type === 'hybrid' || (Array.isArray(p.capabilities) && p.capabilities.includes('llm'));
+            const servesImage = p.worker_type === 'image' || p.worker_type === 'hybrid' || !p.worker_type || (Array.isArray(p.capabilities) && p.capabilities.includes('image'));
+            return isLlmFile ? servesLlm : servesImage;
+        });
+        const ids = new Set(active.map(p => p.id));
+        const combined = [...active];
+        if (file?.provider_statuses) {
+            Object.keys(file.provider_statuses).forEach(pid => {
+                if (!ids.has(pid)) {
+                    combined.push({ id: pid, name: pid });
+                }
+            });
+        }
+        return combined;
+    }, [providers, file]);
+
+    const handleSyncToProvider = async (providerId) => {
+        setSyncingProviders(prev => new Set(prev).add(providerId));
+        try {
+            await providersApi.downloadModels(providerId, {
+                file_ids: file.file_id ? [file.file_id] : [],
+                model_ids: file.model_id ? [file.model_id] : [],
+            });
+            toast.success(`Queued download on ${providerId}`);
+            setLocalProviderStatuses(prev => ({
+                ...prev,
+                [providerId]: { status: 'downloading' }
+            }));
+            invalidateModelLists(queryClient);
+        } catch (err) {
+            toast.error(`Sync failed: ${err.message}`);
+        } finally {
+            setSyncingProviders(prev => {
+                const next = new Set(prev);
+                next.delete(providerId);
+                return next;
+            });
+        }
+    };
     
     if (!file) return null;
 
@@ -545,36 +591,69 @@ export default function ModelDetailsModal({ file, providers = [], onClose }) {
                             )}
 
                             {/* Provider Status */}
-                            {file.provider_statuses && Object.keys(file.provider_statuses).length > 0 && (
+                            {compatibleProviders.length > 0 && (
                                 <div className="mt-6 pt-4 border-t border-gray-800">
-                                    <h3 className="text-sm font-medium text-gray-400 mb-3">Provider Status</h3>
+                                    <div className="flex items-center justify-between mb-3">
+                                        <h3 className="text-sm font-medium text-gray-400">Provider Sync Status</h3>
+                                        <span className="text-2xs text-gray-500 uppercase tracking-wider">
+                                            {compatibleProviders.length} active provider(s)
+                                        </span>
+                                    </div>
                                     <div className="space-y-2">
-                                        {Object.entries(file.provider_statuses)
-                                            .filter(([providerId]) => {
-                                                const p = providers.find(p => p.id === providerId);
-                                                if (!p) return true; // keep if provider info is missing
-                                                const isLlmFile = file.path?.startsWith('models/llm');
-                                                const servesLlm = p.worker_type === 'llm' || p.worker_type === 'hybrid' || (Array.isArray(p.capabilities) && p.capabilities.includes('llm'));
-                                                const servesImage = p.worker_type === 'image' || p.worker_type === 'hybrid' || !p.worker_type || (Array.isArray(p.capabilities) && p.capabilities.includes('image'));
-                                                if (isLlmFile && !servesLlm) return false;
-                                                if (!isLlmFile && !servesImage) return false;
-                                                return true;
-                                            })
-                                            .map(([providerId, statusData]) => {
-                                            const status = typeof statusData === 'object' ? statusData.status : statusData;
+                                        {compatibleProviders.map((provider) => {
+                                            const providerId = provider.id;
+                                            const statusData = localProviderStatuses[providerId];
+                                            const isSyncing = syncingProviders.has(providerId);
+                                            const rawStatus = typeof statusData === 'object' ? statusData.status : statusData;
+                                            const status = isSyncing ? 'downloading' : (rawStatus || 'missing');
+
                                             const colorClass = {
-                                                ready: 'text-green-400 bg-green-500/20 border-green-500/30',
-                                                installed: 'text-green-400 bg-green-500/20 border-green-500/30',
-                                                partial: 'text-amber-400 bg-amber-500/20 border-amber-500/30',
-                                                downloading: 'text-yellow-400 bg-yellow-500/20 border-yellow-500/20',
-                                                pending: 'text-gray-400 bg-gray-500/20 border-gray-500/30',
-                                                failed: 'text-red-400 bg-red-500/20 border-red-500/30'
-                                            }[status] || 'text-gray-400 bg-gray-500/20 border-gray-500/30';
+                                                ready: 'text-green-400 bg-green-500/10 border-green-500/30',
+                                                installed: 'text-green-400 bg-green-500/10 border-green-500/30',
+                                                partial: 'text-amber-400 bg-amber-500/10 border-amber-500/30',
+                                                downloading: 'text-yellow-400 bg-yellow-500/10 border-yellow-500/20',
+                                                pending: 'text-gray-400 bg-gray-500/10 border-gray-500/30',
+                                                failed: 'text-red-400 bg-red-500/10 border-red-500/30',
+                                                missing: 'text-gray-400 bg-gray-800/40 border-gray-700/50'
+                                            }[status] || 'text-gray-400 bg-gray-800/40 border-gray-700/50';
+
+                                            const isReady = status === 'ready' || status === 'installed';
+                                            const isDownloading = status === 'downloading';
 
                                             return (
-                                                <div key={providerId} className={`flex items-center justify-between px-3 py-2 rounded-lg border ${colorClass}`}>
-                                                    <span className="text-sm">{providerId.replace('modal-', '')}</span>
-                                                    <span className="text-xs font-medium capitalize">{status}</span>
+                                                <div key={providerId} className={`flex items-center justify-between p-2.5 rounded-xl border ${colorClass} transition-all`}>
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="text-xs font-semibold text-gray-200">
+                                                            {provider.name || providerId.replace('modal-', '')}
+                                                        </span>
+                                                        <span className="text-2xs font-mono uppercase px-1.5 py-0.2 rounded bg-black/40 text-gray-400">
+                                                            {provider.type || 'worker'}
+                                                        </span>
+                                                    </div>
+
+                                                    <div className="flex items-center gap-2">
+                                                        {isDownloading ? (
+                                                            <span className="inline-flex items-center gap-1 text-xs text-yellow-400 font-medium">
+                                                                <Loader2 size={12} className="animate-spin" />
+                                                                <span>Downloading...</span>
+                                                            </span>
+                                                        ) : isReady ? (
+                                                            <span className="inline-flex items-center gap-1 text-xs text-green-400 font-medium">
+                                                                <Check size={13} strokeWidth={3} />
+                                                                <span>Ready</span>
+                                                            </span>
+                                                        ) : (
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => handleSyncToProvider(providerId)}
+                                                                className="px-2.5 py-1 bg-blue-600/80 hover:bg-blue-500 text-white rounded-lg text-xs font-medium flex items-center gap-1.5 transition-colors shadow-sm active:scale-95"
+                                                                title={`Sync this model to ${providerId}`}
+                                                            >
+                                                                <Download size={12} />
+                                                                <span>Sync to Provider</span>
+                                                            </button>
+                                                        )}
+                                                    </div>
                                                 </div>
                                             );
                                         })}
