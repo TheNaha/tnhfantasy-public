@@ -4,6 +4,7 @@ import atexit
 import base64
 import json
 import time
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -912,12 +913,13 @@ def _validate_dir(target_dir: str, delete_invalid: bool, fast: bool = True) -> D
                 })
                 continue
             if fast:
-                if size < MIN_MODEL_SIZE:
+                min_sz = 512 if "embedding" in rel_path.lower() else MIN_MODEL_SIZE
+                if size < min_sz:
                     validation = {
                         "valid": False,
                         "indeterminate": False,
-                        "error": f"File too small: {size} bytes (min: {MIN_MODEL_SIZE})",
-                        "errors": [f"File too small: {size} bytes (min: {MIN_MODEL_SIZE})"],
+                        "error": f"File too small: {size} bytes (min: {min_sz})",
+                        "errors": [f"File too small: {size} bytes (min: {min_sz})"],
                         "format": name.split(".")[-1] if "." in name else "unknown",
                     }
                 else:

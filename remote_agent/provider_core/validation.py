@@ -16,7 +16,6 @@ MIN_MODEL_SIZE = 10 * 1024
 
 # File signatures that we consider recognized for download validation.
 VALID_FILE_HEADERS = {
-    b'{"__metadata__': "safetensors",
     b"{": "json",
     b"PK": "zip/ckpt",
     b"\x80\x04": "pickle",
@@ -92,12 +91,13 @@ def validate_downloaded_file(
             "error": f"Could not stat file: {exc}",
         }
 
+    min_size = 512 if "embedding" in path.lower() else MIN_MODEL_SIZE
     if total_size > 0 and actual_size != total_size:
         validation_errors.append(f"Size mismatch: expected {total_size}, got {actual_size}")
 
-    if actual_size < MIN_MODEL_SIZE:
+    if actual_size < min_size:
         validation_errors.append(
-            f"File too small: {actual_size} bytes (min: {MIN_MODEL_SIZE})"
+            f"File too small: {actual_size} bytes (min: {min_size})"
         )
 
     detected_format = "unknown"
@@ -114,6 +114,26 @@ def validate_downloaded_file(
                     header_valid = True
                     detected_format = fmt
                     break
+
+            # Safetensors files begin with an 8-byte unsigned little-endian integer (header length N),
+            # followed by a JSON object string starting with '{'.
+            if not header_valid and len(header) >= 9:
+                try:
+                    s_len = struct.unpack("<Q", header[:8])[0]
+                    if 2 <= s_len <= min(100 * 1024 * 1024, max(0, actual_size - 8)) and header[8:9] in (b"{", b" ", b"\t", b"\n", b"\r"):
+                        header_valid = True
+                        detected_format = "safetensors"
+                except Exception:
+                    pass
+
+            if not header_valid and (".safetensors" in os.path.basename(path).lower()) and len(header) >= 8:
+                try:
+                    s_len = struct.unpack("<Q", header[:8])[0]
+                    if 2 <= s_len <= min(100 * 1024 * 1024, max(0, actual_size - 8)):
+                        header_valid = True
+                        detected_format = "safetensors"
+                except Exception:
+                    pass
 
             if header_valid and detected_format == "json":
                 # A JSON body is either a MODEL (some formats ship JSON) or a
@@ -202,8 +222,8 @@ def validate_downloaded_file(
             validation_errors.append(f"Error reading header: {exc}")
             indeterminate = True
 
-    if detected_format == "safetensors" or path.endswith(".safetensors"):
-        if actual_size >= MIN_MODEL_SIZE and not validation_errors:
+    if detected_format == "safetensors" or ".safetensors" in os.path.basename(path).lower():
+        if actual_size >= min_size and not validation_errors:
             try:
                 with open(path, 'rb') as f:
                     header_size_bytes = f.read(8)
@@ -218,6 +238,7 @@ def validate_downloaded_file(
                     header = json.loads(header_bytes)
                     if not isinstance(header, dict):
                         raise ValueError("Header is not a dict")
+                    detected_format = "safetensors"
             except (ValueError, struct.error) as exc:
                 # The bytes were read and do not parse as a safetensors header.
                 # That IS a verdict.
