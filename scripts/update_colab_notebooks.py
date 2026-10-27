@@ -868,31 +868,6 @@ if mode_key in ("model", "hybrid", "tts"):
 
     print("✅ ComfyUI environment & custom nodes are ready.")
 
-# 5. llama-server Setup with Google Drive Persistence (if LLM or Hybrid mode)
-if mode_key in ("llm", "hybrid"):
-    llama_dir = "/usr/local/llama.cpp"
-    target_llama = "/usr/local/bin/llama-server"
-    cached_bundle = f"{gdrive_bin}/llama-cuda12-bundle.tar.gz"
-
-    # Remove stale broken single-binary cache from prior runs
-    legacy_cached = f"{gdrive_bin}/llama-server"
-    if os.path.isfile(legacy_cached) and not os.path.islink(legacy_cached):
-        try:
-            os.remove(legacy_cached)
-        except Exception:
-            pass
-
-    # Test if currently installed llama-server is healthy and can load dynamic libraries
-    llama_ready = False
-    if os.path.exists(target_llama) or shutil.which("llama-server"):
-        try:
-            test_run = subprocess.run([target_llama, "--version"], capture_output=True, text=True, timeout=5)
-            if test_run.returncode == 0:
-                llama_ready = True
-        except Exception:
-            llama_ready = False
-
-
 # ── llama-server: install, LINK and VERIFY ─────────────────────────────────
 # The CUDA release is built for a specific Ubuntu and needs a glibc the
 # container may not have: the b11647 CUDA 12.8 bundle wants GLIBC 2.38, and
@@ -916,8 +891,13 @@ def _llama_can_run(binary_path: str) -> bool:
     if not binary_path or not os.path.exists(binary_path):
         return False
     try:
+        env_probe = dict(os.environ)
+        if "ld_path" in globals() and ld_path:
+            env_probe["LD_LIBRARY_PATH"] = ld_path
+        elif "/usr/local/llama.cpp" not in env_probe.get("LD_LIBRARY_PATH", ""):
+            env_probe["LD_LIBRARY_PATH"] = "/usr/local/llama.cpp:" + env_probe.get("LD_LIBRARY_PATH", "")
         probe = subprocess.run(
-            [binary_path, "--version"], capture_output=True, text=True, timeout=30
+            [binary_path, "--version"], capture_output=True, text=True, timeout=30, env=env_probe
         )
         return probe.returncode == 0
     except Exception:
@@ -1064,6 +1044,23 @@ def _install_llama_server(llama_dir: str, target_llama: str, cached_bundle: str)
             return True
     print("❌ No working llama-server could be installed. LLM requests will fail.")
     return False
+
+# 5. llama-server Setup with Google Drive Persistence (if LLM or Hybrid mode)
+if mode_key in ("llm", "hybrid"):
+    llama_dir = "/usr/local/llama.cpp"
+    target_llama = "/usr/local/bin/llama-server"
+    cached_bundle = f"{gdrive_bin}/llama-cuda12-bundle.tar.gz"
+
+    # Remove stale broken single-binary cache from prior runs
+    legacy_cached = f"{gdrive_bin}/llama-server"
+    if os.path.isfile(legacy_cached) and not os.path.islink(legacy_cached):
+        try:
+            os.remove(legacy_cached)
+        except Exception:
+            pass
+
+    # Test if currently installed llama-server is healthy and can load dynamic libraries
+    llama_ready = _llama_can_run(target_llama)
 
     if not llama_ready:
         _install_llama_server(llama_dir, target_llama, cached_bundle)
@@ -2149,49 +2146,6 @@ def sync_tier2_warm_cache():
     if synced_count > 0:
         print(f"✨ [Tier 2 Background Sync] Warm cache synchronization finished ({synced_count} models cached on NVMe).")
 
-if mode_key in ("hybrid", "llm"):
-    llama_dir = "/usr/local/llama.cpp"
-    target_llama = "/usr/local/bin/llama-server"
-    gdrive_bin = os.path.join(gdrive_root, "bin")
-    cached_bundle = os.path.join(gdrive_bin, "llama-cuda12-bundle.tar.gz")
-
-    # 1. Discover all candidate CUDA runtime library directories
-    cuda_dirs = [
-        llama_dir,
-        "/usr/local/lib",
-        "/usr/local/cuda/lib64",
-        "/usr/local/cuda-12/lib64",
-        "/usr/local/cuda-12.8/lib64",
-        "/usr/local/cuda-12.6/lib64",
-        "/usr/local/cuda-12.5/lib64",
-        "/usr/local/cuda-12.4/lib64",
-        "/usr/local/cuda-12.2/lib64",
-        "/usr/lib64-nvidia",
-        "/usr/lib/x86_64-linux-gnu",
-    ]
-    import glob
-    for pat in [
-        "/usr/local/lib/python*/dist-packages/nvidia/*/lib",
-        "/usr/lib/python*/dist-packages/nvidia/*/lib",
-        f"{sys.prefix}/lib/python*/dist-packages/nvidia/*/lib",
-    ]:
-        cuda_dirs.extend(glob.glob(pat))
-    cuda_dirs = [p for p in list(dict.fromkeys(cuda_dirs)) if os.path.isdir(p)]
-
-    # 2. Check if libcudart and libcublas exist; if not, auto-install pip wheels
-    has_cudart = any(os.path.exists(os.path.join(d, "libcudart.so.12")) for d in cuda_dirs)
-    has_cublas = any(os.path.exists(os.path.join(d, "libcublas.so.12")) for d in cuda_dirs)
-    if not (has_cudart and has_cublas):
-        print("⚡ Installing CUDA runtime wheels for llama.cpp acceleration...")
-        subprocess.run([sys.executable, "-m", "pip", "install", "--quiet", "nvidia-cuda-runtime-cu12", "nvidia-cublas-cu12"], check=False)
-        for pat in [
-            "/usr/local/lib/python*/dist-packages/nvidia/*/lib",
-            f"{sys.prefix}/lib/python*/dist-packages/nvidia/*/lib",
-        ]:
-            cuda_dirs.extend(glob.glob(pat))
-        cuda_dirs = [p for p in list(dict.fromkeys(cuda_dirs)) if os.path.isdir(p)]
-
-
 # ── llama-server: install, LINK and VERIFY ─────────────────────────────────
 # The CUDA release is built for a specific Ubuntu and needs a glibc the
 # container may not have: the b11647 CUDA 12.8 bundle wants GLIBC 2.38, and
@@ -2215,8 +2169,13 @@ def _llama_can_run(binary_path: str) -> bool:
     if not binary_path or not os.path.exists(binary_path):
         return False
     try:
+        env_probe = dict(os.environ)
+        if "ld_path" in globals() and ld_path:
+            env_probe["LD_LIBRARY_PATH"] = ld_path
+        elif "/usr/local/llama.cpp" not in env_probe.get("LD_LIBRARY_PATH", ""):
+            env_probe["LD_LIBRARY_PATH"] = "/usr/local/llama.cpp:" + env_probe.get("LD_LIBRARY_PATH", "")
         probe = subprocess.run(
-            [binary_path, "--version"], capture_output=True, text=True, timeout=30
+            [binary_path, "--version"], capture_output=True, text=True, timeout=30, env=env_probe
         )
         return probe.returncode == 0
     except Exception:
@@ -2363,6 +2322,52 @@ def _install_llama_server(llama_dir: str, target_llama: str, cached_bundle: str)
             return True
     print("❌ No working llama-server could be installed. LLM requests will fail.")
     return False
+
+# 6. llama-server CUDA Runtime & Environment Pre-flight (Hybrid & LLM modes)
+ld_path = os.environ.get("LD_LIBRARY_PATH", "")
+
+if mode_key in ("hybrid", "llm"):
+    llama_dir = "/usr/local/llama.cpp"
+    target_llama = "/usr/local/bin/llama-server"
+    gdrive_bin = os.path.join(gdrive_root, "bin")
+    cached_bundle = os.path.join(gdrive_bin, "llama-cuda12-bundle.tar.gz")
+
+    # 1. Discover all candidate CUDA runtime library directories
+    cuda_dirs = [
+        llama_dir,
+        "/usr/local/lib",
+        "/usr/local/cuda/lib64",
+        "/usr/local/cuda-12/lib64",
+        "/usr/local/cuda-12.8/lib64",
+        "/usr/local/cuda-12.6/lib64",
+        "/usr/local/cuda-12.5/lib64",
+        "/usr/local/cuda-12.4/lib64",
+        "/usr/local/cuda-12.2/lib64",
+        "/usr/lib64-nvidia",
+        "/usr/lib/x86_64-linux-gnu",
+    ]
+    import glob
+    for pat in [
+        "/usr/local/lib/python*/dist-packages/nvidia/*/lib",
+        "/usr/lib/python*/dist-packages/nvidia/*/lib",
+        f"{sys.prefix}/lib/python*/dist-packages/nvidia/*/lib",
+    ]:
+        cuda_dirs.extend(glob.glob(pat))
+    cuda_dirs = [p for p in list(dict.fromkeys(cuda_dirs)) if os.path.isdir(p)]
+
+    # 2. Check if libcudart and libcublas exist; if not, auto-install pip wheels
+    has_cudart = any(os.path.exists(os.path.join(d, "libcudart.so.12")) for d in cuda_dirs)
+    has_cublas = any(os.path.exists(os.path.join(d, "libcublas.so.12")) for d in cuda_dirs)
+    if not (has_cudart and has_cublas):
+        print("⚡ Installing CUDA runtime wheels for llama.cpp acceleration...")
+        subprocess.run([sys.executable, "-m", "pip", "install", "--quiet", "nvidia-cuda-runtime-cu12", "nvidia-cublas-cu12"], check=False)
+        for pat in [
+            "/usr/local/lib/python*/dist-packages/nvidia/*/lib",
+            f"{sys.prefix}/lib/python*/dist-packages/nvidia/*/lib",
+        ]:
+            cuda_dirs.extend(glob.glob(pat))
+        cuda_dirs = [p for p in list(dict.fromkeys(cuda_dirs)) if os.path.isdir(p)]
+
     # 3. Restore, fetch or BUILD llama-server — and verify it can run
     #
     # The install used to be trusted on sight: a cached bundle was restored
@@ -2721,11 +2726,12 @@ if mode_key == "llm":
 # that. A provider that is declared healthy and cannot serve a completion is
 # worse than one that never came up: the failure surfaces much later as a
 # 503, with nothing in the notebook to explain it.
-if mode_key in ("hybrid", "llm") and not _llama_can_run(target_llama):
-    print("❌ llama-server cannot run on this image - LLM requests WILL fail.")
-    print("   (The LLM track is Just-In-Time, so this is the only startup check for it.)")
-else:
-    print("✅ llama-server binary can start on this image.")
+if mode_key in ("hybrid", "llm"):
+    if not _llama_can_run(target_llama):
+        print("❌ llama-server cannot run on this image - LLM requests WILL fail.")
+        print("   (The LLM track is Just-In-Time, so this is the only startup check for it.)")
+    else:
+        print("✅ llama-server binary can start on this image.")
 
 healthy_services = set()
 # The agent launches its llama-servers at IMPORT, before uvicorn starts, so
