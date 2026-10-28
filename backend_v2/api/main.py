@@ -42,6 +42,7 @@ from config import (
     get_job_timeout,
     get_llm_failover_stagger_delay,
 )
+from core.events import CROSS_PROCESS_EVENT_CHANNEL
 
 # Structured logging - use structlog for consistent output
 from infrastructure.logging import configure_logging, get_logger
@@ -107,42 +108,18 @@ async def process_job(job_id: str, preferred_provider_id: str | None = None):
 
 
 def _warn_if_multiple_processes() -> None:
-    """Refuse to start if more than one uvicorn process is configured, and say why.
+    """Warn when more than one uvicorn process is configured.
 
-    Multi-worker is the obvious next step from here — production runs one worker
-    on a 2-CPU limit, and the throughput ceiling is single-process GIL plus the
-    middleware chain (measured ~300 req/s, not the "1x concurrency" an earlier
-    audit claimed; that was a `curl`-spawn artifact). But `--workers N` is not a
-    configuration change here, and this is the list of why:
+    Multi-worker is now supported: job dispatch is safe under `FOR UPDATE
+    SKIP LOCKED`, and WebSocket events cross processes via the Postgres
+    NOTIFY bus (`tnhcomfy_job_events`) — each worker's `WebSocketManager`
+    LISTENs on the channel and re-broadcasts to its local Socket.IO clients.
 
-    * `startup_application` runs `create_db_and_tables()` (every migration, see
-      `infrastructure/migrations/__init__.py`) plus the asset migration, the
-      worker pool, `recover_pending_jobs()`, the APScheduler jobs, the
-      `_PgNotifyListener` and the websocket broadcast — all in this process.
-      Migrations and the scheduler are now advisory-locked so they are no longer
-      *corrupting*, but they still all start N times.
-
-    * Job dispatch IS safe: the claim query is `FOR UPDATE SKIP LOCKED` and now
-      requires `jobs.enqueued_at`, so N workers claim disjoint rows. That part
-      works.
-
-    * The websocket broadcast does not. `ws_manager` is per-process, so a client
-      connected to process A does not receive an event emitted by process B. Job
-      progress would look frozen for roughly the fraction of users on the other
-      worker. Fixing it needs a socket.io message-bus adapter (Redis or Postgres
-      pub/sub) — a real dependency and a real change, not a flag.
-
-    Failing loudly here is the point. A silent `WORKERS=4` would look fine in
-    testing and intermittently drop every realtime update in production, which is
-    far harder to diagnose than a refusal at boot.
+    Boot-time side effects (migrations, scheduler, asset migration, job
+    recovery) still run N times but are advisory-locked and idempotent.
     """
     import multiprocessing
 
-    # `COMFY_UVICORN_WORKERS` is NOT set by compose — not in its `environment:`
-    # block and not in the rendered environment — so an empty or absent value is
-    # the normal state for a single-worker deployment. `int("")` raises, so the
-    # first version logged "unparseable" on every single boot. Strip first and
-    # treat empty as unset, which is what it means.
     requested = (
         os.getenv("COMFY_UVICORN_WORKERS", "").strip()
         or os.getenv("WEB_CONCURRENCY", "").strip()
@@ -161,24 +138,17 @@ def _warn_if_multiple_processes() -> None:
     if workers <= 1:
         return
 
-    logger.error(
-        "multiple_uvicorn_processes_refused",
+    logger.warning(
+        "multiple_uvicorn_processes",
         requested_workers=workers,
         pid=multiprocessing.current_process().pid,
         reason=(
-            "The websocket broadcast, APScheduler jobs and boot-time recovery are "
-            "in-process, so each worker would start its own. Job dispatch is safe "
-            "under FOR UPDATE SKIP LOCKED, but a client connected to one worker "
-            "would not receive events emitted by another. A socket.io message-bus "
-            "adapter is required first. See docs/audit-2026-09-29.md."
+            "Job dispatch is safe under FOR UPDATE SKIP LOCKED. WebSocket "
+            "events cross processes via the Postgres NOTIFY bus "
+            f"({CROSS_PROCESS_EVENT_CHANNEL}). Boot-time side effects "
+            "(migrations, scheduler, recovery) run N times but are "
+            "advisory-locked and idempotent."
         ),
-        required_adapter="python-socketio RedisManager (or a Postgres pub/sub equivalent)",
-    )
-    raise RuntimeError(
-        f"COMFY_UVICORN_WORKERS={workers} is not supported yet: the websocket "
-        "broadcast is in-process, so realtime events would not reach clients on "
-        "other workers. Install a socket.io message-bus adapter first, or set it "
-        "back to 1. See docs/audit-2026-09-29.md."
     )
 
 
@@ -202,6 +172,7 @@ async def lifespan(app: FastAPI):
         ws_manager,
         lifecycle_tasks["provider_monitor_task"],
         lifecycle_tasks["broadcast_task"],
+        lifecycle_tasks.get("dispatch_listener_task"),
     )
 
 

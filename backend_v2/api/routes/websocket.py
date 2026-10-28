@@ -12,10 +12,13 @@ Features:
 """
 
 import asyncio
+import json
 import logging
 import os
+import select
 from datetime import datetime, timezone
 
+import psycopg2
 import socketio
 
 from api.deps import (
@@ -25,7 +28,8 @@ from api.deps import (
     get_session_context,
 )
 from core.entities import JobStatus
-from core.events import EventType
+from core.events import CROSS_PROCESS_EVENT_CHANNEL, EventType
+from infrastructure.database import database_url
 
 from services.job_queue import queue_manager
 from services.provider_runtime import resolve_provider_runtime_async
@@ -80,6 +84,7 @@ class WebSocketManager:
     
     def __init__(self):
         self._broadcast_task: asyncio.Task | None = None
+        self._notify_task: asyncio.Task | None = None
         self._running = False
     
     async def start_broadcasting(self):
@@ -100,6 +105,19 @@ class WebSocketManager:
         # pending queue reads and unsubscribes, so this is the clean exit.
         self._broadcast_task = asyncio.current_task()
         logger.info("[WebSocket] Starting EventBus broadcast listener")
+        
+        # Cross-process event relay: LISTEN on Postgres NOTIFY channel and
+        # re-broadcast to local Socket.IO clients. Without this, events emitted
+        # on another backend worker process (UVICORN_WORKERS > 1) never reach
+        # the WebSocket clients connected to this process.
+        if database_url.startswith("postgresql"):
+            self._notify_task = asyncio.create_task(
+                self._notify_listener(), name="ws_notify_listener"
+            )
+            logger.info(
+                "[WebSocket] Starting cross-process NOTIFY listener",
+                channel=CROSS_PROCESS_EVENT_CHANNEL,
+            )
         
         # Derived from `EventType` rather than listed by hand, because the room
         # name is `event.type.value.split(".")[0]` (below) — so the set of rooms
@@ -136,7 +154,90 @@ class WebSocketManager:
                 await self._broadcast_task
             except asyncio.CancelledError:
                 pass
+        if self._notify_task:
+            self._notify_task.cancel()
+            try:
+                await self._notify_task
+            except asyncio.CancelledError:
+                pass
         logger.info("[WebSocket] Stopped EventBus broadcast listener")
+
+    async def _notify_listener(self) -> None:
+        """LISTEN on Postgres NOTIFY channel and re-broadcast to local WS clients.
+
+        Runs for the life of the WebSocketManager. On each NOTIFY, parses the
+        payload and emits the event to the appropriate Socket.IO room so
+        clients connected to this process see events from sibling processes.
+        """
+        conn = psycopg2.connect(database_url)
+        conn.autocommit = True
+        try:
+            with conn.cursor() as cur:
+                cur.execute(f"LISTEN {CROSS_PROCESS_EVENT_CHANNEL}")
+            logger.info(
+                "[WebSocket] NOTIFY listener connected",
+                channel=CROSS_PROCESS_EVENT_CHANNEL,
+            )
+            while self._running:
+                # Wait up to 1 second for a notification so we can check
+                # _running regularly and exit cleanly on shutdown.
+                if select.select([conn], [], [], 1.0) == ([], [], []):
+                    continue
+                conn.poll()
+                for notify in conn.notifies:
+                    conn.notifies.clear()
+                    try:
+                        payload = json.loads(notify.payload)
+                    except (json.JSONDecodeError, TypeError):
+                        logger.warning(
+                            "[WebSocket] Invalid NOTIFY payload",
+                            channel=CROSS_PROCESS_EVENT_CHANNEL,
+                            payload=notify.payload[:200],
+                        )
+                        continue
+
+                    event_type = payload.get("event")
+                    job = payload.get("job", {})
+                    if not event_type:
+                        continue
+
+                    # Emit to the room derived from the event type prefix,
+                    # same as the EventBus path. Job data is minimal (id only);
+                    # clients that need more poll GET /api/jobs/{id}.
+                    room = event_type.split(".")[0] if "." in event_type else event_type
+                    try:
+                        await sio.emit(
+                            event_type,
+                            {"job": job},
+                            room=room,
+                        )
+                    except Exception as e:
+                        logger.error(
+                            "[WebSocket] Error re-broadcasting NOTIFY event",
+                            event=event_type,
+                            error=str(e),
+                        )
+        except asyncio.CancelledError:
+            logger.info(
+                "[WebSocket] NOTIFY listener cancelled",
+                channel=CROSS_PROCESS_EVENT_CHANNEL,
+            )
+            raise
+        except Exception as e:
+            logger.error(
+                "[WebSocket] NOTIFY listener error",
+                channel=CROSS_PROCESS_EVENT_CHANNEL,
+                error=str(e),
+            )
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+            logger.info(
+                "[WebSocket] NOTIFY listener stopped",
+                channel=CROSS_PROCESS_EVENT_CHANNEL,
+            )
 
 
 # Global manager instance

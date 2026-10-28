@@ -6,6 +6,7 @@
 # - Events are typed and include structured data payloads
 # - Event replay: Last 100 events buffered for debugging
 import asyncio
+import json
 import re
 import time
 from collections import deque
@@ -15,9 +16,28 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 
+from infrastructure.database import database_url
 from infrastructure.logging import get_logger
 
 logger = get_logger("events")
+
+# psycopg2 is only needed on Postgres. Import lazily so SQLite deployments
+# don't require it.
+try:
+    import psycopg2  # noqa: F401
+except ImportError:
+    psycopg2 = None
+
+# Postgres channel for cross-process event broadcast. When multiple backend
+# workers run (UVICORN_WORKERS > 1), each process has its own in-process
+# EventBus and its own WebSocketManager. Events emitted on one process must
+# reach WebSocket clients connected to another process, so the publisher
+# NOTIFYs this channel and every process's WebSocketManager LISTENs on it and
+# re-broadcasts to its local Socket.IO clients.
+#
+# Payload is a small JSON object: {"event": "<event_type>", "job": {"id": ...}}
+# — kept small because Postgres NOTIFY payloads are capped at 8 KB.
+CROSS_PROCESS_EVENT_CHANNEL = "tnhcomfy_job_events"
 
 
 # ---------------------------------------------------------------------------
@@ -511,6 +531,43 @@ event_bus = EventBus()
 async def emit_job_event(event_type: EventType, job_data: dict[str, Any]) -> None:
     """Emit a job-related event."""
     await event_bus.publish(Event(type=event_type, data={"job": job_data}))
+    # Cross-process broadcast: NOTIFY other backend workers so their
+    # WebSocket managers can re-broadcast to local Socket.IO clients.
+    # Only meaningful on Postgres; SQLite ignores it silently.
+    if database_url.startswith("postgresql"):
+        await _notify_cross_process(event_type, job_data)
+
+
+async def _notify_cross_process(event_type: EventType, job_data: dict[str, Any]) -> None:
+    """Fire a Postgres NOTIFY so sibling processes can re-broadcast WS events.
+
+    Runs on a thread-bound psycopg2 connection because NOTIFY requires
+    autocommit and can't share the SQLAlchemy async session. The payload is
+    deliberately small: event type + job id. Sibling processes re-read the
+    job from the DB if they need more detail.
+    """
+    payload = json.dumps(
+        {
+            "event": event_type.value,
+            "job": {"id": job_data.get("id")},
+        }
+    )
+    try:
+        await asyncio.to_thread(_notify_sync, payload)
+    except Exception as exc:
+        # Never let a cross-process notify failure break the local event path.
+        logger.debug("cross_process_notify_failed", channel=CROSS_PROCESS_EVENT_CHANNEL, error=str(exc))
+
+
+def _notify_sync(payload: str) -> None:
+    """Synchronous NOTIFY on a dedicated psycopg2 connection."""
+    conn = psycopg2.connect(database_url)
+    try:
+        conn.autocommit = True
+        with conn.cursor() as cur:
+            cur.execute(f"NOTIFY {CROSS_PROCESS_EVENT_CHANNEL}, %s", (payload,))
+    finally:
+        conn.close()
 
 
 async def emit_provider_event(event_type: EventType, provider_id: str, data: dict[str, Any]) -> None:
