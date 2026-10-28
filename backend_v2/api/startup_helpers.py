@@ -75,6 +75,9 @@ def configure_worker_pool() -> None:
             counts.setdefault(CATEGORY_IMAGE, sizing.get(CATEGORY_IMAGE, 1))
             counts.setdefault(CATEGORY_LLM, sizing.get(CATEGORY_LLM, 1))
             counts.setdefault(CATEGORY_TTS, sizing.get(CATEGORY_TTS, 1))
+            # "hybrid" is not a job pool — hybrid providers are already counted
+            # toward both image and llm above. Drop it before resizing.
+            sizing = {k: v for k, v in sizing.items() if k in queue_manager.pools}
             queue_manager.resize(**sizing)
             logger.info("worker_pool_configured", providers_per_category=counts, **sizing)
         finally:
