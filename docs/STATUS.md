@@ -50,16 +50,16 @@ error handling via the `ComfyError` hierarchy, `metadata_` in Python and
 
 ## Verified state
 
-All three suites green as of **2026-10-20**, re-measured after the
-chat-workflow pass recorded in §1c below:
+All three suites green as of **2026-10-21**, re-measured after the
+consolidation sweep recorded in `docs/audit-2026-10-21.md`:
 
 | Suite | Count | Command |
 |---|---|---|
-| Backend | **4075 passed, 5 skipped** (~4 min) | `cd backend_v2 && .venv/bin/python -m pytest` |
-| Frontend | **2029 passed across 224 files** (~4 min) | `cd frontend_v2 && npx vitest run` |
+| Backend | **3911 passed, 5 skipped** (~6 min) | `cd backend_v2 && .venv/bin/python -m pytest` |
+| Frontend | **1978 passed across 218 files** (~4 min) | `cd frontend_v2 && bun run test -- --run` |
 | remote_agent | exports clean (no tests of its own) | covered by `tests/test_in_process_engines.py` contract tests |
 
-`npm run lint` is **0 errors / 1 warning** and `ruff check .` is clean.
+`bun run lint` is **0 errors / 3 warnings** and `ruff check .` is clean.
 
 Stack verified live after the changes: `localhost:5174` → 200,
 `/api/live` and `/api/ready` → 200, and the negative-`limit` probes that used to
@@ -149,11 +149,11 @@ state had drifted from the measured state while both kept looking authoritative.
 The compose defect in the next paragraph is the same failure in a different place:
 CI had been green — or red — about a file the suites never read.
 
-Lint: `ruff check .` clean in the backend. `npm run lint` reports **0 errors and 12
-warnings**: eleven `react-hooks/exhaustive-deps` in `src/contexts/ChatWorkspaceContext.jsx`
+Lint: `ruff check .` clean in the backend. `bun run lint` reports **0 errors and 3
+warnings**: `react-hooks/exhaustive-deps` in `src/contexts/ChatWorkspaceContext.jsx`
 and `src/pages/BatchGenerate.jsx`, plus one `react-hooks/incompatible-library` each in
 `src/hooks/useScrollRoot.js` (TanStack Virtual's `useVirtualizer()`) and
-`src/pages/StorySandbox.jsx`. `npm run build` is clean.
+`src/pages/StorySandbox.jsx`. `bun run build` is clean.
 
 Compose: `docker compose config --quiet` (the deprecated `--profile providers` is
 gone; provider workers are in-process now) exits 0, and the `app-images` job in
@@ -190,7 +190,7 @@ syntax error in it reached main whenever the provider tests happened to pass.
 `backend_v2/Dockerfile` and `frontend_v2/Dockerfile` were built by **no** workflow
 until 2026-10-04. They are what actually runs in production and in every dev `up`,
 and a green test suite says nothing about them: `backend-tests.yml` installs into a
-host venv and `frontend-tests.yml` runs `npm ci` on the host, so neither would
+host venv and `frontend-tests.yml` runs `bun install --frozen-lockfile` on the host, so neither would
 notice that the image no longer builds — a bad `COPY`, a system package the
 runtime needs, a requirements pin that no longer resolves. A new `app-images` job
 in `provider-tests.yml` builds the backend image and both frontend targets, and the
@@ -477,7 +477,7 @@ of printing credentials for a human to paste, and its dead API path
 (`/api/v2/world-vault/llm-config/catalog`, which has never been a route on
 any version) is fixed.
 
-Backend suite: 3805 passed, 5 skipped, 0 failed.
+Backend suite: 3911 passed, 5 skipped, 0 failed.
 
 ### The 2026-10-20 chat-workflow pass — making Laya's decision reach the model
 
@@ -1258,13 +1258,13 @@ deliberately left alone — this is a capacity and billing decision, not a bug f
    ended up reporting an outage as an empty vault. Adding an error slot and
    migrating them is the largest line-count reduction available and structurally
    prevents that class from recurring. This is the **first** thing to do next.
-9. **32 more routes block the event loop**, the same shape as the four converted
+9. **29 more routes block the event loop**, the same shape as the four converted
    on 2026-10-03, now enumerated in `SYNC_CHAINED` in
    `tests/test_event_loop_invariant.py` with each one's service method named. A
    new test now resolves awaited callees across modules and fails on any *new*
    offender, so the list can only shrink deliberately.
 10. **65 backend routes have no frontend caller**, four of them returning the same
-    1.5 MB model dump (`/api/v2/models/cache`, `/api/v2/models/all`,
+    1.5 MB model dump (`/api/v2/models/all`,
     `/api/v2/providers/model-cache`, `/api/v2/gallery`) in four separate
     implementations. Removing them is an API-surface decision, not a cleanup.
 
@@ -1423,6 +1423,6 @@ The frontend serves on **:5174** (not 5173) and proxies `/api` and
 | Understand the product intent | `VISION.md` |
 | Understand a past decision | `docs/archive/` (historical; may be wrong) |
 | See what the last audit found | `docs/audit-2026-10-04b.md` |
-| Rebuild the frontend | `cd frontend_v2 && npm run build` |
-| Re-measure mobile after a layout change | `cd frontend_v2 && npx playwright test e2e/mobile-responsive.spec.js` |
+| Rebuild the frontend | `cd frontend_v2 && bun run build` |
+| Re-measure mobile after a layout change | `cd frontend_v2 && bun run test:e2e` |
 | See earlier audits | `docs/audit-2026-09-29b.md`, then `docs/audit-2026-09-29.md` (each superseded by the next) |

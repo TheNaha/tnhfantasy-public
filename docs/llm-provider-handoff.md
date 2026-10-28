@@ -10,7 +10,7 @@ TNHComfy is a self-hosted, personal-use-only "Fantasy Engine" web app. It began 
 2. **LLM roleplay**: SillyTavern-style chats and group chats, ST JSONL import/export, autonomous agentic tools (scene narration, image generation, memory recall), autobiographical memory (auto-extraction + `rag_pipeline` over pgvector), idle simulation (characters reply while the user is away), per-entity sampler overrides, `llm_config` routes.
 3. **Story Sandbox**: AI Dungeon-style editor with branches, sessions, tags, world graph/timeline.
 
-Stack: FastAPI backend (request-scoped Session, `MigrationStep` runner, no Alembic), React frontend (Zustand + React Query, npm only, Vite dev port 5174 proxying to backend on 8002), docker compose (pgvector pg16, Traefik, `scripts/preflight.sh`). **There are no automatic backups.** The P1-P6 roadmap is complete; remaining ideas are a Visual Novel/Comic exporter and deeper idle simulation.
+Stack: FastAPI backend (request-scoped Session, `MigrationStep` runner, no Alembic), React frontend (Zustand + React Query, **bun only**, Vite dev port 5174 proxying to backend on 8002), docker compose (pgvector pg16, Traefik, `scripts/preflight.sh`). **There are no automatic backups.** The P1-P6 roadmap is complete; remaining ideas are a Visual Novel/Comic exporter and deeper idle simulation.
 
 ## 2. The question being solved
 
