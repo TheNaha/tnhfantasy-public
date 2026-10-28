@@ -47,6 +47,9 @@ MODEL_LOADER_NODES: dict[str, tuple[str, str]] = {
     "EmbeddingLoader": ("embedding_name", "embeddings"),
 }
 
+# KSampler-like node classes that carry sampler_name and scheduler combo inputs.
+KSAMPLER_NODE_CLASSES = ("KSampler", "KSampler (Efficient)", "KSamplerAdvanced")
+
 # Nodes with multiple model inputs
 MULTI_INPUT_NODES: dict[str, list[tuple[str, str]]] = {
     "DualCLIPLoader": [("clip_name1", "clip"), ("clip_name2", "clip")],
@@ -144,3 +147,44 @@ def get_required_storage_paths(workflow: dict[str, Any]) -> list[str]:
             result.append(f"models/{directory}/{filename}")
     
     return result
+
+
+def extract_sampler_scheduler_from_workflow(
+    workflow: dict[str, Any],
+) -> tuple[str | None, str | None]:
+    """
+    Extract sampler name and scheduler name from a ComfyUI workflow.
+    
+    Looks at KSampler-like nodes (KSampler, KSampler (Efficient),
+    KSamplerAdvanced) for their `sampler_name` and `scheduler` inputs.
+    
+    Args:
+        workflow: ComfyUI workflow dictionary
+        
+    Returns:
+        (sampler_name, scheduler_name) — each may be None if not found.
+    """
+    nodes = workflow.get("nodes", workflow)
+    
+    if isinstance(nodes, list):
+        nodes = {str(i): node for i, node in enumerate(nodes)}
+    
+    for node_id, node_data in nodes.items():
+        if not isinstance(node_data, dict):
+            continue
+            
+        class_type = node_data.get("class_type", "")
+        if class_type not in KSAMPLER_NODE_CLASSES:
+            continue
+            
+        inputs = node_data.get("inputs", {})
+        sampler_name = inputs.get("sampler_name")
+        scheduler = inputs.get("scheduler")
+        
+        if sampler_name is not None or scheduler is not None:
+            return (
+                sampler_name if isinstance(sampler_name, str) else None,
+                scheduler if isinstance(scheduler, str) else None,
+            )
+    
+    return (None, None)

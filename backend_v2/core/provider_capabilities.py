@@ -52,6 +52,18 @@ ENHANCEMENT_NODE_CLASSES: dict[str, tuple[str, ...]] = {
     "depth": ("MiDaS-DepthMapPreprocessor", "Zoe-DepthMapPreprocessor", "DepthAnythingPreprocessor", "DepthPreprocessor"),
     "openpose": ("OpenposePreprocessor", "DWPreprocessor"),
     "tiled_vae": ("VAEDecodeTiled", "VAEDecode"),
+    # The KSampler node carries the sampler_name and scheduler combo inputs.
+    # Its presence alone doesn't tell us which samplers/schedulers the
+    # provider supports — for that we read the input option lists below.
+    "ksampler": ("KSampler", "KSampler (Efficient)", "KSamplerAdvanced"),
+}
+
+# Node class + input name for the sampler and scheduler combo inputs on
+# KSampler-like nodes. Used to derive which sampler/scheduler names the
+# provider actually advertises.
+_SAMPLER_SCHEDULER_INPUTS: dict[str, tuple[str, str]] = {
+    "sampler": ("KSampler", "sampler_name"),
+    "scheduler": ("KSampler", "scheduler"),
 }
 
 # The inputs whose option list is a list of FILE NAMES.
@@ -179,12 +191,29 @@ def derive_capabilities(graph: dict, provider_id: str | None = None) -> dict[str
                 models[key] = options
             break
 
+    # Sampler / scheduler combo options from the KSampler node.
+    samplers: list[str] = []
+    schedulers: list[str] = []
+    for key, (class_name, input_name) in _SAMPLER_SCHEDULER_INPUTS.items():
+        node = nodes_by_class.get(class_name)
+        if node is None:
+            continue
+        options = _combo_options(node, input_name)
+        if not options:
+            continue
+        if key == "sampler":
+            samplers = options
+        elif key == "scheduler":
+            schedulers = options
+
     return {
         "provider_id": provider_id,
         "known": True,
         "nodes": supported,
         "node_classes": resolved_class,
         "models": models,
+        "samplers": samplers,
+        "schedulers": schedulers,
     }
 
 
@@ -206,3 +235,52 @@ def model_list(capabilities: dict[str, Any] | None, key: str) -> list[str] | Non
     if not capabilities or not capabilities.get("known"):
         return None
     return capabilities.get("models", {}).get(key)
+
+
+def sampler_list(capabilities: dict[str, Any] | None) -> list[str] | None:
+    """The sampler names the provider's KSampler node advertises.
+
+    None when the provider's graph is not known (provider down / not yet
+    probed). Callers must treat None differently from an empty list: an
+    empty list means the provider has no sampler info; None means "we
+    don't know yet".
+    """
+    if not capabilities or not capabilities.get("known"):
+        return None
+    return capabilities.get("samplers")
+
+
+def scheduler_list(capabilities: dict[str, Any] | None) -> list[str] | None:
+    """The scheduler names the provider's KSampler node advertises.
+
+    None when the provider's graph is not known. See `sampler_list`.
+    """
+    if not capabilities or not capabilities.get("known"):
+        return None
+    return capabilities.get("schedulers")
+
+
+def provider_supports_sampler(
+    capabilities: dict[str, Any] | None, sampler_name: str
+) -> bool | None:
+    """Whether the provider supports a sampler name.
+
+    True if advertised, False if not advertised, None if unknown.
+    """
+    options = sampler_list(capabilities)
+    if options is None:
+        return None
+    return sampler_name in options
+
+
+def provider_supports_scheduler(
+    capabilities: dict[str, Any] | None, scheduler_name: str
+) -> bool | None:
+    """Whether the provider supports a scheduler name.
+
+    True if advertised, False if not advertised, None if unknown.
+    """
+    options = scheduler_list(capabilities)
+    if options is None:
+        return None
+    return scheduler_name in options
