@@ -15,7 +15,6 @@ senders in this file build outbound frames from the outbound models. See
 import asyncio
 import json
 import os
-import select
 from datetime import datetime, timezone
 from typing import Annotated, Any, Literal
 
@@ -35,6 +34,17 @@ connected_workers: dict[str, "ConnectedWorker"] = {}  # provider_id -> worker
 pending_job_futures: dict[str, asyncio.Future] = {}
 _workers_lock = asyncio.Lock()
 _futures_lock = asyncio.Lock()
+
+#: Event loop of the main backend process, captured at import time so the
+#: cross-process dispatch listener thread (which runs blocking psycopg2 I/O)
+#: can marshal async operations back onto it via run_coroutine_threadsafe.
+_main_event_loop: asyncio.AbstractEventLoop | None = None
+
+
+def set_main_event_loop(loop: asyncio.AbstractEventLoop) -> None:
+    """Record the main event loop so the listener thread can schedule coros."""
+    global _main_event_loop
+    _main_event_loop = loop
 
 
 # ============================================================================
@@ -740,9 +750,26 @@ async def start_cross_process_dispatch_listener() -> None:
 
     Call this from the WebSocket connection handler startup (one listener per
     process is sufficient — it handles all providers this process connects).
+
+    The blocking psycopg2/select loop runs in ``asyncio.to_thread`` so it never
+    stalls the event loop that serves HTTP requests.
     """
     if not database_url.startswith("postgresql"):
         return
+    loop = asyncio.get_running_loop()
+    set_main_event_loop(loop)
+    await asyncio.to_thread(_run_notify_listener, loop)
+
+
+def _run_notify_listener(loop: asyncio.AbstractEventLoop) -> None:
+    """Blocking psycopg2 LISTEN loop for the worker_dispatch channel.
+
+    Runs in a worker thread via asyncio.to_thread so it never stalls the
+    event loop that serves HTTP requests. Async operations (WebSocket sends,
+    job-future tracking) are marshalled back onto the event loop via
+    asyncio.run_coroutine_threadsafe.
+    """
+    import select as _select
 
     conn = psycopg2.connect(database_url)
     conn.autocommit = True
@@ -764,7 +791,7 @@ async def start_cross_process_dispatch_listener() -> None:
 
     try:
         while True:
-            if select.select([conn], [], [], 1.0) == ([], [], []):
+            if _select.select([conn], [], [], 1.0) == ([], [], []):
                 continue
             conn.poll()
             for notify in list(conn.notifies):
@@ -800,7 +827,10 @@ async def start_cross_process_dispatch_listener() -> None:
                         c.close()
 
                 try:
-                    claimed = await asyncio.to_thread(_claim_outbox)
+                    fut = asyncio.run_coroutine_threadsafe(
+                        _claim_outbox_async(outbox_id), loop
+                    )
+                    claimed = fut.result(timeout=5.0)
                 except Exception as exc:
                     logger.warning(
                         "cross_process_dispatch_claim_failed",
@@ -816,8 +846,12 @@ async def start_cross_process_dispatch_listener() -> None:
                 job_data = claimed["job_data"]
                 job_id = job_data.get("id")
 
-                # Find the local WebSocket worker for this provider.
-                worker = await _get_live_worker(provider_id)
+                try:
+                    worker = asyncio.run_coroutine_threadsafe(
+                        _get_live_worker(provider_id), loop
+                    ).result(timeout=5.0)
+                except Exception:
+                    continue
                 if worker is None:
                     def _mark_failed(jid: str = job_id) -> None:
                         c = psycopg2.connect(database_url)
@@ -838,13 +872,19 @@ async def start_cross_process_dispatch_listener() -> None:
                             c.close()
 
                     try:
-                        await asyncio.to_thread(_mark_failed)
+                        asyncio.run_coroutine_threadsafe(
+                            _mark_failed_async(), loop
+                        ).result(timeout=5.0)
                     except Exception:
                         pass
                     continue
 
-                # Claim the worker slot and dispatch.
-                busy_with = await _claim_worker_slot(worker, job_id)
+                try:
+                    busy_with = asyncio.run_coroutine_threadsafe(
+                        _claim_worker_slot(worker, job_id), loop
+                    ).result(timeout=5.0)
+                except Exception:
+                    continue
                 if busy_with is not None:
                     def _mark_busy(jid: str = job_id, bw: str = busy_with) -> None:
                         c = psycopg2.connect(database_url)
@@ -865,24 +905,36 @@ async def start_cross_process_dispatch_listener() -> None:
                             c.close()
 
                     try:
-                        await asyncio.to_thread(_mark_busy)
+                        asyncio.run_coroutine_threadsafe(
+                            _mark_busy_async(), loop
+                        ).result(timeout=5.0)
                     except Exception:
                         pass
                     continue
 
-                loop = asyncio.get_running_loop()
                 future = loop.create_future()
-                await track_job_future(job_id, future)
+                asyncio.run_coroutine_threadsafe(
+                    track_job_future(job_id, future), loop
+                ).result(timeout=5.0)
 
                 try:
-                    await worker.ws.send_json(
-                        JobDispatchMessage(data=job_data).model_dump()
-                    )
+                    asyncio.run_coroutine_threadsafe(
+                        worker.ws.send_json(
+                            JobDispatchMessage(data=job_data).model_dump()
+                        ),
+                        loop,
+                    ).result(timeout=5.0)
                 except Exception as exc:
-                    await forget_job_future(job_id)
-                    await _release_worker_slot(worker, job_id)
+                    asyncio.run_coroutine_threadsafe(
+                        forget_job_future(job_id), loop
+                    ).result(timeout=5.0)
+                    asyncio.run_coroutine_threadsafe(
+                        _release_worker_slot(worker, job_id), loop
+                    ).result(timeout=5.0)
 
-                    def _mark_send_failed(jid: str = job_id, msg: str = str(exc)) -> None:
+                    def _mark_send_failed(
+                        jid: str = job_id, msg: str = str(exc)
+                    ) -> None:
                         c = psycopg2.connect(database_url)
                         try:
                             c.autocommit = True
@@ -901,18 +953,28 @@ async def start_cross_process_dispatch_listener() -> None:
                             c.close()
 
                     try:
-                        await asyncio.to_thread(_mark_send_failed)
+                        asyncio.run_coroutine_threadsafe(
+                            _mark_send_failed_async(), loop
+                        ).result(timeout=5.0)
                     except Exception:
                         pass
                     continue
 
-                # Wait for the agent response (resolved by the WebSocket handler
-                # via resolve_job_future).
                 try:
-                    result = await asyncio.wait_for(future, timeout=300.0)
-                except asyncio.TimeoutError:
-                    await forget_job_future(job_id)
-                    await _release_worker_slot(worker, job_id)
+                    import time as _time
+                    _deadline = _time.monotonic() + 300.0
+                    while not future.done():
+                        if _time.monotonic() > _deadline:
+                            raise TimeoutError()
+                        _time.sleep(0.5)
+                    result = future.result()
+                except TimeoutError:
+                    asyncio.run_coroutine_threadsafe(
+                        forget_job_future(job_id), loop
+                    ).result(timeout=5.0)
+                    asyncio.run_coroutine_threadsafe(
+                        _release_worker_slot(worker, job_id), loop
+                    ).result(timeout=5.0)
 
                     def _mark_timeout(jid: str = job_id) -> None:
                         c = psycopg2.connect(database_url)
@@ -933,14 +995,19 @@ async def start_cross_process_dispatch_listener() -> None:
                             c.close()
 
                     try:
-                        await asyncio.to_thread(_mark_timeout)
+                        asyncio.run_coroutine_threadsafe(
+                            _mark_timeout_async(), loop
+                        ).result(timeout=5.0)
                     except Exception:
                         pass
                     continue
 
-                # Agent responded — write result so the calling process can read it.
-                await forget_job_future(job_id)
-                await _release_worker_slot(worker, job_id)
+                asyncio.run_coroutine_threadsafe(
+                    forget_job_future(job_id), loop
+                ).result(timeout=5.0)
+                asyncio.run_coroutine_threadsafe(
+                    _release_worker_slot(worker, job_id), loop
+                ).result(timeout=5.0)
 
                 status = "done" if result.get("__handled_by_external_worker") else "failed"
                 result_payload = result.get("outputs", {})
@@ -966,12 +1033,12 @@ async def start_cross_process_dispatch_listener() -> None:
                                         result = EXCLUDED.result,
                                         error = EXCLUDED.error
                                 """,
-                                (
-                                    jid,
-                                    st,
-                                    json.dumps(res) if res is not None else None,
-                                    err,
-                                ),
+                                    (
+                                        jid,
+                                        st,
+                                        json.dumps(res) if res is not None else None,
+                                        err,
+                                    ),
                             )
                             cur.execute(
                                 "NOTIFY worker_dispatch_result_%s, %s",
@@ -981,7 +1048,9 @@ async def start_cross_process_dispatch_listener() -> None:
                         c.close()
 
                 try:
-                    await asyncio.to_thread(_write_result)
+                    asyncio.run_coroutine_threadsafe(
+                        _write_result_async(), loop
+                    ).result(timeout=5.0)
                 except Exception as exc:
                     logger.warning(
                         "cross_process_dispatch_write_result_failed",
@@ -1002,3 +1071,164 @@ async def start_cross_process_dispatch_listener() -> None:
         except Exception:
             pass
         logger.info("cross_process_dispatch_listener_stopped", channel="worker_dispatch")
+
+
+# --- Async wrappers used by the listener thread ----------------------------
+
+# The listener thread runs blocking psycopg2 I/O and needs async helpers for
+# the event-loop-bound operations. These wrappers keep the thread code simple.
+
+
+async def _claim_outbox_async(outbox_id: str) -> dict | None:
+    """Claim one outbox row; returns {provider_id, job_data} or None."""
+    def _do() -> dict | None:
+        c = psycopg2.connect(database_url)
+        try:
+            c.autocommit = True
+            with c.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE worker_dispatch_outbox
+                    SET status = 'claimed', claimed_at = NOW()
+                    WHERE id = %s AND status = 'pending'
+                    RETURNING provider_id, job_data
+                    """,
+                    (outbox_id,),
+                )
+                row = cur.fetchone()
+                if row is None:
+                    return None
+                pid_, job_data = row
+                if isinstance(job_data, str):
+                    job_data = json.loads(job_data)
+                return {"provider_id": pid_, "job_data": job_data}
+        finally:
+            c.close()
+
+    return await asyncio.to_thread(_do)
+
+
+async def _mark_failed_async(job_id: str, error: str = "No local WebSocket worker for provider") -> None:
+    def _do() -> None:
+        c = psycopg2.connect(database_url)
+        try:
+            c.autocommit = True
+            with c.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO worker_dispatch_result
+                        (job_id, status, error, created_at)
+                    VALUES (%s, 'failed', %s, NOW())
+                    ON CONFLICT (job_id) DO UPDATE
+                        SET status = 'failed', error = EXCLUDED.error
+                    """,
+                    (job_id, error),
+                )
+        finally:
+            c.close()
+
+    await asyncio.to_thread(_do)
+
+
+async def _mark_busy_async(job_id: str, busy_with: str) -> None:
+    def _do() -> None:
+        c = psycopg2.connect(database_url)
+        try:
+            c.autocommit = True
+            with c.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO worker_dispatch_result
+                        (job_id, status, error, created_at)
+                    VALUES (%s, 'failed', %s, NOW())
+                    ON CONFLICT (job_id) DO UPDATE
+                        SET status = 'failed', error = EXCLUDED.error
+                    """,
+                    (job_id, f"Worker busy with job {busy_with}"),
+                )
+        finally:
+            c.close()
+
+    await asyncio.to_thread(_do)
+
+
+async def _mark_send_failed_async(job_id: str, message: str) -> None:
+    def _do() -> None:
+        c = psycopg2.connect(database_url)
+        try:
+            c.autocommit = True
+            with c.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO worker_dispatch_result
+                        (job_id, status, error, created_at)
+                    VALUES (%s, 'failed', %s, NOW())
+                    ON CONFLICT (job_id) DO UPDATE
+                        SET status = 'failed', error = EXCLUDED.error
+                    """,
+                    (job_id, message),
+                )
+        finally:
+            c.close()
+
+    await asyncio.to_thread(_do)
+
+
+async def _mark_timeout_async(job_id: str) -> None:
+    def _do() -> None:
+        c = psycopg2.connect(database_url)
+        try:
+            c.autocommit = True
+            with c.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO worker_dispatch_result
+                        (job_id, status, error, created_at)
+                    VALUES (%s, 'failed', %s, NOW())
+                    ON CONFLICT (job_id) DO UPDATE
+                        SET status = 'failed', error = EXCLUDED.error
+                    """,
+                    (job_id, "Cross-process dispatch timed out"),
+                )
+        finally:
+            c.close()
+
+    await asyncio.to_thread(_do)
+
+
+async def _write_result_async(
+    job_id: str,
+    status: str,
+    result: dict | None = None,
+    error: str | None = None,
+) -> None:
+    def _do() -> None:
+        c = psycopg2.connect(database_url)
+        try:
+            c.autocommit = True
+            with c.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO worker_dispatch_result
+                        (job_id, status, result, error, created_at)
+                    VALUES (%s, %s, %s, %s, NOW())
+                    ON CONFLICT (job_id) DO UPDATE
+                        SET status = EXCLUDED.status,
+                            result = EXCLUDED.result,
+                            error = EXCLUDED.error
+                    """,
+                    (
+                        job_id,
+                        status,
+                        json.dumps(result) if result is not None else None,
+                        error,
+                    ),
+                )
+                cur.execute(
+                    "NOTIFY worker_dispatch_result_%s, %s",
+                    (job_id, json.dumps({"status": status, "job_id": job_id})),
+                )
+        finally:
+            c.close()
+
+    await asyncio.to_thread(_do)
