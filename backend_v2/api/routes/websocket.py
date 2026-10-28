@@ -115,8 +115,8 @@ class WebSocketManager:
                 self._notify_listener(), name="ws_notify_listener"
             )
             logger.info(
-                "[WebSocket] Starting cross-process NOTIFY listener",
-                channel=CROSS_PROCESS_EVENT_CHANNEL,
+                "[WebSocket] Starting cross-process NOTIFY listener channel=%s",
+                CROSS_PROCESS_EVENT_CHANNEL,
             )
         
         # Derived from `EventType` rather than listed by hand, because the room
@@ -175,8 +175,8 @@ class WebSocketManager:
             with conn.cursor() as cur:
                 cur.execute(f"LISTEN {CROSS_PROCESS_EVENT_CHANNEL}")
             logger.info(
-                "[WebSocket] NOTIFY listener connected",
-                channel=CROSS_PROCESS_EVENT_CHANNEL,
+                "[WebSocket] NOTIFY listener connected channel=%s",
+                CROSS_PROCESS_EVENT_CHANNEL,
             )
             while self._running:
                 # Wait up to 1 second for a notification so we can check
@@ -190,9 +190,9 @@ class WebSocketManager:
                         payload = json.loads(notify.payload)
                     except (json.JSONDecodeError, TypeError):
                         logger.warning(
-                            "[WebSocket] Invalid NOTIFY payload",
-                            channel=CROSS_PROCESS_EVENT_CHANNEL,
-                            payload=notify.payload[:200],
+                            "[WebSocket] Invalid NOTIFY payload channel=%s payload=%s",
+                            CROSS_PROCESS_EVENT_CHANNEL,
+                            notify.payload[:200],
                         )
                         continue
 
@@ -213,21 +213,21 @@ class WebSocketManager:
                         )
                     except Exception as e:
                         logger.error(
-                            "[WebSocket] Error re-broadcasting NOTIFY event",
-                            event=event_type,
-                            error=str(e),
+                            "[WebSocket] Error re-broadcasting NOTIFY event event=%s error=%s",
+                            event_type,
+                            str(e),
                         )
         except asyncio.CancelledError:
             logger.info(
-                "[WebSocket] NOTIFY listener cancelled",
-                channel=CROSS_PROCESS_EVENT_CHANNEL,
+                "[WebSocket] NOTIFY listener cancelled channel=%s",
+                CROSS_PROCESS_EVENT_CHANNEL,
             )
             raise
         except Exception as e:
             logger.error(
-                "[WebSocket] NOTIFY listener error",
-                channel=CROSS_PROCESS_EVENT_CHANNEL,
-                error=str(e),
+                "[WebSocket] NOTIFY listener error channel=%s error=%s",
+                CROSS_PROCESS_EVENT_CHANNEL,
+                str(e),
             )
         finally:
             try:
@@ -235,8 +235,8 @@ class WebSocketManager:
             except Exception:
                 pass
             logger.info(
-                "[WebSocket] NOTIFY listener stopped",
-                channel=CROSS_PROCESS_EVENT_CHANNEL,
+                "[WebSocket] NOTIFY listener stopped channel=%s",
+                CROSS_PROCESS_EVENT_CHANNEL,
             )
 
 
