@@ -1,5 +1,6 @@
 import asyncio
 import json
+import re
 import time
 
 from core.entities import JobStatus
@@ -9,6 +10,31 @@ from infrastructure.logging import get_logger
 from services.engines.base import EngineAuthError
 
 logger = get_logger("provider_client")
+
+
+def _extract_http_status(message: str) -> int | None:
+    """Extract an HTTP status code from an error message, if present.
+
+    Looks for patterns like "HTTP 500", "500 Internal Server Error", or a
+    standalone 3-digit code in the 4xx/5xx range. Returns None when none is
+    found — callers treat that as "unknown status" and fall back to the
+    default retry cap.
+    """
+    if not isinstance(message, str):
+        return None
+    # "HTTP 500" or "HTTP/1.1 500" style
+    m = re.search(r"HTTP(?:/[\d.]+)?\s+(\d{3})", message)
+    if m:
+        code = int(m.group(1))
+        if 400 <= code < 600:
+            return code
+    # Standalone 3-digit code at word boundary
+    m = re.search(r"\b(\d{3})\b", message)
+    if m:
+        code = int(m.group(1))
+        if 400 <= code < 600:
+            return code
+    return None
 
 # Cap LLM progress emission at ~60fps. LLM workers stream one JOB_PROGRESS per
 # token; capping the emit rate reduces WebSocket fan-out and the per-token JS
@@ -25,10 +51,17 @@ PROGRESS_PERSIST_INTERVAL_SECONDS = 1.0
 class ProviderCallError(Exception):
     """Raised when a provider call fails and may be retried."""
 
-    def __init__(self, message: str, provider_id: str, is_retryable: bool = True):
+    def __init__(
+        self,
+        message: str,
+        provider_id: str,
+        is_retryable: bool = True,
+        status_code: int | None = None,
+    ):
         super().__init__(message)
         self.provider_id = provider_id
         self.is_retryable = is_retryable
+        self.status_code = status_code
 
 
 class JobTimeoutError(Exception):
@@ -193,8 +226,13 @@ class _ImageReducer:
                 self.final_result["timings"] = ev["timings"]
         elif event == "failed":
             self._pending_progress = None
-            raise ProviderCallError(ev.get("message", "Image generation failed"), provider_id=self.provider_id,
-                                    is_retryable=bool(ev.get("retryable", False)))
+            message = ev.get("message", "Image generation failed")
+            status_code = _extract_http_status(message)
+            raise ProviderCallError(
+                message, provider_id=self.provider_id,
+                is_retryable=bool(ev.get("retryable", False)),
+                status_code=status_code,
+            )
         elif event == "cancelled":
             self._pending_progress = None
             raise JobCancelledError(ev.get("message") or "Job cancelled by user", provider_id=self.provider_id)

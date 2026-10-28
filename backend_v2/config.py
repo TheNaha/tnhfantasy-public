@@ -99,6 +99,7 @@ DEFAULT_CONFIG = {
         # workflow. Env override: COMFY_JOB_TIMEOUT.
         "timeout": 3600,
         "max_retries": 3,
+        "5xx_max_retries": 1,
         "retry_base_delay": 1.0,
         "retry_max_delay": 60.0,
         "llm": {
@@ -310,6 +311,7 @@ class Settings(BaseSettings):
     # 3600 comment above exists to prevent.
     job_timeout: int = DEFAULT_CONFIG["jobs"]["timeout"]
     job_max_retries: int = DEFAULT_CONFIG["jobs"]["max_retries"]
+    job_5xx_max_retries: int = DEFAULT_CONFIG["jobs"]["5xx_max_retries"]
     job_retry_base_delay: float = DEFAULT_CONFIG["jobs"]["retry_base_delay"]
     job_retry_max_delay: float = DEFAULT_CONFIG["jobs"]["retry_max_delay"]
     
@@ -1207,6 +1209,22 @@ def get_job_timeout(task_type: str = "image") -> int:
 def get_job_max_retries(task_type: str = "image") -> int:
     """Get maximum number of job retries. Prefers env var, falls back to file config."""
     return settings.job_max_retries if _env_var_is_set("JOB_MAX_RETRIES") else _job_config(task_type)["max_retries"]
+
+
+def get_job_5xx_max_retries(task_type: str = "image") -> int:
+    """Maximum retries for 5xx provider errors before failing over.
+
+    5xx errors are server-side and often indicate an overloaded or unhealthy
+    provider. Retrying them N times on the same provider burns paid
+    inferences before failover ever gets a chance. This cap is lower than the
+    general max_retries so a flaky provider fails over quickly.
+
+    Prefers env var COMFY_5XX_MAX_RETRIES, falls back to file config
+    jobs.5xx_max_retries, then 1.
+    """
+    if _env_var_is_set("5XX_MAX_RETRIES"):
+        return settings.job_5xx_max_retries
+    return _job_config(task_type).get("5xx_max_retries", 1)
 
 
 def get_job_retry_base_delay(task_type: str = "image") -> float:
