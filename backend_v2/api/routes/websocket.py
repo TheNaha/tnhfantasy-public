@@ -15,7 +15,6 @@ import asyncio
 import json
 import logging
 import os
-import select
 from datetime import datetime, timezone
 
 import psycopg2
@@ -110,9 +109,14 @@ class WebSocketManager:
         # re-broadcast to local Socket.IO clients. Without this, events emitted
         # on another backend worker process (UVICORN_WORKERS > 1) never reach
         # the WebSocket clients connected to this process.
+        #
+        # The blocking psycopg2/select loop runs in asyncio.to_thread so it
+        # never stalls the event loop that serves HTTP requests. Async
+        # operations (sio.emit) are marshalled back via run_coroutine_threadsafe.
         if database_url.startswith("postgresql"):
+            loop = asyncio.get_running_loop()
             self._notify_task = asyncio.create_task(
-                self._notify_listener(), name="ws_notify_listener"
+                self._notify_listener(loop), name="ws_notify_listener"
             )
             logger.info(
                 "[WebSocket] Starting cross-process NOTIFY listener channel=%s",
@@ -162,13 +166,24 @@ class WebSocketManager:
                 pass
         logger.info("[WebSocket] Stopped EventBus broadcast listener")
 
-    async def _notify_listener(self) -> None:
+    async def _notify_listener(self, loop: asyncio.AbstractEventLoop) -> None:
         """LISTEN on Postgres NOTIFY channel and re-broadcast to local WS clients.
 
-        Runs for the life of the WebSocketManager. On each NOTIFY, parses the
-        payload and emits the event to the appropriate Socket.IO room so
-        clients connected to this process see events from sibling processes.
+        The blocking psycopg2/select loop runs in asyncio.to_thread so it never
+        stalls the event loop that serves HTTP requests. sio.emit() calls are
+        marshalled back to the event loop via run_coroutine_threadsafe.
         """
+        await asyncio.to_thread(self._run_notify_listener_sync, loop)
+
+    def _run_notify_listener_sync(self, loop: asyncio.AbstractEventLoop) -> None:
+        """Blocking psycopg2 LISTEN loop for the cross-process event relay.
+
+        Runs in a worker thread via asyncio.to_thread so it never stalls the
+        event loop that serves HTTP requests. sio.emit() calls are marshalled
+        back to the event loop via asyncio.run_coroutine_threadsafe.
+        """
+        import select as _select
+
         conn = psycopg2.connect(database_url)
         conn.autocommit = True
         try:
@@ -178,14 +193,25 @@ class WebSocketManager:
                 "[WebSocket] NOTIFY listener connected channel=%s",
                 CROSS_PROCESS_EVENT_CHANNEL,
             )
+        except Exception as exc:
+            logger.warning(
+                "[WebSocket] NOTIFY listener start failed channel=%s error=%s",
+                CROSS_PROCESS_EVENT_CHANNEL,
+                str(exc),
+            )
+            try:
+                conn.close()
+            except Exception:
+                pass
+            return
+
+        try:
             while self._running:
-                # Wait up to 1 second for a notification so we can check
-                # _running regularly and exit cleanly on shutdown.
-                if select.select([conn], [], [], 1.0) == ([], [], []):
+                if _select.select([conn], [], [], 1.0) == ([], [], []):
                     continue
                 conn.poll()
-                for notify in conn.notifies:
-                    conn.notifies.clear()
+                for notify in list(conn.notifies):
+                    conn.notifies.remove(notify)
                     try:
                         payload = json.loads(notify.payload)
                     except (json.JSONDecodeError, TypeError):
@@ -205,12 +231,12 @@ class WebSocketManager:
                     # same as the EventBus path. Job data is minimal (id only);
                     # clients that need more poll GET /api/jobs/{id}.
                     room = event_type.split(".")[0] if "." in event_type else event_type
+
+                    # Marshal the async sio.emit() back to the event loop.
                     try:
-                        await sio.emit(
-                            event_type,
-                            {"job": job},
-                            room=room,
-                        )
+                        asyncio.run_coroutine_threadsafe(
+                            sio.emit(event_type, {"job": job}, room=room), loop
+                        ).result(timeout=5.0)
                     except Exception as e:
                         logger.error(
                             "[WebSocket] Error re-broadcasting NOTIFY event event=%s error=%s",
