@@ -574,3 +574,160 @@ class TestTheDurableMemoryGateIsStillHonoured:
             audit=_audit_decision(updater_gates={"gate_durable_memory": 0.9}),
         )
         assert memory_calls, "a fired durable-memory gate did not extract"
+
+
+class TestTheContinuationAuditDoesNotRepeatTheBeat:
+    """A continuation's prose is joined into its parent bubble before the
+    post-turn hook reads the transcript (`_append_chat_continuation` runs at
+    message-write time), so the audit's transcript already carries the FULL
+    text. `evaluate_post_generation_audit` appends `generated_text` onto the
+    messages on top of that, so the director was shown the same beat twice —
+    and every gate question asks about "this exchange": a beat that shows up
+    twice reads as a beat that happened twice, and the Statekeeper could
+    write it into the snapshot twice as convincingly.
+    """
+
+    @staticmethod
+    def _ctx(test_session, chat, char, recent_msgs, *, generated, continuation_count):
+        return {
+            "session": test_session,
+            "chat": chat,
+            "character": char,
+            "chat_id": chat.id,
+            "character_id": char.id,
+            "outputs": [],
+            "final_result": {},
+            "assistant_content": generated,
+            "recent_msgs": recent_msgs,
+            "current_turns": 1,
+            "continuation_count": continuation_count,
+        }
+
+    async def test_the_merged_bubble_is_not_listed_twice(
+        self, session, no_enqueue, monkeypatch
+    ):
+        from services.pipeline_stages import audit_stage
+
+        chat, char = _seed_chat(session)
+        captured = {}
+
+        async def _fake_audit(self, **kwargs):
+            captured.update(kwargs)
+            return _audit_decision()
+
+        monkeypatch.setattr(
+            "services.decision_service.DecisionService.evaluate_post_generation_audit",
+            _fake_audit,
+        )
+        monkeypatch.setattr(
+            "services.updater_service.record_director_decision",
+            lambda *args, **kwargs: None,
+        )
+
+        await audit_stage(
+            self._ctx(
+                session,
+                chat,
+                char,
+                [
+                    {"role": "user", "content": "Where are we going?"},
+                    {
+                        "role": "char",
+                        "content": (
+                            "North, before the bridge burns. She hesitated, "
+                            "her gloved fingers rapped on the door and swung inward"
+                        ),
+                    },
+                ],
+                generated="and swung inward",
+                continuation_count=1,
+            )
+        )
+
+        assert captured["generated_text"] == "", (
+            "the continuation chunk was appended onto a transcript that "
+            "already carries it inside the merged bubble"
+        )
+        merged = captured["recent_messages"][-1]["content"]
+        assert merged.count("swung inward") == 1, (
+            "the audit's transcript still shows the continued beat twice"
+        )
+
+    async def test_an_unmerged_continuation_keeps_its_text(
+        self, session, no_enqueue, monkeypatch
+    ):
+        """The parent bubble was swiped away mid-continuation, so the merge
+        no-opped: the chunk must not be silently dropped from the audit, or
+        the gates would judge an exchange that never showed its words."""
+        from services.pipeline_stages import audit_stage
+
+        chat, char = _seed_chat(session)
+        captured = {}
+
+        async def _fake_audit(self, **kwargs):
+            captured.update(kwargs)
+            return _audit_decision()
+
+        monkeypatch.setattr(
+            "services.decision_service.DecisionService.evaluate_post_generation_audit",
+            _fake_audit,
+        )
+        monkeypatch.setattr(
+            "services.updater_service.record_director_decision",
+            lambda *args, **kwargs: None,
+        )
+
+        await audit_stage(
+            self._ctx(
+                session,
+                chat,
+                char,
+                [
+                    {"role": "user", "content": "Where are we going?"},
+                    {"role": "char", "content": "North, before the bridge burns."},
+                ],
+                generated="and swung inward",
+                continuation_count=1,
+            )
+        )
+
+        assert captured["generated_text"] == "and swung inward"
+
+    async def test_a_plain_turn_still_appends_its_reply(
+        self, session, no_enqueue, monkeypatch
+    ):
+        """Non-continuation turns are unchanged: the reply is the transcript's
+        new tail, and the audit must receive it."""
+        from services.pipeline_stages import audit_stage
+
+        chat, char = _seed_chat(session)
+        captured = {}
+
+        async def _fake_audit(self, **kwargs):
+            captured.update(kwargs)
+            return _audit_decision()
+
+        monkeypatch.setattr(
+            "services.decision_service.DecisionService.evaluate_post_generation_audit",
+            _fake_audit,
+        )
+        monkeypatch.setattr(
+            "services.updater_service.record_director_decision",
+            lambda *args, **kwargs: None,
+        )
+
+        await audit_stage(
+            self._ctx(
+                session,
+                chat,
+                char,
+                [
+                    {"role": "user", "content": "Where are we going?"},
+                    {"role": "char", "content": "North, before the bridge burns."},
+                ],
+                generated="A fresh, unwritten reply.",
+                continuation_count=0,
+            )
+        )
+
+        assert captured["generated_text"] == "A fresh, unwritten reply."

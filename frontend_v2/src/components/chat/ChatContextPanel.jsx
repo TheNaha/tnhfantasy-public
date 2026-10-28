@@ -20,6 +20,7 @@ import {
 import { useLocations } from '../../hooks/useLocations';
 import { isJobComplete, isJobFailed, isJobRunning } from '../../utils/jobStatus';
 import { parseGalleryDate } from '../../utils/dateTime';
+import { classifyDirectorEngine } from '../../utils/directorEngine';
 import ContextField from './ContextField';
 import ContextSlider from './ContextSlider';
 import SamplingControls from '../common/SamplingControls';
@@ -1162,6 +1163,12 @@ function DirectorStatekeeperSection({ chat, onSave }) {
     const directorEnabled = chat.director_enabled !== false;
     const snap = chat.state_snapshot || {};
     const lastDecision = snap.last_director_decision || snap.last_decision || null;
+    // The engine stamp says which tier of the Laya cascade actually answered
+    // (an in-process or remote Laya pass, a generative fallback, the rule
+    // table, or nothing). Show degraded tiers as degraded instead of in the
+    // same green as a live pass, so a director that fell back is visible
+    // from the chat, not only on the Studio's Decision Traces tab.
+    const engineInfo = classifyDirectorEngine(lastDecision);
     const tension = Number(snap.scene_tension || lastDecision?.scene_tension || 2);
     const tensionLabel = snap.scene_tension_label || lastDecision?.scene_tension_label || 'normal';
     const inventoryList = Array.isArray(snap.inventory) ? snap.inventory : [];
@@ -2215,8 +2222,8 @@ function DirectorStatekeeperSection({ chat, onSave }) {
                             <span className="text-gray-400 uppercase tracking-wider font-bold">
                                 Last System 1 Decision
                             </span>
-                            <span className="font-mono text-emerald-400">
-                                {lastDecision.provider_tier || lastDecision.engine_used} · {lastDecision.latency_ms}ms
+                            <span className={clsx("font-mono", engineInfo.tone)} title={engineInfo.level === 'live' ? undefined : "Laya's director pass fell back — variant routing and picky answers come from the lower tier."}>
+                                {engineInfo.label} · {lastDecision.latency_ms}ms
                             </span>
                         </div>
                         <div className="flex flex-wrap gap-1 text-2xs">
@@ -2229,6 +2236,14 @@ function DirectorStatekeeperSection({ chat, onSave }) {
                             {lastDecision.should_run_updater && (
                                 <span className="px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30 font-semibold">
                                     Statekeeper Triggered
+                                </span>
+                            )}
+                            {engineInfo.level !== 'live' && (
+                                <span
+                                    className={clsx("px-1.5 py-0.5 rounded border font-semibold", engineInfo.chip)}
+                                    title="Laya's director model could not answer; the decision came from a lower tier."
+                                >
+                                    Director: {engineInfo.level}
                                 </span>
                             )}
                         </div>

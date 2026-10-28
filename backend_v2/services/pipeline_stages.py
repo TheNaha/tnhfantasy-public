@@ -167,8 +167,27 @@ async def audit_stage(ctx: dict[str, Any]) -> Any:
     current_turns = int(ctx.get("current_turns", 1))
     continuation_count = int(ctx.get("continuation_count", 0))
 
+    # A continuation's prose is ALREADY in `recent_msgs`: `_append_chat_continuation`
+    # joined this job's chunk into its parent bubble before this hook read the
+    # transcript. `evaluate_post_generation_audit` appends `generated_text` onto
+    # the messages on top of that, so the director was shown the same beat twice —
+    # and the gate questions ask about "this exchange", meaning a beat that shows
+    # up twice reads as a beat that happened twice.
+    generated_for_audit = assistant_content or ""
+    if continuation_count > 0 and recent_msgs and generated_for_audit:
+        # Passing "" lets the merged transcript carry the full text, so the
+        # audit's tail — and the syntax completion check on it — reads the
+        # real end of the bubble. If the chunk is NOT in the last row (the
+        # parent bubble was swiped away mid-continuation and
+        # `_append_chat_continuation` no-opped), the text passes through
+        # unchanged; losing it from the audit would be the bigger of the two
+        # harms.
+        last_line = recent_msgs[-1].get("content") or ""
+        if generated_for_audit in last_line:
+            generated_for_audit = ""
+
     audit_decision = await DecisionService(session).evaluate_post_generation_audit(
-        generated_text=assistant_content or "",
+        generated_text=generated_for_audit,
         character_name=char_obj.name if char_obj else "Character",
         user_name=chat_obj.persona_name or "User",
         story_location=chat_obj.story_location,
