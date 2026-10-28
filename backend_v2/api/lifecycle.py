@@ -28,6 +28,7 @@ from infrastructure.scheduler import (
 from services.job_queue import queue_manager
 from services.job_service import FAILURE_FINALIZATION, JobService
 from services.provider_runtime import monitor_provider_changes
+from infrastructure.worker_registry import start_cross_process_dispatch_listener
 
 logger = get_logger("lifecycle")
 
@@ -457,6 +458,17 @@ async def startup_application(process_job, ws_manager):
         timeout=None,
     )
 
+    # Cross-process remote agent dispatch listener: LISTENs on the
+    # worker_dispatch Postgres channel and forwards jobs to local WebSocket
+    # workers. Runs on every process so any process can dispatch to a remote
+    # agent connected to any other process.
+    logger.info("startup_init", phase="cross_process_dispatch")
+    dispatch_listener_task = start_background_task(
+        start_cross_process_dispatch_listener(),
+        task_name="cross_process_dispatch",
+        timeout=None,
+    )
+
     logger.info("startup_init", phase="world_integration")
     from services.world_integration_service import start_world_integration_service
     start_background_task(
@@ -469,6 +481,7 @@ async def startup_application(process_job, ws_manager):
     return {
         "provider_monitor_task": provider_monitor_task,
         "broadcast_task": broadcast_task,
+        "dispatch_listener_task": dispatch_listener_task,
     }
 
 
@@ -495,7 +508,7 @@ async def _shutdown_engine_cache() -> None:
         logger.warning("shutdown_engine_cache_failed", error=str(exc))
 
 
-async def shutdown_application(ws_manager, provider_monitor_task, broadcast_task) -> None:
+async def shutdown_application(ws_manager, provider_monitor_task, broadcast_task, dispatch_listener_task=None) -> None:
     """Run application shutdown side effects in a controlled order."""
     logger.info("shutdown", phase="websocket")
     await ws_manager.stop_broadcasting()
@@ -504,6 +517,14 @@ async def shutdown_application(ws_manager, provider_monitor_task, broadcast_task
         await broadcast_task
     except (asyncio.CancelledError, TimeoutError):
         pass
+
+    logger.info("shutdown", phase="cross_process_dispatch")
+    if dispatch_listener_task is not None:
+        dispatch_listener_task.cancel()
+        try:
+            await dispatch_listener_task
+        except asyncio.CancelledError:
+            pass
 
     logger.info("shutdown", phase="provider_monitor")
     provider_monitor_task.cancel()

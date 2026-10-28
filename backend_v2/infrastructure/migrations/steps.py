@@ -1966,6 +1966,11 @@ def _get_schema_migration_steps() -> list[MigrationStep]:
             description="Update voice_models: change type default to qwen3_tts, add voice_preset, voice_style, source columns",
             apply_fn=_migration_110_voice_model_schema_update,
         ),
+        MigrationStep(
+            version="111_remote_agent_ws_connections",
+            description="Add provider_ws_connections, worker_dispatch_outbox, worker_dispatch_result tables so any backend process can see which external worker (e.g. Colab remote agent) is connected and dispatch jobs to it across processes via Postgres NOTIFY",
+            apply_fn=_migration_111_remote_agent_ws_connections,
+        ),
     ]
 
 
@@ -2015,6 +2020,70 @@ def _migration_110_voice_model_schema_update(conn) -> bool:
     
     _verify_required_columns(conn, "voice_models", {"voice_preset", "voice_style", "source"})
     return applied
+
+
+def _migration_111_remote_agent_ws_connections(conn) -> bool:
+    """Add provider_ws_connections, worker_dispatch_outbox, worker_dispatch_result
+    tables for cross-process remote agent dispatch.
+
+    provider_ws_connections tracks which external worker (WebSocket) is connected
+    for each provider, and on which backend process (host:port:pid). Any process
+    can query this table to see if a remote agent is connected.
+
+    worker_dispatch_outbox holds pending cross-process job dispatches: when a
+    process without the WebSocket needs to send a job to a remote agent, it
+    inserts here and NOTIFYs the worker_dispatch channel; the process holding the
+    WebSocket picks it up and forwards.
+
+    worker_dispatch_result holds the terminal result of cross-process dispatches
+    so the calling process can retrieve it.
+    """
+    conn.execute(text("""
+        CREATE TABLE IF NOT EXISTS provider_ws_connections (
+            provider_id VARCHAR PRIMARY KEY,
+            backend_host VARCHAR NOT NULL,
+            backend_port INTEGER NOT NULL,
+            pid INTEGER NOT NULL,
+            connected_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            last_heartbeat TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    """))
+    conn.execute(text("""
+        CREATE TABLE IF NOT EXISTS worker_dispatch_outbox (
+            id VARCHAR PRIMARY KEY,
+            provider_id VARCHAR NOT NULL,
+            job_data JSONB NOT NULL,
+            status VARCHAR NOT NULL DEFAULT 'pending',
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            claimed_at TIMESTAMPTZ
+        )
+    """))
+    conn.execute(text("""
+        CREATE TABLE IF NOT EXISTS worker_dispatch_result (
+            job_id VARCHAR PRIMARY KEY,
+            status VARCHAR NOT NULL,
+            result JSONB,
+            error TEXT,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    """))
+    logger.info("migration_tables_created", tables="provider_ws_connections, worker_dispatch_outbox, worker_dispatch_result")
+    _verify_required_columns(
+        conn,
+        "provider_ws_connections",
+        {"provider_id", "backend_host", "backend_port", "pid", "connected_at", "last_heartbeat"},
+    )
+    _verify_required_columns(
+        conn,
+        "worker_dispatch_outbox",
+        {"id", "provider_id", "job_data", "status", "created_at", "claimed_at"},
+    )
+    _verify_required_columns(
+        conn,
+        "worker_dispatch_result",
+        {"job_id", "status", "result", "error", "created_at"},
+    )
+    return True
 
 
 def _migration_090_world_membership_fks(conn) -> bool:
