@@ -18,6 +18,10 @@ from core.entities import (
     LoadBalancerState,
     Provider,
 )
+from core.provider_capabilities import (
+    provider_supports_sampler,
+    provider_supports_scheduler,
+)
 from infrastructure.background_tasks import start_background_task
 from infrastructure.logging import get_logger
 from infrastructure.repositories import ProviderRepository
@@ -59,6 +63,14 @@ _provider_health_cache = TTLCache(
     maxsize=100,
     ttl=15.0
 )
+
+# Capability dicts per provider, fetched lazily from the engine's object_info
+# and cached with a TTL. Used for sampler/scheduler hard-block checks so a
+# provider that cannot run a job's sampler or scheduler is never selected.
+_CAPABILITY_CACHE_TTL_SECONDS = _parse_positive_float(
+    os.getenv("COMFY_PROVIDER_CAPABILITY_CACHE_TTL_SECONDS"), 60.0
+)
+_capability_cache: dict[str, tuple[float, dict[str, Any] | None]] = {}
 
 # Circuit-breaker: after N consecutive failures a provider is skipped until
 # its failure streak is reset by a successful job.
@@ -443,10 +455,65 @@ class LoadBalancer:
                 _provider_health_cache[f"in_process:{provider.id}:{m}"] = m in ready_for
         return is_healthy
 
+    async def _get_provider_capabilities(
+        self, provider: Provider
+    ) -> dict[str, Any] | None:
+        """Fetch and cache a provider's capability dict from its object_info graph.
+
+        Calls the engine's `get_object_info()` and runs `derive_capabilities()`
+        on the result. Cached with a TTL so repeated dispatches don't re-fetch.
+
+        Returns None when the provider's capabilities cannot be determined
+        (engine doesn't implement `get_object_info`, or the fetch failed).
+        Callers treat None as "unknown" — the provider is not blocked on that
+        basis.
+        """
+        import time
+
+        now = time.monotonic()
+        cached = _capability_cache.get(provider.id)
+        if cached and (now - cached[0]) < _CAPABILITY_CACHE_TTL_SECONDS:
+            return cached[1]
+
+        try:
+            from services.engines.engine_factory import get_engine
+
+            engine = get_engine(provider.id, provider)
+            if engine is None:
+                _capability_cache[provider.id] = (now, None)
+                return None
+
+            get_object_info = getattr(engine, "get_object_info", None)
+            if get_object_info is None:
+                _capability_cache[provider.id] = (now, None)
+                return None
+
+            graph = await get_object_info()
+        except Exception:
+            _capability_cache[provider.id] = (now, None)
+            return None
+
+        if not isinstance(graph, dict) or not graph:
+            _capability_cache[provider.id] = (now, None)
+            return None
+
+        try:
+            from core.provider_capabilities import derive_capabilities
+
+            caps = derive_capabilities(graph, provider.id)
+        except Exception:
+            _capability_cache[provider.id] = (now, None)
+            return None
+
+        _capability_cache[provider.id] = (now, caps)
+        return caps
+
     async def get_next_provider(
         self, 
         preferred_provider_id: str | None = None,
         required_models: dict[str, list[str]] | None = None,
+        sampler_name: str | None = None,
+        scheduler_name: str | None = None,
         exclude_provider_ids: set[str] | None = None,
         task_type: str = "image",
     ) -> Provider | None:
@@ -456,6 +523,10 @@ class LoadBalancer:
         Args:
             preferred_provider_id: Optional specific provider to use
             required_models: Optional dict of {directory: [filenames]} for model-aware routing
+            sampler_name: Optional sampler name the job requires; providers that
+                          don't advertise it are excluded (hard block).
+            scheduler_name: Optional scheduler name the job requires; providers
+                          that don't advertise it are excluded (hard block).
             
         Returns:
             Provider or None if no providers available
@@ -556,6 +627,36 @@ class LoadBalancer:
             # Filter to only eligible providers
             providers = [p for p in providers if p.id in eligible_ids]
             
+            if not providers:
+                return None
+        
+        # Filter by sampler/scheduler capability (hard block).
+        # A provider that does not advertise the job's sampler or scheduler
+        # cannot run it — never select it, fail over instead.
+        if sampler_name or scheduler_name:
+            capped_providers = []
+            for p in providers:
+                caps = await self._get_provider_capabilities(p)
+                if sampler_name is not None:
+                    supported = provider_supports_sampler(caps, sampler_name)
+                    if supported is False:
+                        logger.debug(
+                            "lb_sampler_unsupported",
+                            provider_id=p.id,
+                            sampler=sampler_name,
+                        )
+                        continue
+                if scheduler_name is not None:
+                    supported = provider_supports_scheduler(caps, scheduler_name)
+                    if supported is False:
+                        logger.debug(
+                            "lb_scheduler_unsupported",
+                            provider_id=p.id,
+                            scheduler=scheduler_name,
+                        )
+                        continue
+                capped_providers.append(p)
+            providers = capped_providers
             if not providers:
                 return None
         

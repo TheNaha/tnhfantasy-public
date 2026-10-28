@@ -4,9 +4,10 @@ from datetime import datetime, timezone
 
 from core.entities import JobStatus, Provider
 from core.exceptions import NotFoundError
-from core.workflow_parser import extract_models_from_workflow
+from core.workflow_parser import extract_models_from_workflow, extract_sampler_scheduler_from_workflow
 from infrastructure.logging import get_logger
 from services.job_processing import finalize_successful_job
+from config import get_job_5xx_max_retries
 # `ProviderService` is the accessor the load-balancing configuration is read
 # through (`ProviderService.get_load_balancing_config`), and it is also the
 # `monkeypatch.setattr` target the job-processing tests use. It used to be
@@ -102,6 +103,8 @@ async def select_next_provider(
     exhausted_providers: set[str],
     preferred_provider_id: str | None,
     required_models: dict | None = None,
+    sampler_name: str | None = None,
+    scheduler_name: str | None = None,
     task_type: str = "image",
     fallback_enabled: bool = True,
 ) -> Provider | None:
@@ -355,7 +358,13 @@ async def execute_job(
             stagger_delay = get_stagger_delay_fn() if get_stagger_delay_fn else 0.0
 
             retry_count = 0
+            max_retries_5xx = get_job_5xx_max_retries(task_type)
             required_models = extract_models_from_workflow(job.workflow) if isinstance(job.workflow, dict) else {}
+            sampler_name, scheduler_name = (
+                extract_sampler_scheduler_from_workflow(job.workflow)
+                if isinstance(job.workflow, dict)
+                else (None, None)
+            )
             # Read once per job: the setting is a user preference, not
             # something that changes mid-job, and the accessor is the same one
             # the settings API writes through.
@@ -380,6 +389,8 @@ async def execute_job(
                         exhausted_providers=exhausted_providers,
                         preferred_provider_id=preferred_provider_id,
                         required_models=required_models,
+                        sampler_name=sampler_name,
+                        scheduler_name=scheduler_name,
                         task_type=task_type,
                         fallback_enabled=fallback_enabled,
                     )
@@ -610,12 +621,20 @@ async def execute_job(
                     await _abort_provider_attempt(runtime, current_provider.id, job_id, load_balancer, "provider_error")
                     should_retry = False
                     if error.is_retryable:
+                        # 5xx errors are server-side: retrying them N times on
+                        # the same provider burns paid inferences before
+                        # failover gets a chance. Use the reduced cap.
+                        retry_cap = (
+                            max_retries_5xx
+                            if error.status_code is not None and 500 <= error.status_code < 600
+                            else max_retries
+                        )
                         should_retry, retry_count = await maybe_retry_current_provider(
                             job_service=job_service,
                             job_id=job_id,
                             provider_id=current_provider.id,
                             retry_count=retry_count,
-                            max_retries=max_retries,
+                            max_retries=retry_cap,
                             base_delay=base_delay,
                             max_delay=max_delay,
                             retry_message="Retrying after error (attempt {attempt})...",
