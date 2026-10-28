@@ -4,11 +4,13 @@ Service to check if required models are available on providers.
 Used for pre-flight job validation and model-aware load balancing.
 """
 from dataclasses import dataclass, field
+import os
 import time
 
 from sqlalchemy import and_, or_
 from sqlmodel import Session, select
 
+from config import env_positive_float
 from core.entities import ModelFile, ModelV2, ModelVersion, Provider, ProviderVersionStatus
 from infrastructure.logging import model_logger
 from infrastructure.repositories import ProviderRepository
@@ -19,7 +21,15 @@ logger = model_logger()
 # @cached: that is key-by-argument (which would stringify a Session), this is
 # keyed by directory and has to be clearable from the model/provider lifecycle
 # paths that change the answer.
-AVAILABLE_MODELS_TTL_SECONDS = 30
+#
+# Override with COMFY_MODEL_AVAILABILITY_TTL_SECONDS. A shorter window means
+# a just-installed model becomes routable sooner, and a just-deleted one stops
+# being offered sooner; the write paths already invalidate through
+# LoadBalancer.invalidate_model_availability_cache(), so the TTL is the
+# backstop for any writer that misses its invalidation call.
+AVAILABLE_MODELS_TTL_SECONDS = env_positive_float(
+    os.environ.get("COMFY_MODEL_AVAILABILITY_TTL_SECONDS"), 5.0
+)
 
 _available_models_cache: dict[str, tuple[float, list[str]]] = {}
 
