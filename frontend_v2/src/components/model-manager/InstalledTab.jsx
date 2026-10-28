@@ -705,6 +705,7 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
                             <button
                                 onClick={() => setShowBatchSyncModal(false)}
                                 className="text-gray-400 hover:text-white"
+                                aria-label="Close sync modal"
                             >
                                 <X size={18} />
                             </button>

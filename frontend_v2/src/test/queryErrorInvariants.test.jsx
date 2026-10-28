@@ -560,6 +560,12 @@ const HAND_ROLLED_EXEMPTIONS = new Map([
     // "Checking…" — it cannot empty the list.
     ['components/model-manager/ModelDetailsModal.jsx',
         'allTags is a union of the tags on the file record the caller already holds and the provenance query, so a failed provenance query empties only one half and cannot make the list look empty; the identifier the resolver reached (provenancePending) only decides whether the provenance line says "Checking…"'],
+
+    // `filteredCatalog` in EmbeddingBar is filtered in-memory by the local
+    // `searchQuery` and heuristics from `embeddings` passed as props. Emptiness
+    // reflects no matching search results, not an unhandled query failure.
+    ['components/generator/EmbeddingBar.jsx',
+        'filteredCatalog is filtered in-memory by the local searchQuery and heuristics from embeddings passed as props; emptiness reflects no matching search results, not an unhandled query failure'],
 ]);
 
 /** Query-derived hand-rolled empty states with no error branch, repo-wide. */

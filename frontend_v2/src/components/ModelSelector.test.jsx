@@ -47,6 +47,7 @@ const lastListArgs = () => filesApi.list.mock.calls[filesApi.list.mock.calls.len
 
 describe("ModelSelector Accessibility", () => {
   beforeEach(() => {
+    localStorage.clear();
     queryClient.clear();
   });
 
@@ -164,6 +165,7 @@ describe("ModelSelector Accessibility", () => {
 // LoRA was only findable if its filename happened to name the character.
 describe("ModelSelector tag discovery", () => {
   beforeEach(() => {
+    localStorage.clear();
     queryClient.clear();
     filesApi.list.mockReset();
     filesApi.list.mockResolvedValue({ files: [] });
@@ -300,5 +302,91 @@ describe("ModelSelector tag discovery", () => {
       expect(screen.getAllByText("Tagged By Character").length).toBeGreaterThan(0);
       expect(screen.queryByText("Sunset Only")).not.toBeInTheDocument();
     });
+  });
+});
+
+describe("ModelSelector persistence across modal sessions and directory isolation", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    queryClient.clear();
+    filesApi.list.mockReset();
+    filesApi.list.mockResolvedValue({ files: [] });
+  });
+
+  const loraProps = {
+    label: "LoRAs",
+    onChange: vi.fn(),
+    directory: "models/loras",
+    selectedModel: null,
+  };
+
+  it("persists search query in localStorage and restores it when reopening", async () => {
+    const { unmount } = renderWithProvider(
+      <ModelSelector {...loraProps} autoOpen={true} />
+    );
+
+    const searchInput = screen.getByLabelText("Search models");
+    fireEvent.change(searchInput, { target: { value: "cat" } });
+
+    expect(JSON.parse(localStorage.getItem("model_selector_models_loras_search"))).toBe("cat");
+
+    // Close and unmount
+    fireEvent.click(screen.getByLabelText("Close modal"));
+    unmount();
+
+    // Reopen
+    renderWithProvider(<ModelSelector {...loraProps} autoOpen={true} />);
+    const reopenedSearch = screen.getByLabelText("Search models");
+    expect(reopenedSearch.value).toBe("cat");
+  });
+
+  it("clears search query via the search clear button", async () => {
+    renderWithProvider(<ModelSelector {...loraProps} autoOpen={true} />);
+
+    const searchInput = screen.getByLabelText("Search models");
+    fireEvent.change(searchInput, { target: { value: "cat" } });
+
+    const clearBtn = screen.getByLabelText("Clear search");
+    expect(clearBtn).toBeInTheDocument();
+    fireEvent.click(clearBtn);
+
+    expect(searchInput.value).toBe("");
+    expect(JSON.parse(localStorage.getItem("model_selector_models_loras_search"))).toBe("");
+  });
+
+  it("persists filters and clears them with Clear Filters button", async () => {
+    renderWithProvider(<ModelSelector {...loraProps} autoOpen={true} />);
+
+    const baseModelSelect = screen.getByDisplayValue("All Base Models");
+    fireEvent.change(baseModelSelect, { target: { value: "Illustrious" } });
+
+    expect(JSON.parse(localStorage.getItem("model_selector_models_loras_baseModel"))).toBe("Illustrious");
+
+    const clearFiltersBtn = screen.getByLabelText("Clear all filters");
+    fireEvent.click(clearFiltersBtn);
+
+    expect(screen.getByDisplayValue("All Base Models")).toBeInTheDocument();
+    expect(localStorage.getItem("model_selector_models_loras_baseModel")).toBeNull();
+  });
+
+  it("isolates saved settings across different directories", async () => {
+    localStorage.setItem("model_selector_models_loras_search", JSON.stringify("lora_term"));
+    localStorage.setItem("model_selector_models_checkpoints_search", JSON.stringify("checkpoint_term"));
+
+    const { unmount } = renderWithProvider(
+      <ModelSelector {...loraProps} autoOpen={true} />
+    );
+    expect(screen.getByLabelText("Search models").value).toBe("lora_term");
+    unmount();
+
+    renderWithProvider(
+      <ModelSelector
+        label="Checkpoints"
+        onChange={vi.fn()}
+        directory="models/checkpoints"
+        autoOpen={true}
+      />
+    );
+    expect(screen.getByLabelText("Search models").value).toBe("checkpoint_term");
   });
 });

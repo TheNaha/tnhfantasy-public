@@ -1,4 +1,4 @@
-import { useState, useEffect, memo, useMemo, useCallback } from "react";
+import { useState, useEffect, memo, useMemo, useCallback, useRef } from "react";
 import { Loader2 } from "lucide-react";
 import { createPortal } from "react-dom";
 import { modelListKey } from "../constants/queryKeys";
@@ -12,6 +12,36 @@ import TriggerBox from "./selector/TriggerBox";
 import ModelFilterBar from "./selector/ModelFilterBar";
 import ModelGridCard from "./selector/ModelGridCard";
 import { QueryErrorState } from "./common/QueryState";
+
+function getSelectorSaved(directory, key, defaultValue) {
+  try {
+    const dirKey = directory ? directory.replace(/[^a-zA-Z0-9_-]/g, "_") : "default";
+    const item = localStorage.getItem(`model_selector_${dirKey}_${key}`);
+    return item !== null ? JSON.parse(item) : defaultValue;
+  } catch {
+    return defaultValue;
+  }
+}
+
+function setSelectorSaved(directory, key, value) {
+  try {
+    const dirKey = directory ? directory.replace(/[^a-zA-Z0-9_-]/g, "_") : "default";
+    localStorage.setItem(`model_selector_${dirKey}_${key}`, JSON.stringify(value));
+  } catch {
+    // ignore quota errors
+  }
+}
+
+function clearSelectorSaved(directory) {
+  try {
+    const dirKey = directory ? directory.replace(/[^a-zA-Z0-9_-]/g, "_") : "default";
+    ["search", "sort", "baseModel", "type", "nsfw", "tags", "scroll"].forEach((key) => {
+      localStorage.removeItem(`model_selector_${dirKey}_${key}`);
+    });
+  } catch {
+    // ignore
+  }
+}
 
 // One sorter per seed, kept at module scope so its key cache survives
 // re-renders. createStableSorter memoises the hash per item identity, which is
@@ -46,7 +76,7 @@ const ModelSelector = memo(function ModelSelector({
   providersLoading = false,
 }) {
   const [isOpen, setIsOpen] = useState(autoOpen);
-  const [search, setSearch] = useState("");
+  const [search, setSearch] = useState(() => getSelectorSaved(directory, "search", ""));
   const [prevAutoOpen, setPrevAutoOpen] = useState(autoOpen);
   if (autoOpen !== prevAutoOpen) {
     setPrevAutoOpen(autoOpen);
@@ -54,15 +84,89 @@ const ModelSelector = memo(function ModelSelector({
   }
   const [expandedModel, setExpandedModel] = useState(null);
 
-  const [sortBy, setSortBy] = useState("name");
-  const [filterBaseModel, setFilterBaseModel] = useState("all");
-  const [filterType, setFilterType] = useState("all");
-  const [showNSFW, setShowNSFW] = useState(true);
+  const [sortBy, setSortBy] = useState(() => getSelectorSaved(directory, "sort", "name"));
+  const [filterBaseModel, setFilterBaseModel] = useState(() => getSelectorSaved(directory, "baseModel", "all"));
+  const [filterType, setFilterType] = useState(() => getSelectorSaved(directory, "type", "all"));
+  const [showNSFW, setShowNSFW] = useState(() => getSelectorSaved(directory, "nsfw", true));
   // Tag filtering is server-side (GET /api/files?tags=a,b applies AND across the
   // list). This was missing entirely, so the one place a user picks the model
   // they are about to generate with could not filter by tag — which is exactly
   // "I have a hard time to find a LORA for a specific character".
-  const [selectedTags, setSelectedTags] = useState([]);
+  const [selectedTags, setSelectedTags] = useState(() => getSelectorSaved(directory, "tags", []));
+
+  const [prevDir, setPrevDir] = useState(directory);
+  if (directory !== prevDir) {
+    setPrevDir(directory);
+    scrollRestoredRef.current = false;
+    setSearch(getSelectorSaved(directory, "search", ""));
+    setSortBy(getSelectorSaved(directory, "sort", "name"));
+    setFilterBaseModel(getSelectorSaved(directory, "baseModel", "all"));
+    setFilterType(getSelectorSaved(directory, "type", "all"));
+    setShowNSFW(getSelectorSaved(directory, "nsfw", true));
+    setSelectedTags(getSelectorSaved(directory, "tags", []));
+  }
+
+  const gridContainerRef = useRef(null);
+  const isRestoringScrollRef = useRef(false);
+  const scrollRestoredRef = useRef(false);
+
+  const handleSearchChange = useCallback((newSearch) => {
+    setSearch(newSearch);
+    setSelectorSaved(directory, "search", newSearch);
+    setSelectorSaved(directory, "scroll", 0);
+    if (gridContainerRef.current) gridContainerRef.current.scrollTop = 0;
+  }, [directory]);
+
+  const handleSortChange = useCallback((newSort) => {
+    setSortBy(newSort);
+    setSelectorSaved(directory, "sort", newSort);
+    setSelectorSaved(directory, "scroll", 0);
+    if (gridContainerRef.current) gridContainerRef.current.scrollTop = 0;
+  }, [directory]);
+
+  const handleFilterBaseModelChange = useCallback((newBaseModel) => {
+    setFilterBaseModel(newBaseModel);
+    setSelectorSaved(directory, "baseModel", newBaseModel);
+    setSelectorSaved(directory, "scroll", 0);
+    if (gridContainerRef.current) gridContainerRef.current.scrollTop = 0;
+  }, [directory]);
+
+  const handleFilterTypeChange = useCallback((newType) => {
+    setFilterType(newType);
+    setSelectorSaved(directory, "type", newType);
+    setSelectorSaved(directory, "scroll", 0);
+    if (gridContainerRef.current) gridContainerRef.current.scrollTop = 0;
+  }, [directory]);
+
+  const handleShowNSFWChange = useCallback((newNsfw) => {
+    setShowNSFW(newNsfw);
+    setSelectorSaved(directory, "nsfw", newNsfw);
+    setSelectorSaved(directory, "scroll", 0);
+    if (gridContainerRef.current) gridContainerRef.current.scrollTop = 0;
+  }, [directory]);
+
+  const handleSelectedTagsChange = useCallback((newTags) => {
+    setSelectedTags(newTags);
+    setSelectorSaved(directory, "tags", newTags);
+    setSelectorSaved(directory, "scroll", 0);
+    if (gridContainerRef.current) gridContainerRef.current.scrollTop = 0;
+  }, [directory]);
+
+  const handleClearFilters = useCallback(() => {
+    setSearch("");
+    setFilterBaseModel("all");
+    setFilterType("all");
+    setShowNSFW(true);
+    setSelectedTags([]);
+    clearSelectorSaved(directory);
+    if (gridContainerRef.current) gridContainerRef.current.scrollTop = 0;
+  }, [directory]);
+
+  const handleScroll = useCallback((e) => {
+    if (isRestoringScrollRef.current) return;
+    const top = e.currentTarget.scrollTop;
+    setSelectorSaved(directory, "scroll", top);
+  }, [directory]);
 
   // The sort is normalised BEFORE the key is built, and the same normalised
   // value is used for the request. It used to be built from the raw UI value
@@ -166,9 +270,12 @@ const ModelSelector = memo(function ModelSelector({
 
 
   const handleClose = useCallback(() => {
+    if (gridContainerRef.current && !isRestoringScrollRef.current) {
+      setSelectorSaved(directory, "scroll", gridContainerRef.current.scrollTop);
+    }
     setIsOpen(false);
     if (onAutoOpenComplete) onAutoOpenComplete();
-  }, [onAutoOpenComplete]);
+  }, [directory, onAutoOpenComplete]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -229,6 +336,28 @@ const ModelSelector = memo(function ModelSelector({
     });
     return result;
   }, [models, directory, search, sortBy, filterBaseModel, filterType, showNSFW, selectedTags]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      scrollRestoredRef.current = false;
+      return;
+    }
+    if (scrollRestoredRef.current) return;
+    const savedScroll = getSelectorSaved(directory, "scroll", 0);
+    if (!savedScroll || savedScroll <= 0) {
+      scrollRestoredRef.current = true;
+      return;
+    }
+    const el = gridContainerRef.current;
+    if (el && el.scrollHeight > el.clientHeight) {
+      isRestoringScrollRef.current = true;
+      el.scrollTop = savedScroll;
+      scrollRestoredRef.current = true;
+      requestAnimationFrame(() => {
+        isRestoringScrollRef.current = false;
+      });
+    }
+  }, [isOpen, directory, filteredAndSortedModels.length]);
 
   const loadMore = useCallback(() => {
     if (hasNextPage && !isFetching) fetchNextPage();
@@ -304,27 +433,31 @@ const ModelSelector = memo(function ModelSelector({
               </div>
               <ModelFilterBar
                 search={search}
-                onSearchChange={setSearch}
+                onSearchChange={handleSearchChange}
                 sortBy={sortBy}
-                onSortChange={setSortBy}
+                onSortChange={handleSortChange}
                 filterBaseModel={filterBaseModel}
-                onFilterBaseModelChange={setFilterBaseModel}
+                onFilterBaseModelChange={handleFilterBaseModelChange}
                 filterType={filterType}
-                onFilterTypeChange={setFilterType}
+                onFilterTypeChange={handleFilterTypeChange}
                 showNSFW={showNSFW}
-                onShowNSFWChange={setShowNSFW}
+                onShowNSFWChange={handleShowNSFWChange}
                 availableTags={availableTags}
                 selectedTags={selectedTags}
-                onSelectedTagsChange={setSelectedTags}
-                hasActiveFilters={filterBaseModel !== "all" || filterType !== "all" || !showNSFW || selectedTags.length > 0}
-                onClearFilters={() => { setFilterBaseModel("all"); setFilterType("all"); setShowNSFW(true); setSelectedTags([]); }}
+                onSelectedTagsChange={handleSelectedTagsChange}
+                hasActiveFilters={search.trim() !== "" || filterBaseModel !== "all" || filterType !== "all" || !showNSFW || selectedTags.length > 0}
+                onClearFilters={handleClearFilters}
                 tagsError={isError ? error : null}
                 onRetryTags={refetch}
               />
             </div>
 
             {/* Grid */}
-            <div className="flex-1 overflow-y-auto p-3 sm:p-4">
+            <div
+              ref={gridContainerRef}
+              onScroll={handleScroll}
+              className="flex-1 overflow-y-auto p-3 sm:p-4"
+            >
               {isFetching && !isFetchingNextPage ? (
                 <div className="flex justify-center py-20 text-gray-500">
                   <Loader2 className="animate-spin" />

@@ -1,4 +1,4 @@
-import { Search } from 'lucide-react';
+import { Search, X } from 'lucide-react';
 import ModelTagFilter from './ModelTagFilter';
 
 export default function ModelFilterBar({
@@ -34,9 +34,19 @@ export default function ModelFilterBar({
           aria-label="Search models"
           value={search}
           onChange={(e) => onSearchChange(e.target.value)}
-          className="w-full bg-gray-800 border border-gray-700 rounded-full pl-10 pr-4 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
+          className="w-full bg-gray-800 border border-gray-700 rounded-full pl-10 pr-10 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
           autoFocus
         />
+        {search && (
+          <button
+            type="button"
+            onClick={() => onSearchChange('')}
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white p-1 rounded-full hover:bg-gray-700/50 transition-colors"
+            aria-label="Clear search"
+          >
+            <X size={16} />
+          </button>
+        )}
       </div>
 
       {/* Sort and Filter */}

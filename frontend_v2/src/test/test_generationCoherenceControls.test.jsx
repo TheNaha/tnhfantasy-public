@@ -94,12 +94,10 @@ describe('the ControlNet preprocessor dropdown', () => {
         const select = screen.getByDisplayValue('Canny Edge');
         const values = Array.from(select.querySelectorAll('option')).map((o) => o.value);
 
-        // `backend_v2/core/workflow_builder.py` builds a CannyEdgePreprocessor
-        // node for "Canny" and nothing else. Everything else feeds the raw
+        // `backend_v2/core/workflow_builder.py` builds preprocessor nodes for
+        // "Canny", "Depth", and "OpenPose". Everything else feeds the raw
         // photo to the ControlNet.
-        expect(values).toEqual(['None', 'Canny']);
-        expect(screen.queryByRole('option', { name: 'Depth' })).toBeNull();
-        expect(screen.queryByRole('option', { name: 'OpenPose' })).toBeNull();
+        expect(values).toEqual(['None', 'Canny', 'Depth', 'OpenPose']);
         expect(screen.queryByRole('option', { name: 'Lineart' })).toBeNull();
     });
 
