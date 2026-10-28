@@ -1,7 +1,7 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, FileText, FileDown, BookOpen, Image as ImageIcon, LayoutTemplate, Globe } from 'lucide-react';
-import { useExportStoryFormatted, useExportPublishedStory, usePublishStory, useUnpublishStory } from '../../hooks/useWorldVault';
+import { X, FileText, FileDown, BookOpen, Image as ImageIcon, LayoutTemplate, Globe, Film } from 'lucide-react';
+import { useExportStoryFormatted, useExportPublishedStory, useExportChapterComic, usePublishStory, useUnpublishStory } from '../../hooks/useWorldVault';
 import toast from 'react-hot-toast';
 import { useEscapeKey } from '../../hooks/useEscapeKey';
 import { copyToClipboard } from '../../utils/clipboard';
@@ -11,11 +11,12 @@ import { copyToClipboard } from '../../utils/clipboard';
  * `token` mode (public StoryReader) hides publish controls; `story` mode shows
  * Publish + Unpublish.
  */
-export default function ExportModal({ story, storyId, token, isOpen, onClose }) {
+export default function ExportModal({ story, storyId, chapterId, token, isOpen, onClose }) {
     useEscapeKey(onClose, !!isOpen);
 
     const exportMutation = useExportStoryFormatted();
     const exportPublishedMutation = useExportPublishedStory();
+    const exportChapterComic = useExportChapterComic();
     const publishMutation = usePublishStory();
     const unpublishMutation = useUnpublishStory();
 
@@ -31,6 +32,19 @@ export default function ExportModal({ story, storyId, token, isOpen, onClose }) 
         } else {
             exportMutation.mutate({ storyId, format }, { onSuccess, onError });
         }
+    };
+
+    const handleExportComic = (format) => {
+        if (!storyId || !chapterId) {
+            toast.error('Cannot export comic: story or chapter not selected');
+            return;
+        }
+        const onSuccess = () => {
+            toast.success(`Comic exported as ${format.toUpperCase()}`);
+            onClose();
+        };
+        const onError = (e) => toast.error(`Comic export failed: ${e.message}`);
+        exportChapterComic.mutate({ storyId, chapterId, format }, { onSuccess, onError });
     };
 
     const handlePublish = () => {
@@ -81,7 +95,7 @@ export default function ExportModal({ story, storyId, token, isOpen, onClose }) 
         });
     };
 
-    const isExporting = exportMutation.isPending || exportPublishedMutation.isPending;
+    const isExporting = exportMutation.isPending || exportPublishedMutation.isPending || exportChapterComic.isPending;
     const isPublishing = publishMutation.isPending || unpublishMutation.isPending;
     const published = !!story?.is_published;
 
@@ -154,26 +168,26 @@ export default function ExportModal({ story, storyId, token, isOpen, onClose }) 
                             </button>
 
                             <button
-                                onClick={() => handleExport('comic')}
+                                onClick={() => handleExportComic('cbz')}
                                 disabled={isExporting}
                                 className="w-full flex items-center gap-3 p-3 bg-gray-800 hover:bg-gray-700 disabled:opacity-50 rounded-lg text-left transition-colors"
                             >
-                                <LayoutTemplate size={20} className="text-red-400" />
+                                <Film size={20} className="text-red-400" />
                                 <div>
-                                    <span className="font-medium text-white">Export as Comic PDF</span>
-                                    <p className="text-xs text-gray-400">Multi-page PDF with panels and images.</p>
+                                    <span className="font-medium text-white">Export as AI Comic (CBZ)</span>
+                                    <p className="text-xs text-gray-400">Generates panel images with character consistency. CBZ archive + HTML reader.</p>
                                 </div>
                             </button>
 
                             <button
-                                onClick={() => handleExport('webtoon')}
+                                onClick={() => handleExportComic('html')}
                                 disabled={isExporting}
                                 className="w-full flex items-center gap-3 p-3 bg-gray-800 hover:bg-gray-700 disabled:opacity-50 rounded-lg text-left transition-colors"
                             >
-                                <ImageIcon size={20} className="text-cyan-400" />
+                                <LayoutTemplate size={20} className="text-cyan-400" />
                                 <div>
-                                    <span className="font-medium text-white">Export as Webtoon</span>
-                                    <p className="text-xs text-gray-400">Long vertical scroll image strip.</p>
+                                    <span className="font-medium text-white">Export as AI Webtoon (HTML)</span>
+                                    <p className="text-xs text-gray-400">Self-contained HTML reader with panel navigation.</p>
                                 </div>
                             </button>
 

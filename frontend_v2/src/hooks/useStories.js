@@ -475,6 +475,24 @@ export const useExportPublishedStory = () => {
     });
 };
 
+// Comic/webtoon export for a specific chapter. Generates panel images with
+// character consistency, then assembles a CBZ archive + HTML reader.
+// Returns a job id; the frontend polls job status or listens for the
+// job.completed WebSocket event carrying the download URL.
+export const useExportChapterComic = () => {
+    const queryClient = useQueryClient();
+    return useMutation({
+        mutationFn: ({ storyId, chapterId, format }) =>
+            api.post(`/api/v2/stories/${storyId}/chapters/${chapterId}/export-comic`, {
+                format: format || 'cbz',
+            }),
+        onSuccess: (data, variables) => {
+            // Invalidate the story detail so any badge reflects the new export.
+            queryClient.invalidateQueries({ queryKey: STORY_DETAIL_KEY(variables.storyId), exact: true });
+        },
+    });
+};
+
 export const useNarrateChapter = () => {
     const queryClient = useQueryClient();
     return useMutation({

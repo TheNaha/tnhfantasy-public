@@ -12,18 +12,21 @@ from PIL import Image, ImageDraw, ImageFont
 from sqlmodel import Session, delete, select
 
 import config as app_config
+from config import get_config
 from api.deps import get_session, get_story_repo, get_story_chapter_repo, get_story_revision_repo, get_chat_repo
+from infrastructure.background_tasks import start_background_task
 from infrastructure.logging import get_logger
 from infrastructure.repositories.chat_repo import ChatRepository
 from infrastructure.repositories.story_repo import StoryRepository
 from infrastructure.repositories.story_chapter_repo import StoryChapterRepository
 from infrastructure.repositories.story_revision_repo import StoryChapterRevisionRepository
-from services.reference_cleanup import scrub_entity_references
+from core.events import EventType, emit_job_event
 from core.entities import (
     Asset,
     AssetKind,
     Character,
     Chat,
+    JobStatus,
     Location,
     Lorebook,
     Message,
@@ -35,13 +38,14 @@ from core.entities import (
     StoryChapterRevision,
 )
 from core.exceptions import ComfyError, NotFoundError, ValidationError
-from services.world_integration_service import SOURCE_JOB_ID_METADATA_KEY
+from services.comic_exporter import export_comic_chapter
+from services.reference_cleanup import scrub_entity_references
 from services.llm_workflow import build_llm_workflow, build_chat_llm_workflow, sampler_overrides
 from services.rag_pipeline import search_lorebook_entries
 from services.job_submission_service import submit_llm_job, submit_tts_job
 from services.world_ownership import link_to_world, require_world
 from services.model_availability_service import ModelAvailabilityService
-from services.world_integration_service import TTS_BEAT_ROLE
+from services.world_integration_service import SOURCE_JOB_ID_METADATA_KEY, TTS_BEAT_ROLE
 
 # Comic/webtoon export layout dimensions — extracted from the inline literals so
 # the values cannot silently drift between the comic and webtoon branches.
@@ -2855,6 +2859,160 @@ Return a strictly valid JSON object in this format:
     job = await submit_llm_job(session, workflow, metadata)
     await asyncio.to_thread(session.commit)
     return {"job_id": job.id}
+
+
+class ChapterExportComicRequest(BaseModel):
+    """Request body for POST /stories/{id}/chapters/{chapter_id}/export-comic.
+
+    `format` selects the output container: ``cbz`` (CBZ archive + HTML reader)
+    or ``html`` (standalone HTML reader only). ``page_size`` is reserved for
+    future multi-panel-per-page layouts.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    format: str = Field(default="cbz", description="Output format: cbz or html")
+    page_size: int | None = Field(default=None, description="Panels per page (future)")
+
+
+@router.post("/{story_id}/chapters/{chapter_id}/export-comic")
+async def export_chapter_comic(
+    story_id: str,
+    chapter_id: str,
+    req: ChapterExportComicRequest | None = None,
+    session: Session = Depends(get_session),
+    story_repo: StoryRepository = Depends(get_story_repo),
+    story_chapter_repo: StoryChapterRepository = Depends(get_story_chapter_repo),
+) -> dict:
+    """Export a story chapter as a comic (CBZ + HTML reader).
+
+    Splits the chapter into panels, generates one image per panel with
+    character consistency (same seed + visual_tags per character), then
+    assembles a CBZ archive and a self-contained HTML reader.
+
+    Runs as a background task because panel image generation takes minutes.
+    Returns immediately with a job id; the frontend can poll job status or
+    listen for the ``job.completed`` WebSocket event carrying the download URL.
+    """
+    fmt = (req.format if req else "cbz") or "cbz"
+    if fmt not in ("cbz", "html"):
+        raise ValidationError("format must be 'cbz' or 'html'")
+
+    # Validate the chapter exists before starting the background task.
+    chapter = story_chapter_repo.get(chapter_id, story_id)
+    if not chapter or chapter.story_id != story_id:
+        raise NotFoundError("StoryChapter", chapter_id)
+
+    # Create a job record so the frontend can track progress.
+    # The comic exporter creates its own panel image jobs; this row is purely
+    # for frontend progress tracking.
+    from services.job_service import JobService
+
+    job_service = JobService(session)
+    job = await job_service.create_job(
+        workflow={"nodes": {}},
+        metadata={
+            "source": "comic_export",
+            "story_id": story_id,
+            "chapter_id": chapter_id,
+            "format": fmt,
+            "user_id": (get_config() or {}).get("default_user_id", "default_user"),
+        },
+        task_type="image",
+    )
+    await asyncio.to_thread(session.commit)
+
+    # Run the export in a background task with its own session (the request
+    # session will be closed before the task finishes).
+    async def _run_export():
+        from infrastructure.database import get_session_sync
+
+        task_session = get_session_sync()
+        try:
+            result = await export_comic_chapter(
+                task_session,
+                story_id=story_id,
+                chapter_id=chapter_id,
+                user_id=(get_config() or {}).get("default_user_id", "default_user"),
+            )
+            # Mark the job complete with the download info.
+            await asyncio.to_thread(
+                job_service.update_job,
+                job.id,
+                status=JobStatus.COMPLETED,
+                message="Comic export complete",
+                metadata={
+                    **job.metadata_,
+                    "cbz_path": result["cbz_path"],
+                    "html_path": result["html_path"],
+                    "output_dir": result["output_dir"],
+                    "page_count": result["page_count"],
+                    "download_url": f"/api/files?directory=output&file=comics/{story_id}/chapter_{chapter.chapter_number}/story.cbz",
+                },
+            )
+            await asyncio.to_thread(session.commit)
+            await emit_job_event(
+                EventType.JOB_COMPLETED,
+                {
+                    "id": job.id,
+                    "status": "completed",
+                    "source": "comic_export",
+                    "story_id": story_id,
+                    "chapter_id": chapter_id,
+                    "format": fmt,
+                    "cbz_path": result["cbz_path"],
+                    "html_path": result["html_path"],
+                    "page_count": result["page_count"],
+                    "message": "Comic export complete",
+                },
+            )
+            logger.info(
+                "comic_export_job_complete",
+                job_id=job.id,
+                story_id=story_id,
+                chapter_id=chapter_id,
+            )
+        except Exception as exc:
+            logger.exception("comic_export_failed", story_id=story_id, chapter_id=chapter_id, error=str(exc))
+            try:
+                await asyncio.to_thread(
+                    job_service.update_job,
+                    job.id,
+                    status=JobStatus.FAILED,
+                    error=str(exc),
+                    message="Comic export failed",
+                )
+                await asyncio.to_thread(session.commit)
+                await emit_job_event(
+                    EventType.JOB_FAILED,
+                    {
+                        "id": job.id,
+                        "status": "failed",
+                        "source": "comic_export",
+                        "story_id": story_id,
+                        "chapter_id": chapter_id,
+                        "error": str(exc),
+                    },
+                )
+            except Exception:
+                logger.exception("comic_export_failed_status_write")
+        finally:
+            task_session.close()
+
+    start_background_task(
+        _run_export(),
+        task_name=f"comic_export_{story_id}_{chapter_id}",
+        timeout=1800.0,
+    )
+
+    return {
+        "job_id": job.id,
+        "status": "queued",
+        "story_id": story_id,
+        "chapter_id": chapter_id,
+        "format": fmt,
+        "message": "Comic export started",
+    }
 
 
 class StartChatFromStoryRequest(BaseModel):

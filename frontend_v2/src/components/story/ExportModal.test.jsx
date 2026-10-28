@@ -31,10 +31,12 @@ const publishStory = vi.hoisted(() => vi.fn());
 const unpublishStory = vi.hoisted(() => vi.fn());
 const exportFormatted = vi.hoisted(() => vi.fn());
 const exportPublished = vi.hoisted(() => vi.fn());
+const exportChapterComic = vi.hoisted(() => vi.fn());
 
 vi.mock('../../hooks/useWorldVault', () => ({
     useExportStoryFormatted: () => exportFormatted(),
     useExportPublishedStory: () => exportPublished(),
+    useExportChapterComic: () => exportChapterComic(),
     usePublishStory: () => publishStory(),
     useUnpublishStory: () => unpublishStory(),
 }));
@@ -63,12 +65,12 @@ import ExportModal from './ExportModal';
  * copied!" with the link absent and **Publish to Web** still enabled — so the
  * next click is a **second publish** of a story that was already published.
  */
-function renderModal(onClose) {
+function renderModal(onClose, chapterId = 'chapter-1') {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     return render(
         <QueryClientProvider client={queryClient}>
             <MemoryRouter>
-                <ExportModal story={{ id: 'story-1' }} storyId="story-1" isOpen onClose={onClose} />
+                <ExportModal story={{ id: 'story-1' }} storyId="story-1" chapterId={chapterId} isOpen onClose={onClose} />
             </MemoryRouter>
         </QueryClientProvider>
     );
@@ -81,6 +83,7 @@ describe('ExportModal publish on an insecure origin', () => {
         unpublishStory.mockReturnValue({ mutate: vi.fn(), isPending: false });
         exportFormatted.mockReturnValue({ mutate: vi.fn(), isPending: false });
         exportPublished.mockReturnValue({ mutate: vi.fn(), isPending: false });
+        exportChapterComic.mockReturnValue({ mutate: vi.fn(), isPending: false });
     });
     afterEach(() => { vi.unstubAllGlobals(); });
 

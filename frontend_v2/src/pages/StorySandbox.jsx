@@ -1474,6 +1474,7 @@ export default function StorySandbox() {
             <ExportModal
                 story={activeStory}
                 storyId={activeStoryId}
+                chapterId={activeChapterId}
                 isOpen={isExportModalOpen}
                 onClose={() => setIsExportModalOpen(false)}
             />
