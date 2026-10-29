@@ -168,6 +168,11 @@ async def _handle_job_started(websocket: WebSocket, worker, provider_id: str, me
     async with get_session_context() as session:
         job_service = get_job_service(session)
         await job_service.update_job(job_id, status=JobStatus.CONNECTED, message="Connected to external worker...")
+        # First frame from the worker: stamp the dispatch→first-event leg once.
+        # The helper guards re-stamps in memory and in the row itself.
+        from services.job_boot_metrics import stamp_boot_seconds
+
+        await stamp_boot_seconds(job_service, job_id)
 
 
 async def _handle_job_progress(websocket: WebSocket, worker, provider_id: str, message: JobProgressMessage) -> None:

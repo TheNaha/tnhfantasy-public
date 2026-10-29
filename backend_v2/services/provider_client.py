@@ -8,6 +8,7 @@ from core.events import EventType
 from core.progress import coerce_worker_percent
 from infrastructure.logging import get_logger
 from services.engines.base import EngineAuthError
+from services.job_boot_metrics import stamp_boot_seconds
 
 logger = get_logger("provider_client")
 
@@ -154,6 +155,10 @@ class _ImageReducer:
 
     async def __call__(self, ev: dict) -> None:
         event = ev.get("event")
+        # First frame from the provider: stamp the dispatch→first-event leg
+        # (for serverless that is the boot the user pays for). Re-stamp runs
+        # are free after the first — the guard lives in the helper.
+        await stamp_boot_seconds(self.job_service, self.job_id)
         if event == "started":
             await self.job_service.update_job(self.job_id, status=JobStatus.PRE_GENERATION, message="Queued in worker...")
         elif event == "progress":
@@ -301,6 +306,10 @@ class _LLMReducer:
 
     async def __call__(self, ev: dict) -> None:
         event = ev.get("event")
+        # First frame from the provider: stamp the dispatch→first-event leg
+        # (for serverless that is the boot the user pays for). Re-stamp runs
+        # are free after the first — the guard lives in the helper.
+        await stamp_boot_seconds(self.job_service, self.job_id)
         if event == "started":
             await self._emit_phase(phase="evaluating_prompt", stream_chunk="", text="")
         elif event == "delta":

@@ -5,7 +5,7 @@ import random
 import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Sequence
 
 from cachetools import TTLCache
 from sqlalchemy import func
@@ -109,6 +109,43 @@ _ENGINE_HEALTH_PROBE_TIMEOUT_SECONDS = _parse_positive_float(
     os.getenv("COMFY_LB_ENGINE_HEALTH_TIMEOUT_SECONDS"),
     5.0,
 )
+
+
+def set_poller_health(
+    provider_id: str,
+    healthy: bool,
+    task_types: Sequence[str] = ("image", "llm", "tts"),
+) -> None:
+    """Write the telemetry poller's liveness verdict into the health cache.
+
+    The aging poller (`services/provider_telemetry_service`) already probes
+    every remote/direct provider on a 30s cadence, so duplicating a real
+    round trip at dispatch is wasted work: the poller records each
+    online/offline transition here and dispatch reads it through the existing
+    15s TTL path (`_check_provider_health`'s first cache hit). An offline
+    provider is skipped without any probe, let alone a wake ping.
+
+    Same cache, same keys as the dispatch path:
+
+    * ``healthy=False`` → one entry per task type, so every modality is
+      skipped. The bare ``in_process:<id>`` key is deliberately not written
+      when offline — per-the-empty-set does not mean "some task is ready".
+    * ``healthy=True`` → entries per task type, valid for the TTL. If the
+      provider is not in fact ready for a specific modality, the next cache
+      miss lands back on the normal engine probe, which answers honestly.
+
+    The TTL is what keeps a stale verdict from setting into a permanent
+    position: the poller only writes on transitions, so after 15s dispatch
+    returns to its own evidence. There is no reset mechanism and none is
+    needed — writes into a TTL máp age out by themselves.
+    """
+    base = f"in_process:{provider_id}"
+    if healthy:
+        _provider_health_cache[base] = True
+    for task_type in task_types:
+        if not task_type:
+            continue
+        _provider_health_cache[f"{base}:{task_type}"] = bool(healthy)
 
 
 @dataclass
