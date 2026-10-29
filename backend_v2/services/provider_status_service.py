@@ -545,6 +545,14 @@ class ProviderStatusService:
             lifecycle = await telemetry_service.compute_serverless_lifecycle(provider)
         else:
             lifecycle = None
+        # The P4 spike's Modal management-plane metadata (App.lookup + info),
+        # probed by the poller when the transport is modal.
+        try:
+            from services.provider_probe import get_cached_management
+
+            management = get_cached_management(provider_id)
+        except Exception:
+            management = None
         telemetry.update(
             {
                 "status": poller_status.get("status"),
@@ -553,6 +561,7 @@ class ProviderStatusService:
                 "components": telemetry.get("components"),
                 "history": {"vram": telemetry_service.get_vram_history(provider_id)},
                 "lifecycle": lifecycle,
+                "management": management,
                 "transport": transport,
             }
         )

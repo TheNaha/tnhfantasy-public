@@ -199,6 +199,8 @@ class ProviderTelemetryService:
 
         if transport in SERVERLESS_TRANSPORTS:
             await self._poll_serverless(provider)
+            if transport == "modal":
+                await self._probe_management(provider)
             return
 
         await self._poll_liveness(provider)
@@ -235,6 +237,30 @@ class ProviderTelemetryService:
         # ``_ENGINE_CACHE``, so nothing else needs to change.
         _ = await engine.check_health()
         return None
+
+    async def _probe_management(self, provider: Any) -> None:
+        """Best-effort Modal management-plane metadata probe (P4 spike).
+
+        ``App.lookup(create_if_missing=False).info()`` are FREE metadata RPCs:
+        no container boot, no bill, ever. The result lands in the probe
+        module's cache and reaches the status card as ``telemetry.management``
+        — confirming the deployment exists and catching revoked tokens that
+        the config-only check_health answers "healthy" for.
+        """
+        try:
+            from services.provider_probe import probe_modal_management_cached
+
+            engine = get_engine(provider.id, provider)
+            if engine is None or not callable(getattr(engine, "get_client_async", None)):
+                return
+            await probe_modal_management_cached(provider.id, engine)
+        except Exception as exc:
+            # A spike must never break the poll loop.
+            logger.debug(
+                "modal_management_probe_error",
+                provider_id=provider.id,
+                error=str(exc),
+            )
 
     async def _poll_liveness(self, provider: Any) -> None:
         """Remote/direct: a real health round trip feeds the status machine.
@@ -390,6 +416,12 @@ class ProviderTelemetryService:
         self._status.pop(provider_id, None)
         self._vram_history.pop(provider_id, None)
         self._lifecycle_cache.pop(provider_id, None)
+        try:
+            from services.provider_probe import forget_probe
+
+            forget_probe(provider_id)
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # Serverless warm-window lifecycle (modal/beam)
