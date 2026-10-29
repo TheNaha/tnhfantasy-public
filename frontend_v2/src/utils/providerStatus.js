@@ -244,6 +244,73 @@ export function providerBadgeToneClass(stage) {
     return map[stage] || map.offline;
 }
 
+export function transportFromType(type) {
+    const normalized = String(type || '').toLowerCase();
+    if (normalized.startsWith('modal')) return 'modal';
+    if (normalized.startsWith('beam')) return 'beam';
+    if (
+        normalized.startsWith('direct')
+        || normalized === 'direct_url'
+        || normalized === 'direct_tts'
+        || normalized === 'openai_compat'
+        || normalized === 'ollama'
+        || normalized === 'anthropic'
+        || normalized === 'google'
+    ) {
+        return 'direct';
+    }
+    return 'remote';
+}
+
+export function transportFromProvider(provider) {
+    const safe = asObject(provider);
+    if (safe.transport) return String(safe.transport).toLowerCase();
+    return transportFromType(safe.type);
+}
+
+export function providerLifecycleState(provider) {
+    const safe = asObject(provider);
+    const telemetry = asObject(safe.runtime_state?.telemetry || safe.diagnostics?.telemetry);
+    const lifecycle = asObject(telemetry.lifecycle);
+    if (lifecycle.state) return lifecycle.state;
+    const status = telemetry.status;
+    if (status === 'offline') return 'offline';
+    if (!safe.enabled) return 'disabled';
+    return 'ready';
+}
+
+export function formatWarmCountdown(secondsLeft) {
+    if (secondsLeft == null) return '';
+    const seconds = Math.max(0, Math.round(Number(secondsLeft)));
+    if (!Number.isFinite(seconds) || seconds <= 0) return '';
+    if (seconds >= 60) return `~${Math.ceil(seconds / 60)}m left`;
+    return `~${seconds}s left`;
+}
+
+export function formatLastSeen(iso) {
+    if (!iso) return '';
+    const then = new Date(iso).getTime();
+    if (Number.isNaN(then)) return '';
+    const diff = Math.max(0, (Date.now() - then) / 1000);
+    if (diff < 60) return `seen ${Math.round(diff)}s ago`;
+    if (diff < 3600) return `seen ${Math.round(diff / 60)}m ago`;
+    return `seen ${Math.round(diff / 3600)}h ago`;
+}
+
+export function countProviderStates(providers) {
+    const counts = { ready: 0, warm: 0, cooling: 0, cold: 0, offline: 0, disabled: 0 };
+    let inFlight = 0;
+    (providers || []).forEach((provider) => {
+        const state = providerLifecycleState(provider);
+        if (state === 'warm') counts.warm += 1;
+        else if (state === 'cooling') counts.cooling += 1;
+        else if (state === 'cold') counts.cold += 1;
+        else if (state === 'offline') counts.offline += 1;
+        else if (state === 'disabled') counts.disabled += 1;
+        else counts.ready += 1;
+    });
+    return { counts, inFlight };
+}
 export function getDeployTargetForProvider(provider) {
     if (!provider) return null;
     const type = provider.type || '';

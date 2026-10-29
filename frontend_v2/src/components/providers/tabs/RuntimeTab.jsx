@@ -1,5 +1,7 @@
 import { Wrench, Zap, Brain, RefreshCw, CheckCircle, XCircle, Loader2, Rocket, Cpu, Trash2 } from 'lucide-react';
 import { useState } from 'react';
+import { LineChart, Line, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
+import { useQuery } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import { DataRow, StatusRow, ActionBtn } from './Shared';
 import { STATUS_TONE, humanize } from './utils';
@@ -183,7 +185,20 @@ export default function RuntimeTab({
         null;
 
     const telemetry = provider.runtime_state?.telemetry || provider.diagnostics?.telemetry || provider.hardware_telemetry || {};
+    const { data: logsData } = useQuery({
+        queryKey: ['provider-logs', provider.id],
+        queryFn: () => providersApi.getLogs(provider.id),
+        enabled: Boolean(provider.id),
+        staleTime: 30000,
+    });
+    const recentJobs = logsData?.recent_jobs || [];
+
     const activeTelemetry = liveTelemetry || telemetry;
+    const vramChartPoints = (activeTelemetry.history?.vram || []).map((sample) => ({
+        ts: sample.ts ? new Date(sample.ts).toLocaleTimeString() : '',
+        used: sample.vram_used_mb ?? sample.vram_used ?? 0,
+        total: sample.vram_total_mb ?? sample.vram_total ?? 0,
+    }));
     const detectedGpu = activeTelemetry.detected_gpu;
     const concurrencyPolicy = activeTelemetry.concurrency_policy || provider.config?.concurrency_policy;
     const warmWorkload = activeTelemetry.warm_workload;
@@ -335,6 +350,61 @@ export default function RuntimeTab({
 
             {/* Model & Voice Discovery */}
             <DiscoveredAssetsPanel provider={provider} />
+
+            {/* VRAM history chart (recharts) */}
+            {vramChartPoints.length > 0 && (
+                <div className="rounded-xl border border-white/[0.06] bg-gray-900/40 overflow-hidden">
+                    <div className="px-4 py-2.5 border-b border-white/[0.03]">
+                        <span className="text-xs font-bold uppercase tracking-widest text-blue-400">
+                            VRAM History ({vramChartPoints.length} samples)
+                        </span>
+                    </div>
+                    <div className="p-3" style={{ width: '100%', height: 180 }}>
+                        <ResponsiveContainer>
+                            <LineChart data={vramChartPoints} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
+                                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+                                <XAxis dataKey="ts" tick={{ fontSize: 9, fill: '#6b7280' }} />
+                                <YAxis tick={{ fontSize: 9, fill: '#6b7280' }} />
+                                <Tooltip contentStyle={{ background: '#111827', border: '1px solid rgba(255,255,255,0.1)', fontSize: 11 }} />
+                                <Line type="monotone" dataKey="used" stroke="#3b82f6" strokeWidth={2} dot={false} name="Used MB" />
+                                <Line type="monotone" dataKey="total" stroke="#6b7280" strokeWidth={1} dot={false} name="Total MB" />
+                            </LineChart>
+                        </ResponsiveContainer>
+                    </div>
+                </div>
+            )}
+
+            {/* Recent jobs with boot times */}
+            {recentJobs.length > 0 && (
+                <div className="rounded-xl border border-white/[0.06] bg-gray-900/40 overflow-hidden">
+                    <div className="px-4 py-2.5 border-b border-white/[0.03]">
+                        <span className="text-xs font-bold uppercase tracking-widest text-gray-400">
+                            Recent Jobs
+                        </span>
+                    </div>
+                    <div className="divide-y divide-white/[0.03]">
+                        {recentJobs.slice(0, 8).map((job) => (
+                            <div key={job.id} className="px-4 py-2 flex items-center justify-between text-xs">
+                                <div className="flex items-center gap-2 min-w-0">
+                                    <span className="font-mono text-gray-300 truncate">{job.id}</span>
+                                    <span className="text-gray-500 uppercase">{job.task_type}</span>
+                                </div>
+                                <div className="flex items-center gap-3 text-gray-400">
+                                    {job.boot_seconds != null && (
+                                        <span className="font-mono text-blue-300">boot {Number(job.boot_seconds).toFixed(1)}s</span>
+                                    )}
+                                    {job.duration_seconds != null && (
+                                        <span className="font-mono">{Number(job.duration_seconds).toFixed(1)}s</span>
+                                    )}
+                                    <span className={job.status === 'completed' ? 'text-emerald-400' : job.status === 'failed' ? 'text-red-400' : 'text-gray-400'}>
+                                        {job.status}
+                                    </span>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
 
             <div className="flex flex-wrap items-center gap-2">
                 {capabilities.setup && (

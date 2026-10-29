@@ -18,6 +18,8 @@ import {
     providerBadgeToneClass,
     summarizeProviderStatus,
     getDeployTargetForProvider,
+    formatWarmCountdown,
+    formatLastSeen,
 } from '../../utils/providerStatus';
 import { providersApi } from '../../api';
 import { formatBytes, MB } from '../../utils/bytes';
@@ -129,11 +131,16 @@ function ProviderListItem({
     const isReconciling = reconciliation.status === 'reconciling' || reconciliation.status === 'queued';
 
     const telemetry = provider.runtime_state?.telemetry || provider.diagnostics?.telemetry || provider.hardware_telemetry || {};
-    const vramHistory = telemetry.vram_history || [];
+    const vramSamples = telemetry.history?.vram || telemetry.vram_history || [];
+    const vramHistory = vramSamples.map((sample) =>
+        typeof sample === 'number' ? sample : sample?.vram_used_mb
+    ).filter((value) => value != null);
     const tempHistory = telemetry.gpu_temp_history || [];
     const detectedGpu = telemetry.detected_gpu;
     const warmWorkload = telemetry.warm_workload;
     const components = telemetry.components;
+    const lifecycle = telemetry.lifecycle || null;
+    const lastSeen = telemetry.status === 'offline' ? formatLastSeen(telemetry.last_seen_at) : '';
 
     const [pingState, setPingState] = useState({ latency: null, pinging: false, error: null });
     const [shutdownState, setShutdownState] = useState({ shutting: false, error: null });
@@ -256,6 +263,30 @@ function ProviderListItem({
                                 <span>{warmWorkload}</span>
                             </span>
                         )}
+                        {lifecycle?.state && lifecycle.state !== 'ready' && (
+                            <span
+                                className={`flex-shrink-0 rounded-lg border px-2 py-0.5 text-xs font-bold uppercase tracking-widest shadow-inner ${
+                                    lifecycle.state === 'warm'
+                                        ? 'border-amber-500/25 bg-amber-500/10 text-amber-300'
+                                        : lifecycle.state === 'cooling'
+                                            ? 'border-orange-500/25 bg-orange-500/10 text-orange-300'
+                                            : lifecycle.state === 'cold'
+                                                ? 'border-gray-600/40 bg-gray-700/20 text-gray-400'
+                                                : 'border-gray-600/40 bg-gray-700/20 text-gray-400'
+                                }`}
+                                title={`Estimated (serverless scaledown window). ${lifecycle.estimated ? 'Warm window is an inference — the worker may have scaled down early.' : ''}`}
+                            >
+                                {lifecycle.state === 'warm' && `Warm · ${formatWarmCountdown(lifecycle.seconds_left)}`}
+                                {lifecycle.state === 'cooling' && `Cooling · ${formatWarmCountdown(lifecycle.seconds_left)}`}
+                                {lifecycle.state === 'cold' && 'Cold · next dispatch pays boot'}
+                                {lifecycle.state === 'unknown' && 'Unknown'}
+                            </span>
+                        )}
+                        {lastSeen && (
+                            <span className="flex-shrink-0 rounded-lg border border-gray-600/40 bg-gray-700/20 px-2 py-0.5 text-xs font-bold text-gray-400">
+                                Offline · {lastSeen}
+                            </span>
+                        )}
                         {components && (
                             <div className="flex-shrink-0 flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-black/40 border border-white/5" title="Sub-services: ComfyUI (:8188), Agent (:8001), LLM (:8003)">
                                 <span title={`ComfyUI (:8188) - ${components.comfyui?.status || 'unknown'}`} className="flex items-center gap-0.5 text-2xs text-gray-400 font-mono">
@@ -331,9 +362,14 @@ function ProviderListItem({
                             <SparkLine
                                 data={vramHistory}
                                 color="#3b82f6"
-                                label={`VRAM trend, ${vramHistory.length} readings, latest ${vramHistory[vramHistory.length - 1]}%`}
+                                domain={[0, Math.max(1, ...vramHistory, detectedGpu?.vram_total_mb || 0)]}
+                                label={`VRAM trend, ${vramHistory.length} readings, latest ${vramHistory[vramHistory.length - 1]} MB`}
                             />
-                            <span className="text-xs font-bold text-blue-400 min-w-[3ch]">{vramHistory[vramHistory.length - 1]}%</span>
+                            <span className="text-xs font-bold text-blue-400 min-w-[3ch]">
+                                {vramHistory[vramHistory.length - 1] >= 1024
+                                    ? `${(vramHistory[vramHistory.length - 1] / 1024).toFixed(1)}G`
+                                    : `${vramHistory[vramHistory.length - 1]}M`}
+                            </span>
                         </div>
                     )}
                     {tempHistory.length > 0 && (

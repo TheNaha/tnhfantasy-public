@@ -147,7 +147,14 @@ async function ensureProvidersRealtime(queryClient) {
 
         const unsubs = [];
 
-        unsubs.push(ws.on(ws.EventTypes.PROVIDER_STATUS, () => {
+        unsubs.push(ws.on(ws.EventTypes.PROVIDER_STATUS, (event) => {
+            const payload = unwrapEventData(event);
+            const status = payload?.status;
+            if (status === 'online' || status === 'offline') {
+                const id = payload?.provider_id || payload?.id || 'provider';
+                if (status === 'online') toast.success(`Provider ${id} is online`);
+                else toast.error(`Provider ${id} is offline`);
+            }
             queryClient.invalidateQueries({ queryKey: PROVIDERS_PAGE_QUERY_KEYS.providers });
         }));
 

@@ -10,7 +10,7 @@ import AddModelToProviderModal from '../components/providers/AddModelToProviderM
 import ActionOutputModal from '../components/providers/ActionOutputModal';
 import { useConfirmation } from '../store/confirmationStore';
 import { providersApi } from '../api';
-import { summarizeProviderStatus } from '../utils/providerStatus';
+import { summarizeProviderStatus, transportFromProvider, providerLifecycleState, countProviderStates } from '../utils/providerStatus';
 import useProvidersPageData, { useProviderMutations } from '../hooks/useProvidersPageData';
 import { QueryErrorState } from '../components/common/QueryState';
 
@@ -30,6 +30,7 @@ export default function Providers() {
     const [isRefreshing, setIsRefreshing] = useState(false);
     const [search, setSearch] = useState('');
     const [filter, setFilter] = useState('all');
+    const [stateFilter, setStateFilter] = useState('all');
     const [selectedProviderId, setSelectedProviderId] = useState(null);
     const [drawerTab, setDrawerTab] = useState('runtime');
     const [actionOutput, setActionOutput] = useState(null);
@@ -88,6 +89,9 @@ export default function Providers() {
                 || (provider.reconciliation_state?.status === 'failed')
             );
 
+            const matchesStateFilter =
+                stateFilter === 'all' || providerLifecycleState(provider) === stateFilter;
+
             const matchesFilter = (
                 filter === 'all'
                 || (filter === 'image' && (provider.worker_type === 'image' || provider.worker_type === 'hybrid' || (!provider.worker_type && !provider.capabilities?.length) || (Array.isArray(provider.capabilities) && provider.capabilities.includes('image'))))
@@ -97,9 +101,9 @@ export default function Providers() {
                 || (filter === 'issues' && hasIssues)
             );
 
-            return matchesSearch && matchesFilter;
+            return matchesSearch && matchesFilter && matchesStateFilter;
         });
-    }, [filter, providers, search]);
+    }, [filter, providers, search, stateFilter]);
 
     const selectedProvider = useMemo(
         () => providers.find((p) => p.id === selectedProviderId) || null,
@@ -193,6 +197,17 @@ export default function Providers() {
     const onlineCount = providers.filter((p) => summarizeProviderStatus(p).isOnline).length;
     const pausedCount = providers.filter((p) => !p.enabled).length;
 
+    const { counts: stateCounts } = useMemo(() => countProviderStates(providers), [providers]);
+    const inFlightJobs = useMemo(() => {
+        let total = 0;
+        if (lbStats?.provider_stats) {
+            lbStats.provider_stats.forEach((stat) => {
+                total += stat.jobs_assigned ?? 0;
+            });
+        }
+        return total;
+    }, [lbStats]);
+
     return (
         <motion.div
             className="mx-auto max-w-7xl"
@@ -236,6 +251,36 @@ export default function Providers() {
             </div>
 
 
+            {/* ── Fleet overview strip ── */}
+            <div className="mb-6 flex flex-wrap gap-2">
+                {[
+                    { key: 'all', label: 'All', count: providers.length, tone: 'text-gray-300' },
+                    { key: 'ready', label: 'Ready', count: stateCounts.ready, tone: 'text-emerald-300' },
+                    { key: 'warm', label: 'Warm', count: stateCounts.warm, tone: 'text-amber-300' },
+                    { key: 'cooling', label: 'Cooling', count: stateCounts.cooling, tone: 'text-orange-300' },
+                    { key: 'cold', label: 'Cold', count: stateCounts.cold, tone: 'text-gray-400' },
+                    { key: 'offline', label: 'Offline', count: stateCounts.offline, tone: 'text-red-300' },
+                    { key: 'disabled', label: 'Disabled', count: stateCounts.disabled, tone: 'text-gray-500' },
+                ].map((chip) => (
+                    <button
+                        key={chip.key}
+                        type="button"
+                        onClick={() => setStateFilter(chip.key === 'all' ? 'all' : chip.key)}
+                        className={`flex items-center gap-2 rounded-xl border px-3 py-1.5 text-xs font-bold transition-all ${
+                            stateFilter === chip.key
+                                ? 'border-blue-500/40 bg-blue-500/10 text-white'
+                                : 'border-white/5 bg-[#0B0E14]/60 text-gray-400 hover:text-white'
+                        }`}
+                    >
+                        <span className={chip.tone}>{chip.count}</span>
+                        <span>{chip.label}</span>
+                    </button>
+                ))}
+                <span className="flex items-center gap-2 rounded-xl border border-white/5 bg-[#0B0E14]/60 px-3 py-1.5 text-xs font-bold text-gray-400">
+                    <span className="text-blue-300">{inFlightJobs}</span>
+                    <span>In-flight</span>
+                </span>
+            </div>
             {/* ── Load Balancer Bar ── */}
             <LoadBalancerBar
                 config={lbConfig}
@@ -291,109 +336,43 @@ export default function Providers() {
                 />
             ) : filteredProviders.length > 0 ? (
                 <div className="space-y-8">
-                    {filteredProviders.some(p => p.worker_type === 'hybrid') && (
-                        <div>
-                            <h2 className="text-xl font-bold text-gray-200 mb-4 px-2 tracking-wide flex items-center gap-2">
-                                <span>Hybrid Workers</span>
-                                <span className="text-xs font-normal text-indigo-400 bg-indigo-500/10 border border-indigo-500/20 px-2 py-0.5 rounded-full uppercase tracking-wider">Multi-Modal (Image + LLM)</span>
-                            </h2>
-                            <div className="space-y-4">
-                                {filteredProviders.filter(p => p.worker_type === 'hybrid').map((provider) => (
-                                    <ProviderListItem
-                                        key={provider.id}
-                                        provider={provider}
-                                        actionLabel={actionLoading[provider.id] ?? null}
-                                        isSelected={selectedProviderId === provider.id}
-                                        onSelect={(id) => {
-                                            setSelectedProviderId(selectedProviderId === id ? null : id);
-                                            setDrawerTab('runtime');
-                                        }}
-                                        onToggleEnabled={handleToggleEnabled}
-                                        onEdit={() => setEditingProvider(provider)}
-                                        onDelete={() => handleDelete(provider.id)}
-                                        onDeploy={handleDeployProvider}
-                                        providerFailures={providerStatsMap.get(provider.id)?.failures ?? 0}
-                                        jobsAssigned={providerStatsMap.get(provider.id)?.jobs_assigned ?? 0}
-                                    />
-                                ))}
+                    {[
+                        { key: 'modal', label: 'Modal Workers', badge: 'Serverless' },
+                        { key: 'beam', label: 'Beam Workers', badge: 'Serverless' },
+                        { key: 'remote', label: 'Remote Workers', badge: 'Self-hosted' },
+                        { key: 'direct', label: 'Direct / Hosted API', badge: 'API' },
+                    ].map((section) => {
+                        const sectionProviders = filteredProviders.filter((p) => transportFromProvider(p) === section.key);
+                        if (sectionProviders.length === 0) return null;
+                        return (
+                            <div key={section.key}>
+                                <h2 className="text-xl font-bold text-gray-200 mb-4 px-2 tracking-wide flex items-center gap-2">
+                                    <span>{section.label}</span>
+                                    <span className="text-xs font-normal text-indigo-400 bg-indigo-500/10 border border-indigo-500/20 px-2 py-0.5 rounded-full uppercase tracking-wider">{section.badge}</span>
+                                </h2>
+                                <div className="space-y-4">
+                                    {sectionProviders.map((provider) => (
+                                        <ProviderListItem
+                                            key={provider.id}
+                                            provider={provider}
+                                            actionLabel={actionLoading[provider.id] ?? null}
+                                            isSelected={selectedProviderId === provider.id}
+                                            onSelect={(id) => {
+                                                setSelectedProviderId(selectedProviderId === id ? null : id);
+                                                setDrawerTab('runtime');
+                                            }}
+                                            onToggleEnabled={handleToggleEnabled}
+                                            onEdit={() => setEditingProvider(provider)}
+                                            onDelete={() => handleDelete(provider.id)}
+                                            onDeploy={handleDeployProvider}
+                                            providerFailures={providerStatsMap.get(provider.id)?.failures ?? 0}
+                                            jobsAssigned={providerStatsMap.get(provider.id)?.jobs_assigned ?? 0}
+                                        />
+                                    ))}
+                                </div>
                             </div>
-                        </div>
-                    )}
-                    {filteredProviders.some(p => p.worker_type === 'image' || (!p.worker_type && p.worker_type !== 'hybrid' && p.worker_type !== 'llm' && p.worker_type !== 'tts')) && (
-                        <div>
-                            <h2 className="text-xl font-bold text-gray-200 mb-4 px-2 tracking-wide">Image Workers</h2>
-                            <div className="space-y-4">
-                                {filteredProviders.filter(p => p.worker_type === 'image' || (!p.worker_type && p.worker_type !== 'hybrid' && p.worker_type !== 'llm' && p.worker_type !== 'tts')).map((provider) => (
-                                    <ProviderListItem
-                                        key={provider.id}
-                                        provider={provider}
-                                        actionLabel={actionLoading[provider.id] ?? null}
-                                        isSelected={selectedProviderId === provider.id}
-                                        onSelect={(id) => {
-                                            setSelectedProviderId(selectedProviderId === id ? null : id);
-                                            setDrawerTab('runtime');
-                                        }}
-                                        onToggleEnabled={handleToggleEnabled}
-                                        onEdit={() => setEditingProvider(provider)}
-                                        onDelete={() => handleDelete(provider.id)}
-                                        onDeploy={handleDeployProvider}
-                                        providerFailures={providerStatsMap.get(provider.id)?.failures ?? 0}
-                                        jobsAssigned={providerStatsMap.get(provider.id)?.jobs_assigned ?? 0}
-                                    />
-                                ))}
-                            </div>
-                        </div>
-                    )}
-                    {filteredProviders.some(p => p.worker_type === 'llm') && (
-                        <div>
-                            <h2 className="text-xl font-bold text-gray-200 mb-4 px-2 tracking-wide">LLM Workers</h2>
-                            <div className="space-y-4">
-                                {filteredProviders.filter(p => p.worker_type === 'llm').map((provider) => (
-                                    <ProviderListItem
-                                        key={provider.id}
-                                        provider={provider}
-                                        actionLabel={actionLoading[provider.id] ?? null}
-                                        isSelected={selectedProviderId === provider.id}
-                                        onSelect={(id) => {
-                                            setSelectedProviderId(selectedProviderId === id ? null : id);
-                                            setDrawerTab('runtime');
-                                        }}
-                                        onToggleEnabled={handleToggleEnabled}
-                                        onEdit={() => setEditingProvider(provider)}
-                                        onDelete={() => handleDelete(provider.id)}
-                                        onDeploy={handleDeployProvider}
-                                        providerFailures={providerStatsMap.get(provider.id)?.failures ?? 0}
-                                        jobsAssigned={providerStatsMap.get(provider.id)?.jobs_assigned ?? 0}
-                                    />
-                                ))}
-                            </div>
-                        </div>
-                    )}
-                    {filteredProviders.some(p => p.worker_type === 'tts') && (
-                        <div>
-                            <h2 className="text-xl font-bold text-gray-200 mb-4 px-2 tracking-wide">Voice (TTS) Workers</h2>
-                            <div className="space-y-4">
-                                {filteredProviders.filter(p => p.worker_type === 'tts').map((provider) => (
-                                    <ProviderListItem
-                                        key={provider.id}
-                                        provider={provider}
-                                        actionLabel={actionLoading[provider.id] ?? null}
-                                        isSelected={selectedProviderId === provider.id}
-                                        onSelect={(id) => {
-                                            setSelectedProviderId(selectedProviderId === id ? null : id);
-                                            setDrawerTab('runtime');
-                                        }}
-                                        onToggleEnabled={handleToggleEnabled}
-                                        onEdit={() => setEditingProvider(provider)}
-                                        onDelete={() => handleDelete(provider.id)}
-                                        onDeploy={handleDeployProvider}
-                                        providerFailures={providerStatsMap.get(provider.id)?.failures ?? 0}
-                                        jobsAssigned={providerStatsMap.get(provider.id)?.jobs_assigned ?? 0}
-                                    />
-                                ))}
-                            </div>
-                        </div>
-                    )}
+                        );
+                    })}
                 </div>
             ) : (
                 <div className="glass-panel flex h-64 flex-col items-center justify-center rounded-3xl border border-white/5 shadow-2xl text-center relative overflow-hidden">
