@@ -1,5 +1,6 @@
 # Provider lifecycle routes: status, metrics, model management, setup, sync.
 import asyncio
+import os
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -826,9 +827,13 @@ async def free_provider_vram(
 
 
 #: How long to wait for active jobs before giving up on shutdown.
-SHUTDOWN_MAX_WAIT_SECONDS = 300
+SHUTDOWN_MAX_WAIT_SECONDS = float(
+    os.getenv("COMFY_PROVIDER_SHUTDOWN_MAX_WAIT_SECONDS", "300.0")
+)
 #: How often to poll for active jobs during shutdown wait.
-SHUTDOWN_POLL_INTERVAL_SECONDS = 2
+SHUTDOWN_POLL_INTERVAL_SECONDS = float(
+    os.getenv("COMFY_PROVIDER_SHUTDOWN_POLL_INTERVAL_SECONDS", "2.0")
+)
 
 
 @router.post("/{provider_id}/shutdown")
@@ -883,7 +888,7 @@ async def shutdown_provider(
     ).all()
 
     if active:
-        raise ComfyError(
+        raise ValidationError(
             f"Cannot shut down provider {provider_id}: "
             f"{len(active)} job(s) still active"
         )
@@ -940,11 +945,11 @@ async def shutdown_provider(
                     f"{agent_url}/shutdown", headers=headers
                 )
             except httpx.ConnectError as exc:
-                raise ComfyError(
+                raise ValidationError(
                     f"Remote worker {provider_id} is unreachable at {agent_url}: {exc}"
                 )
             if resp.status_code >= 400:
-                raise ComfyError(
+                raise ValidationError(
                     f"Remote worker shutdown failed: HTTP {resp.status_code}: {resp.text}"
                 )
 
@@ -955,7 +960,7 @@ async def shutdown_provider(
         invalidate_engine(provider_id)
 
     else:
-        raise ComfyError(
+        raise ValidationError(
             f"Shutdown is not supported for {transport or 'unknown'} "
             f"provider type '{provider.type}'"
         )
