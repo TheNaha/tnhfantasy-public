@@ -15,6 +15,7 @@ from api.deps import (
     get_provider_status_service,
     get_session,
 )
+from core.entities import Provider
 from core.exceptions import ComfyError, NotFoundError, ProviderError, ValidationError
 from infrastructure.http_client import get_http_client
 from infrastructure.logging import api_logger
@@ -823,6 +824,156 @@ async def free_provider_vram(
         logger.warning("provider_free_vram_failed", provider_id=provider_id, error=str(exc))
         raise ComfyError(f"Failed to free GPU VRAM: {exc!s}") from exc
 
+
+#: How long to wait for active jobs before giving up on shutdown.
+SHUTDOWN_MAX_WAIT_SECONDS = 300
+#: How often to poll for active jobs during shutdown wait.
+SHUTDOWN_POLL_INTERVAL_SECONDS = 2
+
+
+@router.post("/{provider_id}/shutdown")
+async def shutdown_provider(
+    provider_id: str,
+    service: ProviderService = Depends(get_provider_service),
+    session: Session = Depends(get_session),
+):
+    """Shut down a provider's worker.
+
+    Waits for any active jobs on the provider to complete, then powers down
+    the worker per transport:
+
+    - ``remote_*``: calls the remote_agent sidecar ``POST /shutdown``
+      endpoint with the provider's service token.
+    - ``modal_*`` / ``beam_*``: no runtime SDK API exists for
+      Modal/Beam scaledown, so the provider is excluded from routing,
+      its engine cache is invalidated, and its runtime state is marked
+      scaled-down.
+    - ``direct_*`` / hosted LLM: unsupported — returns 400.
+
+    Shutdown is distinct from disable. Disable excludes the provider from
+    load-balancer routing but keeps it registered. Shutdown actually
+    powers down the worker's services.
+    """
+    provider = session.get(Provider, provider_id)
+    if not provider:
+        raise NotFoundError("Provider", provider_id)
+
+    # Wait for active jobs to complete before shutting down.
+    from core.entities import ACTIVE_JOB_STATUSES, Job
+    from sqlmodel import select
+
+    waited = 0
+    while waited < SHUTDOWN_MAX_WAIT_SECONDS:
+        active = session.exec(
+            select(Job).where(
+                Job.provider_id == provider_id,
+                Job.status.in_(ACTIVE_JOB_STATUSES),
+            )
+        ).all()
+        if not active:
+            break
+        await asyncio.sleep(SHUTDOWN_POLL_INTERVAL_SECONDS)
+        waited += SHUTDOWN_POLL_INTERVAL_SECONDS
+
+    active = session.exec(
+        select(Job).where(
+            Job.provider_id == provider_id,
+            Job.status.in_(ACTIVE_JOB_STATUSES),
+        )
+    ).all()
+
+    if active:
+        raise ComfyError(
+            f"Cannot shut down provider {provider_id}: "
+            f"{len(active)} job(s) still active"
+        )
+
+    # Determine transport for per-transport dispatch.
+    from services.engines.engine_factory import (
+        can_create_engine,
+        get_engine,
+        invalidate_engine,
+    )
+    from services.engines.registry import resolve_provider_type, resolve_transport
+
+    rtype = resolve_provider_type(
+        provider.type,
+        provider.id,
+        provider.worker_type or "",
+        provider.capabilities or [],
+    )
+    transport = resolve_transport(rtype) if rtype else None
+
+    if transport == "remote":
+        # Call the remote_agent sidecar /shutdown endpoint.
+        if not can_create_engine(provider):
+            raise ValidationError(
+                f"Provider {provider_id} cannot run in-process engine"
+            )
+        engine = get_engine(provider_id, provider)
+        if not engine:
+            raise NotFoundError(
+                f"Engine for provider {provider_id} could not be initialized"
+            )
+
+        agent_url = (
+            getattr(engine, "agent_url", None)
+            or getattr(engine, "base_url", None)
+            or ""
+        ).rstrip("/")
+        agent_token = getattr(engine, "agent_token", None)
+
+        if not agent_url:
+            raise ValidationError(
+                f"Provider {provider_id} has no agent URL configured"
+            )
+
+        import httpx
+
+        headers = {}
+        if agent_token:
+            headers["Authorization"] = f"Bearer {agent_token}"
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            try:
+                resp = await client.post(
+                    f"{agent_url}/shutdown", headers=headers
+                )
+            except httpx.ConnectError as exc:
+                raise ComfyError(
+                    f"Remote worker {provider_id} is unreachable at {agent_url}: {exc}"
+                )
+            if resp.status_code >= 400:
+                raise ComfyError(
+                    f"Remote worker shutdown failed: HTTP {resp.status_code}: {resp.text}"
+                )
+
+    elif transport in ("modal", "beam"):
+        # No runtime SDK API exists for Modal/Beam scaledown
+        # (scaledown_window is deployment-time config only). Invalidate the
+        # engine cache so dispatch stops routing here, and mark runtime state.
+        invalidate_engine(provider_id)
+
+    else:
+        raise ComfyError(
+            f"Shutdown is not supported for {transport or 'unknown'} "
+            f"provider type '{provider.type}'"
+        )
+
+    _invalidate_provider_runtime_caches(provider_id)
+
+    logger.info(
+        "provider_shutdown",
+        provider_id=provider_id,
+        transport=transport,
+    )
+
+    return {
+        "status": "shutting_down",
+        "provider_id": provider_id,
+        "transport": transport,
+        "message": f"Provider {provider_id} is shutting down",
+    }
 
 
 def _transport_matches(provider_type: str | None, transport: str) -> bool:

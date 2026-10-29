@@ -1957,6 +1957,40 @@ async def vram_stop_llm():
     return {"status": "success" if stopped else "noop", "vram": mgr.get_vram_info()}
 
 
+@app.post("/shutdown", dependencies=[Depends(verify_token)])
+async def shutdown_worker():
+    """Shut down this remote worker.
+
+    Stops the child processes this agent started (llama-stack, JIT llama-server)
+    and returns. The caller (backend) is responsible for marking the provider
+    as shut down and for stopping the container itself if desired.
+
+    This is distinct from "disable" — a disabled provider is simply excluded
+    from load-balancer routing but remains registered. A shutdown actually
+    powers down the worker's services.
+    """
+    stopped = 0
+    try:
+        if STACK is not None:
+            stopped = STACK.stop()
+            if stopped:
+                logger.info("llama_stack_stopped", extra={"count": stopped})
+    except Exception as exc:
+        logger.warning("llama_stack_stop_failed", extra={"error": str(exc)})
+
+    try:
+        from vram_manager import get_vram_manager
+
+        get_vram_manager().stop_llama()
+    except Exception as exc:
+        logger.warning("jit_llama_stop_failed", extra={"error": str(exc)})
+
+    return {
+        "status": "shutting_down",
+        "llama_servers_stopped": stopped,
+    }
+
+
 # ---------------------------------------------------------------------------
 # TTS & Hybrid worker voice enumeration:
 # Enumerate available voices from Qwen3-TTS voice library + designed voices.

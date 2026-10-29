@@ -9,6 +9,7 @@ import {
     PowerOff,
     Rocket,
     Server,
+    StopCircle,
     Trash2,
     ChevronRight,
     Zap,
@@ -135,6 +136,7 @@ function ProviderListItem({
     const components = telemetry.components;
 
     const [pingState, setPingState] = useState({ latency: null, pinging: false, error: null });
+    const [shutdownState, setShutdownState] = useState({ shutting: false, error: null });
 
     const handlePing = async (e) => {
         e.stopPropagation();
@@ -145,6 +147,16 @@ function ProviderListItem({
             setPingState({ latency: lat ?? null, pinging: false, error: null });
         } catch (err) {
             setPingState({ latency: null, pinging: false, error: err?.message || 'Failed' });
+        }
+    };
+
+    const handleShutdown = async () => {
+        setShutdownState({ shutting: true, error: null });
+        try {
+            await providersApi.shutdown(provider.id);
+            setShutdownState({ shutting: false, error: null });
+        } catch (err) {
+            setShutdownState({ shutting: false, error: err?.message || 'Shutdown failed' });
         }
     };
 
@@ -449,6 +461,42 @@ function ProviderListItem({
                                 aria-label={`Deploy ${label} Worker`}
                             >
                                 <Rocket size={16} />
+                            </button>
+                        );
+                    })()}
+                    {(() => {
+                        const type = provider.type || '';
+                        const canShutdown =
+                            type.startsWith('modal_') ||
+                            type.startsWith('beam_') ||
+                            type.startsWith('remote_') ||
+                            type === 'modal' ||
+                            type === 'beam';
+                        if (!canShutdown) return null;
+                        return (
+                            <button
+                                type="button"
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleShutdown();
+                                }}
+                                disabled={shutdownState.shutting}
+                                className={`rounded-xl p-2.5 transition-all duration-300 ${
+                                    shutdownState.shutting
+                                        ? 'text-blue-400 bg-blue-500/10 cursor-not-allowed'
+                                        : 'text-red-400 bg-red-500/10 hover:bg-red-500/20 hover:text-red-300'
+                                }`}
+                                title={shutdownState.shutting ? 'Shutting down…' : 'Shut down worker'}
+                                aria-label="Shut down Provider"
+                            >
+                                {shutdownState.shutting ? (
+                                    <Loader2 size={11} className="animate-spin text-blue-400" />
+                                ) : (
+                                    <StopCircle size={16} />
+                                )}
+                                {shutdownState.error && (
+                                    <span className="text-xs text-red-400 ml-2">{shutdownState.error}</span>
+                                )}
                             </button>
                         );
                     })()}

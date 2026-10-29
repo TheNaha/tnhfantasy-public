@@ -2,7 +2,9 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
     Circle,
+    Loader2,
     Server,
+    StopCircle,
     X,
 } from 'lucide-react';
 import { motion } from 'framer-motion';
@@ -20,6 +22,7 @@ import DeployTab from './tabs/DeployTab';
 import { statusDotClass, humanize } from './tabs/utils';
 import { useEscapeKey } from '../../hooks/useEscapeKey';
 import { getDeployTargetForProvider } from '../../utils/providerStatus';
+import { providersApi } from '../../api';
 
 const EMPTY_OBJECT = Object.freeze({});
 
@@ -91,6 +94,18 @@ export default function ProviderDetailPanel({
         [jobsAssigned, loading, provider, providerFailures],
     );
 
+    const [shutdownState, setShutdownState] = useState({ shutting: false, error: null });
+
+    const handleShutdown = async () => {
+        setShutdownState({ shutting: true, error: null });
+        try {
+            await providersApi.shutdown(provider.id);
+            setShutdownState({ shutting: false, error: null });
+        } catch (err) {
+            setShutdownState({ shutting: false, error: err?.message || 'Shutdown failed' });
+        }
+    };
+
     if (typeof document === 'undefined') return null;
 
     return createPortal(
@@ -147,6 +162,39 @@ export default function ProviderDetailPanel({
                                 </p>
                             </div>
                         </div>
+                        {(() => {
+                            const type = provider.type || '';
+                            const canShutdown =
+                                type.startsWith('modal_') ||
+                                type.startsWith('beam_') ||
+                                type.startsWith('remote_') ||
+                                type === 'modal' ||
+                                type === 'beam';
+                            if (!canShutdown) return null;
+                            return (
+                                <button
+                                    type="button"
+                                    onClick={handleShutdown}
+                                    disabled={shutdownState.shutting}
+                                    className={`rounded-lg p-2 transition-all duration-300 ${
+                                        shutdownState.shutting
+                                            ? 'text-blue-400 bg-blue-500/10 cursor-not-allowed'
+                                            : 'text-red-400 bg-red-500/10 hover:bg-red-500/20 hover:text-red-300'
+                                    }`}
+                                    title={shutdownState.shutting ? 'Shutting down…' : 'Shut down worker'}
+                                    aria-label="Shut down Provider"
+                                >
+                                    {shutdownState.shutting ? (
+                                        <Loader2 size={14} className="animate-spin text-blue-400" />
+                                    ) : (
+                                        <StopCircle size={16} />
+                                    )}
+                                    {shutdownState.error && (
+                                        <span className="text-xs text-red-400 ml-1">{shutdownState.error}</span>
+                                    )}
+                                </button>
+                            );
+                        })()}
                         <button
                             onClick={onClose}
                             className="rounded-lg p-2 text-gray-400 transition-colors hover:bg-gray-800 hover:text-white"

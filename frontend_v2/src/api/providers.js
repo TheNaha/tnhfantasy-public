@@ -136,6 +136,9 @@ export const providersApi = {
     /** Purge GPU VRAM and reset model caching on remote worker engine. */
     freeVram: (providerId) => api.post(`${P}/${providerId}/free-vram`),
 
+    /** Shut down a provider's worker (waits for active jobs first). */
+    shutdown: (providerId) => api.post(`${P}/${providerId}/shutdown`),
+
     /** Fetch live models or voices discovered upstream from the in-process engine. */
     getDiscoveredModels: (providerId, options = {}) => api.get(`${P}/${providerId}/models/discovered`, options),
 
