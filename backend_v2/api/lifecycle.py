@@ -28,6 +28,10 @@ from infrastructure.scheduler import (
 from services.job_queue import queue_manager
 from services.job_service import FAILURE_FINALIZATION, JobService
 from services.provider_runtime import monitor_provider_changes
+from services.provider_telemetry_service import (
+    start_telemetry_polling,
+    stop_telemetry_polling,
+)
 from infrastructure.worker_registry import start_cross_process_dispatch_listener
 
 logger = get_logger("lifecycle")
@@ -346,6 +350,13 @@ async def startup_application(process_job, ws_manager):
         timeout=None,
     )
 
+    logger.info("startup_init", phase="provider_telemetry")
+    telemetry_task = start_background_task(
+        start_telemetry_polling(),
+        task_name="provider_telemetry",
+        timeout=None,
+    )
+
     logger.info("startup_init", phase="job_recovery")
     await _run_job_recovery_phase()
 
@@ -480,6 +491,7 @@ async def startup_application(process_job, ws_manager):
     logger.info("startup_complete")
     return {
         "provider_monitor_task": provider_monitor_task,
+        "telemetry_task": telemetry_task,
         "broadcast_task": broadcast_task,
         "dispatch_listener_task": dispatch_listener_task,
     }
@@ -508,7 +520,7 @@ async def _shutdown_engine_cache() -> None:
         logger.warning("shutdown_engine_cache_failed", error=str(exc))
 
 
-async def shutdown_application(ws_manager, provider_monitor_task, broadcast_task, dispatch_listener_task=None) -> None:
+async def shutdown_application(ws_manager, provider_monitor_task, telemetry_task, broadcast_task, dispatch_listener_task=None) -> None:
     """Run application shutdown side effects in a controlled order."""
     logger.info("shutdown", phase="websocket")
     await ws_manager.stop_broadcasting()
@@ -532,6 +544,9 @@ async def shutdown_application(ws_manager, provider_monitor_task, broadcast_task
         await provider_monitor_task
     except asyncio.CancelledError:
         pass
+
+    logger.info("shutdown", phase="provider_telemetry")
+    await stop_telemetry_polling()
 
     logger.info("shutdown", phase="background_tasks")
     cancelled_task_count = await cancel_background_tasks()

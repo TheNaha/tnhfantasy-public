@@ -171,6 +171,7 @@ async def lifespan(app: FastAPI):
     await shutdown_application(
         ws_manager,
         lifecycle_tasks["provider_monitor_task"],
+        lifecycle_tasks["telemetry_task"],
         lifecycle_tasks["broadcast_task"],
         lifecycle_tasks.get("dispatch_listener_task"),
     )
