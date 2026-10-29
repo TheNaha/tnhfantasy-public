@@ -433,6 +433,40 @@ class ProviderStatusService:
             "provider_enabled": provider_info.get("enabled", True),
         }
 
+    @staticmethod
+    def _normalize_components(components: Any, cached_engine: Any) -> dict[str, Any] | None:
+        """Normalise engine component health to per-service name/port/status.
+
+        Remote engines already collect ``components`` as a dict of service →
+        {status, port, url, latency_ms}; the poller's VRAM sample and the UI's
+        component chips both want that shape guaranteed. Missing fields become
+        explicit "unknown" markers instead of absent keys — a consumer must
+        never have to branch on key presence to render a chip.
+        """
+        if not components and not hasattr(cached_engine, "comfy_port"):
+            return None
+        normalized: dict[str, Any] = {}
+        raw = components if isinstance(components, dict) else {}
+        if not raw and hasattr(cached_engine, "comfy_port"):
+            raw = {
+                "comfyui": {"status": "unknown", "port": getattr(cached_engine, "comfy_port", 8188)},
+                "agent": {"status": "unknown", "port": getattr(cached_engine, "agent_port", 8001)},
+                "llm": {"status": "unknown", "port": getattr(cached_engine, "llm_port", 8003)},
+            }
+        for name, entry in raw.items():
+            if not isinstance(entry, dict):
+                entry = {"status": entry} if entry is not None else {}
+            status = entry.get("status")
+            port = entry.get("port")
+            normalized[name] = {
+                "name": name,
+                "status": str(status) if status else "unknown",
+                "port": port if isinstance(port, int) else None,
+                "url": entry.get("url"),
+                "latency_ms": entry.get("latency_ms"),
+            }
+        return normalized or None
+
     async def build_provider_status_card(
         self,
         provider_id: str,
@@ -477,20 +511,27 @@ class ProviderStatusService:
         )
 
         from services.engines.engine_factory import _ENGINE_CACHE
+        from services.engines.registry import resolve_transport
+        from services.provider_telemetry_service import (
+            SERVERLESS_TRANSPORTS,
+            telemetry_service,
+        )
+
         cached_engine = _ENGINE_CACHE.get(provider_id)
-        telemetry = None
+        transport = resolve_transport(provider_info.get("type"))
+
+        # Core engine-derived telemetry (unchanged contract), then extended
+        # with the poller's own view: liveness, VRAM history and — for
+        # serverless transports — the inferred warm-window lifecycle.
+        telemetry: dict[str, Any] = {}
         if cached_engine is not None:
             last_health = getattr(cached_engine, "_last_health", None) or {}
             gpu = getattr(cached_engine, "detected_gpu", None) or getattr(cached_engine, "_detected_gpu", None) or last_health.get("detected_gpu")
             policy = getattr(cached_engine, "concurrency_policy", None) or getattr(cached_engine, "_resolved_policy", None) or last_health.get("concurrency_policy")
             warm = getattr(cached_engine, "warm_workload", None) or getattr(cached_engine, "_last_workload", None) or last_health.get("warm_workload")
-            components = last_health.get("components")
-            if not components and hasattr(cached_engine, "comfy_port"):
-                components = {
-                    "comfyui": {"status": "unknown", "port": getattr(cached_engine, "comfy_port", 8188)},
-                    "agent": {"status": "unknown", "port": getattr(cached_engine, "agent_port", 8001)},
-                    "llm": {"status": "unknown", "port": getattr(cached_engine, "llm_port", 8003)},
-                }
+            components = self._normalize_components(
+                last_health.get("components"), cached_engine
+            )
             if gpu or policy or warm or components:
                 telemetry = {
                     "detected_gpu": gpu,
@@ -499,8 +540,24 @@ class ProviderStatusService:
                     "components": components,
                 }
 
-        if telemetry:
-            diagnostics["telemetry"] = telemetry
+        poller_status = telemetry_service.get_provider_status(provider_id)
+        if transport in SERVERLESS_TRANSPORTS:
+            lifecycle = await telemetry_service.compute_serverless_lifecycle(provider)
+        else:
+            lifecycle = None
+        telemetry.update(
+            {
+                "status": poller_status.get("status"),
+                "last_seen_at": poller_status.get("last_seen_at"),
+                "missed_probes": poller_status.get("missed_probes", 0),
+                "components": telemetry.get("components"),
+                "history": {"vram": telemetry_service.get_vram_history(provider_id)},
+                "lifecycle": lifecycle,
+                "transport": transport,
+            }
+        )
+
+        diagnostics["telemetry"] = telemetry
 
         return {
             "provider_id": provider_id,

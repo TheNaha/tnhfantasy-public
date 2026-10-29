@@ -761,6 +761,9 @@ async def get_provider_logs(
             duration_s = None
             if j.completed_at and j.created_at:
                 duration_s = round((j.completed_at - j.created_at).total_seconds(), 2)
+            boot_seconds = None
+            if isinstance(j.metadata_, dict):
+                boot_seconds = j.metadata_.get("boot_seconds")
             recent_jobs.append({
                 "id": j.id,
                 "task_type": j.task_type,
@@ -768,6 +771,7 @@ async def get_provider_logs(
                 "created_at": j.created_at.isoformat() if j.created_at else None,
                 "completed_at": j.completed_at.isoformat() if j.completed_at else None,
                 "duration_seconds": duration_s,
+                "boot_seconds": boot_seconds,
                 "timings": timings,
                 "error": j.error,
                 "message": j.message,
