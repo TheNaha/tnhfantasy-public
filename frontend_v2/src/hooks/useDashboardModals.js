@@ -2,7 +2,7 @@ import { useState, useCallback } from 'react';
 import { jobsApi } from '../api/jobs';
 import { refetchNewestGalleryPage } from './useGallery';
 
-export function useDashboardModals({ queryClient, filters }) {
+export function useDashboardModals({ queryClient }) {
     const [selectedJobId, setSelectedJobId] = useState(null);
     const [showCollectionsPanel, setShowCollectionsPanel] = useState(false);
     const [showSelectCollection, setShowSelectCollection] = useState(false);
@@ -22,7 +22,7 @@ export function useDashboardModals({ queryClient, filters }) {
             console.error('Failed to delete job:', error);
             throw error;
         }
-    }, [queryClient, filters]);
+    }, [queryClient]);
 
     const retryJob = useCallback(async (jobId) => {
         try {
@@ -41,7 +41,7 @@ export function useDashboardModals({ queryClient, filters }) {
             console.error('Failed to retry job:', error);
             throw error;
         }
-    }, [queryClient, filters]);
+    }, [queryClient]);
 
     const handleJobClick = useCallback((job) => {
         const jobId = typeof job === 'string' ? job : job?.id;

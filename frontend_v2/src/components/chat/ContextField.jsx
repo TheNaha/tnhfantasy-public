@@ -25,7 +25,6 @@ function ContextField({
     const [localValue, setLocalValue] = useState(value || '');
     const inputRef = useRef(null);
 
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     useEffect(() => { setLocalValue(value || ''); }, [value]);
 
     const commit = () => {

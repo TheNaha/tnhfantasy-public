@@ -32,6 +32,7 @@ const mockCommitCharacterCard = vi.hoisted(() => vi.fn());
 const mockExportCharacterCard = vi.hoisted(() => vi.fn());
 const mockUseLorebooks = vi.hoisted(() => vi.fn());
 const mockSetActiveChat = vi.hoisted(() => vi.fn());
+const mockConfirm = vi.hoisted(() => vi.fn(async () => true));
 
 vi.mock('../hooks/useVoices', () => ({
     useVoices: () => ({ data: [] }),
@@ -59,6 +60,10 @@ vi.mock('../hooks/useWorldVault', () => ({
 
 vi.mock('../store/worldVaultStore', () => ({
     useWorldVaultStore: (sel) => sel({ setActiveChat: mockSetActiveChat }),
+}));
+
+vi.mock('../store/confirmationStore', () => ({
+    useConfirmation: () => ({ confirm: mockConfirm }),
 }));
 
 vi.mock('../components/EmptyState', () => ({

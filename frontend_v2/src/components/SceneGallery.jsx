@@ -67,7 +67,6 @@ export default function SceneGallery({ title, images, compact, lightboxAction, i
 
     const rowCount = Math.ceil(imagesList.length / cols);
 
-    // eslint-disable-next-line react-hooks/incompatible-library -- React Compiler not used; virtualizer values stay local
     const rowVirtualizer = useVirtualizer({
         count: rowCount,
         getScrollElement: () => scrollEl,
