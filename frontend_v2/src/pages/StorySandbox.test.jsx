@@ -89,6 +89,8 @@ vi.mock('../hooks/useWorldVault', () => ({
 
 vi.mock('../api/websocket', () => ({
     useWebSocket: () => ({ subscribe: vi.fn(() => vi.fn()), unsubscribe: vi.fn() }),
+    getConnectionStatus: vi.fn(() => false),
+    on: vi.fn(),
     EventTypes: { JOB_PROGRESS: 'job.progress', JOB_COMPLETED: 'job.completed', JOB_FAILED: 'job.failed', JOB_CANCELLED: 'job.cancelled' },
 }));
 

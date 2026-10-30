@@ -1061,8 +1061,12 @@ def invalidate_engine(provider_id: str) -> None:
         # Capability cache is keyed by provider id; stale sampler/scheduler
         # capabilities can select a provider for a job it cannot run.
         _capability_cache.pop(provider_id, None)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning(
+            "invalidate_engine_cache_clear_failed",
+            provider_id=provider_id,
+            error=str(exc),
+        )
     # The cached ComfyUI node graph goes with it. This is the one place every
     # runtime change funnels through (provider PATCH, token refresh), and the
     # graph cache had no caller for it at all — its own docstring named this
@@ -1073,6 +1077,10 @@ def invalidate_engine(provider_id: str) -> None:
         from api.routes.nodes import invalidate_object_info_cache
 
         invalidate_object_info_cache(provider_id)
-    except Exception:
+    except Exception as exc:
         # Never let a cache-clearing path fail a config update.
-        pass
+        logger.debug(
+            "invalidate_object_info_cache_failed",
+            provider_id=provider_id,
+            error=str(exc),
+        )

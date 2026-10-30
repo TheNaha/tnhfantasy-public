@@ -34,7 +34,8 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, File, Query, Request, UploadFile
 from fastapi.responses import FileResponse
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, Optional
+from typing import Optional
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 from sqlmodel import Session, select
 from starlette.background import BackgroundTask
 

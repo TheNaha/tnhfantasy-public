@@ -27,11 +27,26 @@ import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const publishStory = vi.fn();
-const unpublishStory = vi.fn();
-const exportFormatted = vi.fn();
-const exportPublished = vi.fn();
-const exportChapterComic = vi.fn();
+const {
+    publishStory,
+    unpublishStory,
+    exportFormatted,
+    exportPublished,
+    exportChapterComic,
+    toastMock,
+} = vi.hoisted(() => {
+    const toast = vi.fn();
+    toast.success = vi.fn();
+    toast.error = vi.fn();
+    return {
+        publishStory: vi.fn(),
+        unpublishStory: vi.fn(),
+        exportFormatted: vi.fn(),
+        exportPublished: vi.fn(),
+        exportChapterComic: vi.fn(),
+        toastMock: toast,
+    };
+});
 
 vi.mock('../../hooks/useWorldVault', () => ({
     useExportStoryFormatted: () => exportFormatted(),
@@ -41,11 +56,7 @@ vi.mock('../../hooks/useWorldVault', () => ({
     useUnpublishStory: () => unpublishStory(),
 }));
 
-const toastMock = vi.fn();
-toastMock.success = vi.fn();
-toastMock.error = vi.fn();
 vi.mock('react-hot-toast', () => ({ default: toastMock }));
-
 import ExportModal from './ExportModal';
 
 /**

@@ -12,11 +12,6 @@ from core.events import redact_secrets
 class TestCriticalBugs:
     """Test cases for critical bugs."""
 
-    @pytest.mark.asyncio
-    async def test_path_traversal_vulnerability(self):
-        """Test that path traversal is prevented."""
-        # This test will be implemented after the fix
-        pass
 
     def test_capability_cache_bounded(self):
         """_capability_cache must exist and be bounded with a TTL.
@@ -72,11 +67,6 @@ class TestCriticalBugs:
         assert "secret123abc" not in result
         assert "***REDACTED***" in result
 
-    @pytest.mark.asyncio
-    async def test_job_status_race_condition(self):
-        """Test that _get_job_status handles concurrent access."""
-        # This test will be implemented after the fix
-        pass
 
     def test_ksampler_coverage(self):
         """Test that all KSampler variants are covered."""
@@ -96,10 +86,6 @@ class TestCriticalBugs:
         from infrastructure.database import DB_POOL_RECYCLE
         assert DB_POOL_RECYCLE >= 3600, f"DB_POOL_RECYCLE is too aggressive: {DB_POOL_RECYCLE}s"
 
-    def test_websocket_memory_leaks(self):
-        """Test that WebSocket listeners can be cleaned up."""
-        # This test will be implemented after the fix
-        pass
 
 
 if __name__ == "__main__":
