@@ -506,10 +506,22 @@ def load_config(config_path: str = None) -> dict[str, Any]:
     # Create default config file
     _config = DEFAULT_CONFIG.copy()
     try:
-        os.makedirs(os.path.dirname(_config_path), exist_ok=True)
-        with open(_config_path, 'w') as f:
-            json.dump(_config, f, indent=2)
-        _cfg_logger.info("config_created_default", path=_config_path)
+        directory = os.path.dirname(_config_path) or "."
+        os.makedirs(directory, exist_ok=True)
+        fd, tmp_path = tempfile.mkstemp(dir=directory, prefix=".config-", suffix=".json")
+        try:
+            with os.fdopen(fd, "w") as f:
+                json.dump(_config, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, _config_path)
+            _cfg_logger.info("config_created_default", path=_config_path)
+        except BaseException:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
     except Exception as e:
         _cfg_logger.warning("config_create_failed", error=str(e))
 
@@ -620,14 +632,10 @@ def update_config(updates: dict[str, Any], persist: bool = True) -> dict[str, An
     """
     global _config
     
-    if _config is None:
-        load_config()
-    
     # Validate updates before applying
     # Split out the blank-means-unset leaves BEFORE validating, so "unset" is not
     # rejected by the very validator that guards against a typo'd blank.
     unset_updates, unset_leaves = _split_unset(updates)
-
     _validate_config(unset_updates)
 
     # Deep merge updates into current config.
@@ -637,7 +645,12 @@ def update_config(updates: dict[str, Any], persist: bool = True) -> dict[str, An
     # different sections could interleave and silently drop one. The lock makes
     # the merge and the write atomic with respect to each other; it is not
     # reentrant, so nothing inside may re-enter.
+    #
+    # Lazily load config inside the lock so concurrent early requests during
+    # startup cannot race on `_config is None` and call `load_config` twice.
     with _config_lock:
+        if _config is None:
+            load_config()
         _config = _deep_merge(_config, unset_updates)
 
         # Delete after the merge, inside the same lock, so a concurrent writer
@@ -697,6 +710,9 @@ def reset_config() -> dict[str, Any]:
     # `settings.py` reaches both through `asyncio.to_thread` from two routes, so
     # they really can run at the same time.
     with _config_lock:
+        # Remember the pre-reset config so we can restore it if the file write
+        # fails — memory and disk must not diverge.
+        old_config = copy.deepcopy(_config) if _config is not None else None
         _config = copy.deepcopy(DEFAULT_CONFIG)
 
         try:
@@ -716,7 +732,11 @@ def reset_config() -> dict[str, Any]:
                 raise
             _cfg_logger.info("config_reset")
         except Exception as e:
+            # Disk write failed: restore the previous in-memory config and
+            # re-raise so the caller knows the reset did not persist.
+            _config = old_config if old_config is not None else DEFAULT_CONFIG.copy()
             _cfg_logger.warning("config_reset_save_failed", error=str(e))
+            raise
 
     return _config
 
@@ -843,6 +863,36 @@ SECTION_LEAF_ALLOW_LISTS: dict[str, frozenset[str]] = {
     # Nested per-task-type block merged over the top-level job settings by
     # `_job_config`; not a top-level DEFAULT_CONFIG section.
     "jobs.llm": frozenset({"timeout", "max_retries", "stagger_delay"}),
+    # Top-level sections that were previously unguarded: typos here were
+    # silently deep-merged into config.json and persisted forever, removable
+    # only by `reset_config`. Every DEFAULT_CONFIG leaf is listed.
+    "worker": frozenset({"poll_interval", "retry_delay", "poll_limit"}),
+    "jobs": frozenset({
+        "max_concurrent",
+        "timeout",
+        "max_retries",
+        "5xx_max_retries",
+        "retry_base_delay",
+        "retry_max_delay",
+        "llm",
+    }),
+    "model_sync": frozenset({"interval", "retry_delay", "reconciliation_interval"}),
+    "roleplay": frozenset({"label_speakers", "narrator_prefix", "image_prefix"}),
+    "downloads": frozenset({"chunk_size", "auto_remove_delay"}),
+    "modal": frozenset({"timeout", "max_containers", "scaledown_window"}),
+    "api": frozenset({"gzip_minimum_size", "cors_origins"}),
+    "jobs_cleanup": frozenset({"max_age_hours", "auto_cleanup", "cleanup_interval"}),
+    "image_processing": frozenset({
+        "thumbnail_sizes",
+        "thumbnail_format",
+        "thumbnail_quality",
+        "thumbnail_directory",
+        "output_date_hierarchy",
+        "embed_metadata_in_png",
+        "blurhash_components_x",
+        "blurhash_components_y",
+        "blurhash_resize_max",
+    }),
 }
 
 
