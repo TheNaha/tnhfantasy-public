@@ -288,14 +288,6 @@ async def _get_live_worker(provider_id: str) -> ConnectedWorker | None:
         return worker
 
 
-def get_connected_workers() -> dict[str, dict]:
-    """Get info about all connected workers."""
-    workers: dict[str, dict] = {}
-    for provider_id in list(connected_workers.keys()):
-        worker = _get_live_worker_unlocked(provider_id)
-        if worker:
-            workers[provider_id] = worker.to_dict()
-    return workers
 
 
 def is_worker_connected(provider_id: str) -> bool:

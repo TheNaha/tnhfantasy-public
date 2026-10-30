@@ -187,7 +187,3 @@ def get_embedding_service():
     from services.embedding_service import get_embedding_service as get_service
     return get_service()
 
-
-def get_queue_manager():
-    from services.job_queue import queue_manager
-    return queue_manager

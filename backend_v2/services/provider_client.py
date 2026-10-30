@@ -1,5 +1,4 @@
 import asyncio
-import json
 import re
 import time
 
@@ -82,19 +81,6 @@ def extract_worker_error_message(update: dict) -> str:
     return update.get("message", "Unknown worker error")
 
 
-def format_worker_http_error(status_code: int, error_text: str) -> str:
-    """Produce a readable error for non-200 worker responses."""
-    if not error_text:
-        return f"Worker returned {status_code}"
-
-    try:
-        payload = json.loads(error_text)
-    except json.JSONDecodeError:
-        return f"Worker returned {status_code}: {error_text}"
-
-    if isinstance(payload, dict):
-        return f"Worker returned {status_code}: {extract_worker_error_message(payload)}"
-    return f"Worker returned {status_code}: {payload}"
 
 
 def validate_image_outputs(payload: dict) -> None:

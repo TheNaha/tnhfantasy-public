@@ -467,34 +467,15 @@ async def request_replay(sid, data):
 
 # ============================================================================
 # Utility Functions
-# ============================================================================
-
-async def broadcast_to_room(room: str, event_type: str, data: dict):
-    """
-    Broadcast an event to all clients in a room.
-    
-    Can be called from other parts of the application to send events.
-    """
-    await sio.emit(event_type, data, room=room)
-
-
 async def broadcast_to_all(event_type: str, data: dict):
     """Broadcast an event to all connected clients."""
     await sio.emit(event_type, data)
+# ============================================================================
 
 
-def get_connected_count() -> int:
-    """Get number of connected clients."""
-    return len(connected_clients)
 
 
-def get_room_count(room: str) -> int:
-    """Get number of clients subscribed to a room."""
-    count = 0
-    for sid, rooms in connected_clients.items():
-        if room in rooms:
-            count += 1
-    return count
+
 
 
 # ============================================================================

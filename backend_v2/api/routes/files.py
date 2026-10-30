@@ -34,7 +34,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, File, Query, Request, UploadFile
 from fastapi.responses import FileResponse
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, Optional
 from sqlmodel import Session, select
 from starlette.background import BackgroundTask
 
@@ -1966,9 +1966,17 @@ async def upload_input_image(
     }
 
 
+
+
+class MaskUploadRequest(BaseModel):
+    """Request model for mask image upload."""
+    model_config = ConfigDict(json_schema_extra={"strict": True})
+    mask_data: str
+    source_filename: Optional[str] = None
+
 @router.post("/api/upload/mask")
 async def upload_mask_image(
-    request: dict,
+    request: MaskUploadRequest,
     provider_id: str | None = None,
     session: Session = Depends(get_session)
 ):
@@ -1983,13 +1991,10 @@ async def upload_mask_image(
     """
     import uuid
 
-    if not isinstance(request, dict):
-        raise UploadValidationError(
-            "Request body must be a JSON object", code="UPLOAD_INVALID", field="body"
-        )
 
-    mask_data = request.get("mask_data")
-    source_filename = sanitize_filename(request.get("source_filename") or "", default="")
+
+    mask_data = request.mask_data
+    source_filename = sanitize_filename(request.source_filename or "", default="")
 
     if not mask_data:
         raise ValidationError("mask_data is required")

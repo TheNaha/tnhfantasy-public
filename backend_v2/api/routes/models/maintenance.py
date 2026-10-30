@@ -27,6 +27,7 @@ logger = model_logger()
 RESYNC_MAX_RETRIES = 8
 RESYNC_INITIAL_BACKOFF_SECONDS = 2.0
 RESYNC_MAX_BACKOFF_SECONDS = 60.0
+_RESYNC_IN_PROGRESS = False
 
 router = APIRouter()
 
@@ -590,20 +591,35 @@ async def run_background_resync():
         await report("completed", "Done", total)
         return results
 
+async def _resync_with_guard():
+    try:
+        await run_background_resync()
+    finally:
+        global _RESYNC_IN_PROGRESS
+        _RESYNC_IN_PROGRESS = False
+
 @router.post("/resync-all")
 def resync_all(background_tasks: BackgroundTasks, session: Session = Depends(get_session)):
     """Fetch latest metadata from CivitAI for all non-auto-discovered models."""
+    global _RESYNC_IN_PROGRESS
+
+    if _RESYNC_IN_PROGRESS:
+        return {"status": "already_running", "count": 0}
+
+    _RESYNC_IN_PROGRESS = True
+
     from api.deps import get_model_repo_v2
     repo = get_model_repo_v2(session)
-    
+
     # Get all models that are NOT auto-discovered and HAVE a civitai ID
     models = repo.get_models_for_resync(include_relations=False)
-    
+
     if not models:
+        _RESYNC_IN_PROGRESS = False
         return {"status": "no_models", "count": 0}
-        
-    background_tasks.add_task(run_background_resync)
-    
+
+    background_tasks.add_task(_resync_with_guard)
+
     return {"status": "processing", "count": len(models)}
 
 

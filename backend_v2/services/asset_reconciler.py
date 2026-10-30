@@ -37,15 +37,6 @@ logger = get_logger("asset_reconciler")
 DEFAULT_USER_ID = DEFAULT_USER_ID_FALLBACK
 
 
-def _get_default_user_id() -> str:
-    """Resolve the default user partition from config, falling back to the
-    single-tenant constant. Called at runtime (not import time) so a
-    COMFY_DEFAULT_USER_ID change on the running stack takes effect."""
-    try:
-        from config import get_config
-        return (get_config() or {}).get("default_user_id") or DEFAULT_USER_ID_FALLBACK
-    except Exception:
-        return DEFAULT_USER_ID_FALLBACK
 
 # Schema version stamped onto every asset row's `metadata_` by
 # `_compact_metadata`. Bump when the compacted shape changes incompatibly.
