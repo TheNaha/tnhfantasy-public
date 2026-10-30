@@ -20,7 +20,13 @@ same one the frontend already does in reverse
 sides cannot drift and so it can be tested.
 """
 
+from collections.abc import Sequence
 from typing import Any
+
+# The KSampler family, shared with graph parsing so "metadata from the
+# graph" and "sampler extraction" can never disagree about which node
+# classes carry seed/steps/sampler inputs.
+from core.workflow_parser import KSAMPLER_NODE_CLASSES
 
 
 def _iter_nodes(workflow: dict):
@@ -92,14 +98,14 @@ def _as_number(value: Any) -> float | int | None:
     return None
 
 
-def _first_node(nodes: dict, class_types: list[str]):
+def _first_node(nodes: dict, class_types: Sequence[str]):
     for node_id, node in nodes.items():
         if _class_type(node) in class_types:
             return node_id, node
     return None, None
 
 
-def _all_nodes(nodes: dict, class_types: list[str]):
+def _all_nodes(nodes: dict, class_types: Sequence[str]):
     return [
         (node_id, node)
         for node_id, node in nodes.items()
@@ -134,7 +140,7 @@ def derive_metadata_from_workflow(workflow: dict) -> dict[str, Any]:
     height = None
     batch_size = None
 
-    _sampler_id, sampler_node = _first_node(nodes, ["KSampler", "KSamplerAdvanced"])
+    _sampler_id, sampler_node = _first_node(nodes, KSAMPLER_NODE_CLASSES)
     if sampler_node is not None:
         sampler_inputs = _inputs(sampler_node)
         seed = _as_number(sampler_inputs.get("seed"))
@@ -320,7 +326,7 @@ def derive_metadata_from_workflow(workflow: dict) -> dict[str, Any]:
             metadata["hiresFix"] = True
             metadata["hiresUpscaler"] = upscale_model
 
-    ksamplers = _all_nodes(nodes, ["KSampler", "KSamplerAdvanced"])
+    ksamplers = _all_nodes(nodes, KSAMPLER_NODE_CLASSES)
     if metadata.get("hiresFix") and len(ksamplers) > 1:
         hires_sampler_inputs = _inputs(ksamplers[-1][1])
         h_steps = _as_number(hires_sampler_inputs.get("steps"))

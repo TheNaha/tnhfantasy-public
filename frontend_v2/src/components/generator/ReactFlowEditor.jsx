@@ -63,13 +63,48 @@ export default function ReactFlowEditor({ providerId, onGraphChange }) {
     [setEdges],
   );
 
-  // Notify parent of graph changes and save to local storage
+  // Notify parent of graph changes and save to local storage.
+  //
+  // The save is a trailing debounce with a guarded write: React Flow updates
+  // `nodes` on every mousemove during a drag, and this effect used to
+  // stringify the whole graph and write it synchronously PER FRAME — and an
+  // unguarded `setItem` can throw QuotaExceededError from inside a commit
+  // phase, which surfaces as an uncaught render error (error boundary /
+  // white screen). Every other setItem in the app is wrapped; this was the
+  // one unwrapped write, on the largest payload.
+  const saveTimerRef = React.useRef(null);
+  const latestGraphRef = React.useRef({ nodes, edges });
+  latestGraphRef.current = { nodes, edges };
+
+  const persistGraph = React.useCallback(() => {
+    const { nodes: latestNodes, edges: latestEdges } = latestGraphRef.current;
+    try {
+      localStorage.setItem('tnh-comfy-workflow', JSON.stringify({ nodes: latestNodes, edges: latestEdges }));
+    } catch (e) {
+      console.warn('Failed to persist workflow to localStorage', e);
+    }
+  }, []);
+
   React.useEffect(() => {
     if (onGraphChange) {
       onGraphChange(nodes, edges);
     }
-    localStorage.setItem('tnh-comfy-workflow', JSON.stringify({ nodes, edges }));
-  }, [nodes, edges, onGraphChange]);
+    saveTimerRef.current = setTimeout(persistGraph, 300);
+    // Only cancels; the ref keeps the (stale) id so the unmount flush below
+    // can still see that a save was pending. Nulling it here would race the
+    // unmount cleanup order and drop the final state.
+    return () => clearTimeout(saveTimerRef.current);
+  }, [nodes, edges, onGraphChange, persistGraph]);
+
+  // Flush the pending save on unmount so the debounced final state is not
+  // lost when the editor closes mid-edit. (A stale-but-non-null timer id just
+  // means "a save was scheduled"; clearTimeout on it is a no-op.)
+  React.useEffect(() => () => {
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+      persistGraph();
+    }
+  }, [persistGraph]);
 
   // Define drag and drop handlers for a sidebar (Phase 4.3)
   const onDragOver = useCallback((event) => {

@@ -2,6 +2,20 @@ import { filesApi } from '../api';
 import { useGeneratorStore } from '../store/generatorStore';
 import useSettingsStore from '../store/settingsStore';
 
+// The KSampler family, kept in step with the backend's single source of
+// truth (backend_v2/core/workflow_parser.py KSAMPLER_NODE_CLASSES): the
+// backend derives gallery metadata from the same graph with that list, and
+// both sides used to keep their own copy that drifted. Add a spelling
+// there, not here — tests/test_workflow_ksampler_coherence.py pins the two
+// lists to each other.
+const K_SAMPLER_NODE_CLASSES = [
+    'KSampler',
+    'KSampler (Efficient)',
+    'KSamplerAdvanced',
+    'KSampler (Custom)',
+    'KSampler (Advanced)',
+];
+
 function hasOwn(obj, key) {
     return Boolean(obj && Object.prototype.hasOwnProperty.call(obj, key));
 }
@@ -479,7 +493,7 @@ function extractWorkflowHints(workflowInput) {
     let adetailer = null;
     let adetailerModel;
 
-    const samplerNodeEntry = findFirstNode(nodes, ['KSampler']);
+    const samplerNodeEntry = findFirstNode(nodes, K_SAMPLER_NODE_CLASSES);
     if (samplerNodeEntry) {
         const [, samplerNode] = samplerNodeEntry;
         const samplerInputs = samplerNode.inputs || {};
@@ -635,10 +649,12 @@ function extractWorkflowHints(workflowInput) {
         }
     }
 
-    const allSamplers = findAllNodes(nodes, ['KSampler', 'KSamplerAdvanced']);
+    const allSamplers = findAllNodes(nodes, K_SAMPLER_NODE_CLASSES);
     if (allSamplers.length > 1) {
         hiresFix = true;
-        const hiresSamplerInputs = allSamplers[1][1]?.inputs || {};
+        // The hires pass is the LAST sampler node in graph order — the same
+        // pick the backend's workflow_metadata makes (ksamplers[-1]).
+        const hiresSamplerInputs = allSamplers[allSamplers.length - 1][1]?.inputs || {};
         hiresDenoise = toFiniteNumber(hiresSamplerInputs.denoise);
         hiresSteps = toFiniteNumber(hiresSamplerInputs.steps);
     }

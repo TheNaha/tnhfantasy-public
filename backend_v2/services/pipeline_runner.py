@@ -83,6 +83,14 @@ async def run_from(start_key: str, ctx: dict[str, Any]) -> dict[str, Any]:
     chain runs after update in the same walk, and the chain executor defers
     itself when the Statekeeper ran.
 
+    A TWIN of this walk lives in
+    `services.job_processing._run_pipeline_stages_isolated` — same manifest
+    order, same `halt` and `user`-stage semantics, but each stage isolated in
+    its own try/except so a post-turn failure cannot delete the rest of an
+    already-paid-for turn. The duplication is deliberate; editing one walk
+    without the other is not.
+    `tests/test_pipeline_walk_consistency.py` pins the shared control flow.
+
     Returns the context, so the caller can read what the stages produced
     (`ctx["audit_decision"]`, `ctx["updater_job_id"]`).
     """

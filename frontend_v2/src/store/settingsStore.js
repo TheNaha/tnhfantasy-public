@@ -68,6 +68,15 @@ const DEFAULT_SETTINGS = {
         // `downloads.auto_remove_delay` in config.json. See
         // src/test/settingsKeysHaveReaders.test.js for the guard.
     },
+    // SERVER-CONFIG MIRRORS live in `generator` (prompt_shortcuts,
+    // defaultCheckpoint) and in `ai` below: copies of config.json values, not
+    // a second source of truth. CONTRACT (audit-2026-10-30b m4): they are
+    // STALE until reseeded — the Settings page seeds them from
+    // GET /api/settings on mount, and a change made elsewhere (another tab, a
+    // direct PATCH) is not observed here until the next seed or reload.
+    // Generator pages deliberately read this mirror instead of React Query to
+    // keep config off the render path; the server value stays authoritative
+    // (PUT /api/settings, then reseed).
     generator: {
         autoRandomizeSeed: true,     // randomise seed before each generation
         redirectAfterGenerate: true, // navigate to dashboard after submitting a job

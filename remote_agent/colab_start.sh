@@ -217,8 +217,10 @@ AGENT_PID=$!
 # one unauthenticated route, so it is also the only thing that can be probed
 # before the token is known to work.
 # ---------------------------------------------------------------------------
+HEALTHY=""
 for _ in $(seq 1 40); do
   if curl -fsS "http://127.0.0.1:${PORT}/health" >/dev/null 2>&1; then
+    HEALTHY=1
     break
   fi
   if ! kill -0 "$AGENT_PID" 2>/dev/null; then
@@ -228,6 +230,14 @@ for _ in $(seq 1 40); do
   fi
   sleep 1
 done
+# The loop above only failed when the PROCESS died. A live agent that never
+# answers /health (port clash, half-started uvicorn) fell through and the
+# script printed the full "Remote agent is up" summary — a success block for
+# a rig nothing can reach, which is the misdirection these checks exist for.
+if [ -z "$HEALTHY" ]; then
+  echo "error: the agent is running but never answered /health on port ${PORT}" >&2
+  exit 1
+fi
 
 PUBLIC_URL=""
 
@@ -429,7 +439,15 @@ SUMMARY
 # With NetBird there is no foreground tunnel process — `netbird up` runs the
 # daemon — so the agent alone is what to watch. The daemon outliving the cell is
 # not a leak: the runtime is torn down with it.
-wait -n "$AGENT_PID" ${TUNNEL_PID:+"$TUNNEL_PID"} || true
-STATUS=$?
+# Neither the agent nor the tunnel is supposed to exit, so `wait` returning at
+# all is the failure. Capture the status BEFORE swallowing it: `|| true` made
+# `$?` always 0, so the cell reported success even when the agent died. An exit
+# code of 0 from a daemon that should never exit is still a failure here, so
+# the status is bumped to 1 rather than reported as a clean exit.
+STATUS=0
+wait -n "$AGENT_PID" ${TUNNEL_PID:+"$TUNNEL_PID"} || STATUS=$?
 echo "error: the agent or the tunnel exited (status ${STATUS})" >&2
+if [ "$STATUS" -eq 0 ]; then
+  STATUS=1
+fi
 exit "$STATUS"

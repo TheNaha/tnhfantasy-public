@@ -171,9 +171,13 @@ def _wait_for_ready(port: int, timeout_seconds: float, label: str) -> None:
 def _start_comfy(port: int) -> None:
     """Launch ComfyUI detached and wait for it."""
     logger.info("[tts] starting ComfyUI on port %s", port)
+    # Same shape the image app and the Beam extractor use. The old spelling
+    # put `--cpu 0.0.0.0` into the argv when GPU_TYPE == "cpu": `--cpu` is a
+    # flag, so `0.0.0.0` became an unexpected positional, argparse errored,
+    # and ComfyUI never started — and `--listen` was never passed at all.
     subprocess.Popen(
-        ["comfy", "launch", "--", "--port", str(port), "--cpu" if GPU_TYPE == "cpu" else "--listen",
-         "0.0.0.0", "--port", str(port)],
+        ["comfy", "launch", "--", "--listen", "0.0.0.0", "--port", str(port)]
+        + (["--cpu"] if GPU_TYPE == "cpu" else []),
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         start_new_session=True,

@@ -3,6 +3,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import * as ws from '../api/websocket';
 import { refetchNewestGalleryPage } from './useGallery';
 import { jobMetadata } from '../utils/jobStatus';
+import { isJobToastClaimed } from '../utils/jobToastOwnership';
 import toast from 'react-hot-toast';
 import useSettingsStore from '../store/settingsStore';
 
@@ -169,7 +170,14 @@ export function useJobsRealtime() {
             );
             queryClient.invalidateQueries({ queryKey: ['jobs', 'queue'] });
 
-            if (type === 'completed' && isImageJob) {
+            // A comic export rides task_type `image` (for progress plumbing) but
+            // produces NO gallery image — its artifact is a CBZ/HTML download
+            // that arrives on the job's metadata. Toasting "Image generated!"
+            // for it was a lie, and the gallery refetch bought nothing.
+            // Failures still announce: those are real.
+            const isComicExport = jobMetadata(job).source === 'comic_export';
+
+            if (type === 'completed' && isImageJob && !isComicExport) {
                 // The asset list is what the user is looking at when a job
                 // finishes, and nothing was refreshing it: the job caches were
                 // updated, the queue was invalidated, a toast fired — and the
@@ -218,27 +226,36 @@ export function useJobsRealtime() {
                 invalidateIfMounted(['collections']);
                 invalidateIfMounted(['statistics']);
 
-                toast.success(
-                    <div>
-                        <strong>Image generated!</strong>
-                        <br />
-                        <span className="text-sm opacity-80">
-                            {jobMetadata(job).prompt?.substring(0, 50) || 'Job completed'}
-                            {jobMetadata(job).prompt?.length > 50 ? '...' : ''}
-                        </span>
-                    </div>,
-                    { icon: '✨' }
-                );
+                // A page that submitted this job (useGeneratorJob) claims the toast while
+                // mounted — the invalidation above already happened, so skip only the
+                // notification to avoid two toasts for one completion.
+                if (!isJobToastClaimed(job.id)) {
+                    toast.success(
+                        <div>
+                            <strong>Image generated!</strong>
+                            <br />
+                            <span className="text-sm opacity-80">
+                                {jobMetadata(job).prompt?.substring(0, 50) || 'Job completed'}
+                                {jobMetadata(job).prompt?.length > 50 ? '...' : ''}
+                            </span>
+                        </div>,
+                        { icon: '✨' }
+                    );
+                }
             } else if (type === 'failed' && isImageJob) {
-                toast.error(
-                    <div>
-                        <strong>Job failed</strong>
-                        <br />
-                        <span className="text-sm opacity-80">{job.error || 'Unknown error'}</span>
-                    </div>
-                );
+                if (!isJobToastClaimed(job.id)) {
+                    toast.error(
+                        <div>
+                            <strong>Job failed</strong>
+                            <br />
+                            <span className="text-sm opacity-80">{job.error || 'Unknown error'}</span>
+                        </div>
+                    );
+                }
             } else if (type === 'cancelled' && isImageJob) {
-                toast('Job cancelled', { icon: '🛑' });
+                if (!isJobToastClaimed(job.id)) {
+                    toast('Job cancelled', { icon: '🛑' });
+                }
             }
         };
 

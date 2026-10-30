@@ -210,12 +210,30 @@ async def _bounded_to_thread(fn, /, *args, timeout_seconds: Optional[float] = No
 # route's real traffic (input images, masks) and still finite. The JSON field is
 # checked at the encoded length (4/3 of this plus slack for the rest of the
 # document), because that is what Pydantic has in hand.
-try:
-    UPLOAD_MAX_BYTES = int(os.getenv("REMOTE_AGENT_UPLOAD_MAX_BYTES", str(512 * 1024 * 1024)))
-except (TypeError, ValueError):
-    logger.warning("REMOTE_AGENT_UPLOAD_MAX_BYTES is not an integer; falling back to 512 MiB")
-    UPLOAD_MAX_BYTES = 512 * 1024 * 1024
-UPLOAD_MAX_BYTES_ENCODED = (UPLOAD_MAX_BYTES // 3) * 4 + 4096
+#
+# `PROVIDER_UPLOAD_MAX_BYTES` is the canonical name (what the backend's
+# pre-check in services/engines/base.get_upload_size_cap reads); the agent's
+# own spelling stays as an alias so existing .env files keep working. Zero or
+# negative disables the cap on every side — with the cap off, the encoded
+# limit becomes 0 as well and both guards below skip instead of rejecting
+# every body (the disable-must-mean-disable rule test_provider_core_parity
+# pins for get_file_size_cap).
+def _upload_max_bytes() -> int:
+    for name in ("PROVIDER_UPLOAD_MAX_BYTES", "REMOTE_AGENT_UPLOAD_MAX_BYTES"):
+        raw = os.getenv(name, "").strip()
+        if not raw:
+            continue
+        try:
+            cap = int(raw)
+        except ValueError:
+            logger.warning("%s is not an integer; falling back to 512 MiB", name)
+            return 512 * 1024 * 1024
+        return cap if cap > 0 else 0
+    return 512 * 1024 * 1024
+
+
+UPLOAD_MAX_BYTES = _upload_max_bytes()
+UPLOAD_MAX_BYTES_ENCODED = ((UPLOAD_MAX_BYTES // 3) * 4 + 4096) if UPLOAD_MAX_BYTES else 0
 
 
 _SIDECAR_EXTENSIONS = (".json", ".preview.png", ".sha256", ".downloading", ".lock")
@@ -304,7 +322,9 @@ class UploadFileRequest(BaseModel):
     # before the first line of `upload_file` ran — `base64.b64decode` then made a
     # second copy. The limit is therefore on the *encoded* length, and the
     # Content-Length check below rejects the body before that parse happens at all.
-    content_base64: str = Field(..., max_length=UPLOAD_MAX_BYTES_ENCODED)
+    # `or None`: a disabled cap (0) must not become max_length=0, which would
+    # reject every body instead of none.
+    content_base64: str = Field(..., max_length=UPLOAD_MAX_BYTES_ENCODED or None)
     directory: str
 
 
@@ -1158,7 +1178,9 @@ async def upload_file(req: UploadFileRequest, http_request: Request):
     # Content-Length is not a reason to fail — chunked bodies are legal — so it
     # falls through to the model's own limit.
     declared = http_request.headers.get("content-length")
-    if declared is not None:
+    # `UPLOAD_MAX_BYTES_ENCODED` is 0 when the cap is disabled; without the
+    # truthiness guard every positive body would be "over the 0 byte limit".
+    if declared is not None and UPLOAD_MAX_BYTES_ENCODED:
         try:
             if int(declared) > UPLOAD_MAX_BYTES_ENCODED:
                 raise HTTPException(

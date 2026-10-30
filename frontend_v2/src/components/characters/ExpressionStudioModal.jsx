@@ -1,6 +1,10 @@
 import { useState } from 'react';
 import { X, Sparkles, Loader2, Smile } from 'lucide-react';
 import toast from 'react-hot-toast';
+// Through the API client, not bare fetch: a configured VITE_API_URL /
+// localStorage API origin is ignored by a relative fetch, and only the client
+// applies the 30s timeout.
+import { api } from '../../api';
 
 const DEFAULT_EMOTIONS = [
     { id: 'neutral', label: 'Neutral 😐' },
@@ -38,23 +42,17 @@ export default function ExpressionStudioModal({ character, isOpen, onClose }) {
 
         setIsSubmitting(true);
         try {
-            const res = await fetch(`/api/v2/characters/${character.id}/expressions/generate`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
+            // api.post throws an ApiError carrying the server's `detail`,
+            // which the catch below already toasts.
+            const data = await api.post(
+                `/api/v2/characters/${character.id}/expressions/generate`,
+                {
                     emotions: selectedEmotions,
                     checkpoint: checkpoint || undefined,
                     lora: lora || undefined,
                     base_prompt: basePrompt || undefined,
-                }),
-            });
-
-            if (!res.ok) {
-                const err = await res.json().catch(() => ({}));
-                throw new Error(err.detail || 'Failed to enqueue expression generation');
-            }
-
-            const data = await res.json();
+                }
+            );
             toast.success(
                 `Enqueued ${data.job_ids?.length || selectedEmotions.length} expression generations!`,
                 { icon: '✨' }

@@ -75,7 +75,7 @@ for _sys_path_entry in (
 
 from provider_core.auth import bearer_from_header, token_matches
 from provider_core.downloads import pending_download_paths, pipeline_artifacts
-from provider_core.http_client import get_file_size_cap
+from provider_core.http_client import get_file_size_cap, get_upload_size_cap
 from provider_core.utils import get_safe_path, is_model_candidate, is_transient_artifact
 from provider_core.logging import get_logger
 from provider_worker_core.responses import failed, ok, outcome
@@ -588,6 +588,15 @@ async def upload_file(request: Request):
         raise HTTPException(status_code=400, detail="directory is required")
     
     content = base64.b64decode(content_base64)
+    # The backend's own pre-check (api/routes/files.py) is route-local; this is
+    # the container-side half of the PROVIDER_UPLOAD_MAX_BYTES contract that
+    # services/engines/base.get_upload_size_cap documents. Cap 0 = disabled.
+    cap = get_upload_size_cap()
+    if cap and len(content) > cap:
+        raise HTTPException(
+            status_code=413,
+            detail=f"file exceeds the {cap}-byte upload limit",
+        )
     full_path = get_safe_path("/mnt/data", f"{directory}/{filename}")
     os.makedirs(os.path.dirname(full_path), exist_ok=True)
     

@@ -1,10 +1,13 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, FileText, FileDown, BookOpen, Image as ImageIcon, LayoutTemplate, Globe, Film } from 'lucide-react';
+import { X, FileText, FileDown, BookOpen, Image as ImageIcon, LayoutTemplate, Globe, Film, Loader2, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { useExportStoryFormatted, useExportPublishedStory, useExportChapterComic, usePublishStory, useUnpublishStory } from '../../hooks/useWorldVault';
 import toast from 'react-hot-toast';
 import { useEscapeKey } from '../../hooks/useEscapeKey';
 import { copyToClipboard } from '../../utils/clipboard';
+import { useJobStatus } from '../../hooks/useJobStatus';
+import { jobMetadata } from '../../utils/jobStatus';
+import { claimJobToast, releaseJobToast } from '../../utils/jobToastOwnership';
 
 /**
  * ExportModal — Modal for exporting/publishing a story in multiple formats.
@@ -34,18 +37,60 @@ export default function ExportModal({ story, storyId, chapterId, token, isOpen, 
         }
     };
 
+    // The comic export is a background JOB (up to 30 min of panel generation),
+    // not an instant file download: the route only enqueues it and returns
+    // {job_id}, and the artifact arrives later via the job's metadata
+    // (`download_url`). The old code toasted "Comic exported as CBZ" on
+    // ENQUEUE and closed — the user was told it finished in under a second
+    // with no way to ever fetch the file. Now: announce the start, keep the
+    // job id, and track it to a download button in the status card below.
+    const [comicJobId, setComicJobId] = React.useState(null);
+    const [comicFormat, setComicFormat] = React.useState(null);
+    const { data: comicJob } = useJobStatus(comicJobId);
+    const comicNotifiedRef = React.useRef(null);
+
+    React.useEffect(() => {
+        if (!comicJobId || !comicJob) return;
+        if (comicNotifiedRef.current === comicJobId) return;
+        const status = comicJob.status;
+        if (status === 'completed' || status === 'failed' || status === 'cancelled') {
+            comicNotifiedRef.current = comicJobId;
+            releaseJobToast(comicJobId);
+            if (status === 'completed') {
+                toast.success('Comic export ready — download it from the export dialog', { id: 'comic-export' });
+            }
+            // failure/cancelled is announced by the global job handler.
+        }
+    }, [comicJob, comicJobId]);
+
     const handleExportComic = (format) => {
         if (!storyId || !chapterId) {
             toast.error('Cannot export comic: story or chapter not selected');
             return;
         }
-        const onSuccess = () => {
-            toast.success(`Comic exported as ${format.toUpperCase()}`);
-            onClose();
+        const onSuccess = (data) => {
+            const jobId = data?.job_id || null;
+            setComicJobId(jobId);
+            setComicFormat(format);
+            comicNotifiedRef.current = null;
+            // Claim the terminal toast so the global handler does not show a
+            // bogus "Image generated!" for an export that makes no gallery
+            // image (the job's task_type is `image` for progress plumbing).
+            if (jobId) claimJobToast(jobId);
+            toast.success(
+                `Comic export started (${format.toUpperCase()}) — panel images generate in the background`,
+                { id: 'comic-export' }
+            );
+            // The dialog stays open: the status card below tracks the job to
+            // its download link. Closing it is fine — the state survives and
+            // reopening the dialog shows the same card.
         };
-        const onError = (e) => toast.error(`Comic export failed: ${e.message}`);
+        const onError = (e) => toast.error(`Comic export failed to start: ${e.message}`);
         exportChapterComic.mutate({ storyId, chapterId, format }, { onSuccess, onError });
     };
+
+    const comicStatus = comicJobId ? comicJob?.status : null;
+    const comicDownloadUrl = comicStatus === 'completed' ? jobMetadata(comicJob)?.download_url : null;
 
     const handlePublish = () => {
         publishMutation.mutate({ storyId }, {
@@ -190,6 +235,42 @@ export default function ExportModal({ story, storyId, chapterId, token, isOpen, 
                                     <p className="text-xs text-gray-400">Self-contained HTML reader with panel navigation.</p>
                                 </div>
                             </button>
+
+                            {comicJobId && (
+                                <div className="p-3 bg-gray-800/60 border border-gray-700 rounded-lg space-y-2">
+                                    <div className="flex items-center gap-2 text-sm text-gray-200">
+                                        {comicStatus === 'completed' ? (
+                                            <CheckCircle2 size={16} className="text-green-400" />
+                                        ) : comicStatus === 'failed' || comicStatus === 'cancelled' ? (
+                                            <AlertTriangle size={16} className="text-red-400" />
+                                        ) : (
+                                            <Loader2 size={16} className="text-blue-400 animate-spin" />
+                                        )}
+                                        <span>
+                                            {comicStatus === 'completed'
+                                                ? `Comic export ready (${String(comicFormat || '').toUpperCase()})`
+                                                : comicStatus === 'failed'
+                                                    ? 'Comic export failed'
+                                                    : comicStatus === 'cancelled'
+                                                        ? 'Comic export cancelled'
+                                                        : 'Comic export running — panel images take a few minutes; you can close this dialog and come back'}
+                                        </span>
+                                    </div>
+                                    {(comicStatus === 'failed') && (
+                                        <p className="text-xs text-red-400">{comicJob?.error || 'Unknown error'}</p>
+                                    )}
+                                    {comicStatus === 'completed' && comicDownloadUrl && (
+                                        <a
+                                            href={comicDownloadUrl}
+                                            download
+                                            className="inline-flex items-center gap-2 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg transition-colors"
+                                        >
+                                            <FileDown size={16} />
+                                            Download {String(comicFormat || 'archive').toUpperCase()}
+                                        </a>
+                                    )}
+                                </div>
+                            )}
 
                             {!token && (
                                 <>

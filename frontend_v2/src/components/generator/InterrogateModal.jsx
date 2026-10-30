@@ -1,8 +1,12 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { X, UploadCloud, Loader2, Sparkles, Wand2, Tag, Copy } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useGeneratorStore } from '../../store/generatorStore';
+// Through the API client, not bare fetch: a configured API origin is ignored
+// by a relative fetch, and only the client applies the 30s timeout (an
+// interrogate over a slow provider used to spin forever).
+import { api } from '../../api';
 
 export default function InterrogateModal({ isOpen, onClose }) {
     const setPrompt = useGeneratorStore((state) => state.setPrompt);
@@ -11,12 +15,21 @@ export default function InterrogateModal({ isOpen, onClose }) {
     const [isLoading, setIsLoading] = useState(false);
     const [previewUrl, setPreviewUrl] = useState(null);
     const [result, setResult] = useState(null);
+    const previewRef = useRef(null);
+
+    // One blob URL at a time: revoke the previous preview on replace, and the
+    // last one on unmount.
+    useEffect(() => () => {
+        if (previewRef.current) URL.revokeObjectURL(previewRef.current);
+    }, []);
 
     const onDrop = useCallback(async (acceptedFiles) => {
         const file = acceptedFiles[0];
         if (!file) return;
 
-        setPreviewUrl(URL.createObjectURL(file));
+        if (previewRef.current) URL.revokeObjectURL(previewRef.current);
+        previewRef.current = URL.createObjectURL(file);
+        setPreviewUrl(previewRef.current);
         setIsLoading(true);
         setResult(null);
 
@@ -24,16 +37,7 @@ export default function InterrogateModal({ isOpen, onClose }) {
         formData.append('file', file);
 
         try {
-            const res = await fetch('/api/generate/interrogate', {
-                method: 'POST',
-                body: formData,
-            });
-
-            if (!res.ok) {
-                throw new Error(`Failed to interrogate image: ${res.statusText}`);
-            }
-
-            const data = await res.json();
+            const data = await api.post('/api/generate/interrogate', formData);
             setResult(data);
             toast.success(
                 data.source === 'embedded_metadata'

@@ -151,12 +151,25 @@ def _token_ok(provided: Any) -> bool:
     return hmac.compare_digest(provided, expected)
 
 
-def _reject(websocket: WebSocket, message: str, retryable: bool = False) -> None:
-    websocket.send_text(json.dumps({
-        "event": "failed",
-        "message": message,
-        "retryable": retryable,
-    }))
+async def _reject(websocket: WebSocket, message: str, retryable: bool = False) -> None:
+    """Deliver the one error frame the backend's receive loop understands.
+
+    Every caller does `await _reject(...)`, so this must be a coroutine:
+    as a sync def the `send_text` coroutine was discarded, `await _reject`
+    became `await None` (TypeError), and NO error frame was ever sent —
+    auth rejections, the routine cold-start "still loading" (retryable) and
+    upstream failures all died as abnormal closures instead.
+    """
+    try:
+        await websocket.send_text(json.dumps({
+            "event": "failed",
+            "message": message,
+            "retryable": retryable,
+        }))
+    except Exception:
+        # Peer already gone — the frame is undeliverable either way; don't
+        # let a dead socket mask the original failure that got us here.
+        pass
 
 
 async def _read_payload(websocket: WebSocket) -> Dict[str, Any] | None:

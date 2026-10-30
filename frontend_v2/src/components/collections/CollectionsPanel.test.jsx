@@ -16,7 +16,10 @@ vi.mock('../../store/confirmationStore', () => ({
     useConfirmation: () => ({ confirm: vi.fn().mockResolvedValue(true) }),
 }));
 
-vi.mock('../CreateCollectionModal', () => ({ default: () => null }));
+// `./`, not `../`: the panel imports ./CreateCollectionModal (a sibling), and
+// the old `../` specifier resolved to a module that does not exist — vi.mock
+// silently no-oped, so the real Modal mounted instead of the stub.
+vi.mock('./CreateCollectionModal', () => ({ default: () => null }));
 
 import CollectionsPanel from './CollectionsPanel';
 

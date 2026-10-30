@@ -56,10 +56,8 @@ data/db/comfy.db
 
 .ocx/
 .opencode/
-.gemini/
-.kilo/
-.kilocode/
-.agents/
+# (.gemini/ .kilo/ .kilocode/ .agents/ are already ignored in the IDE block
+# near the top — this used to repeat them, and the two blocks drifted apart.)
 .jules/
 .Jules/
 jules.log

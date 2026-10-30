@@ -240,12 +240,21 @@ class FileTooLargeError(ValueError):
 
 
 def get_upload_size_cap() -> int:
-    """Ceiling for uploaded file bodies, mirroring provider_core.
+    """Ceiling for uploaded file bodies, mirrored by every container.
 
-    The containers enforce ``UPLOAD_MAX_BYTES`` (default 512 MiB, env
-    ``PROVIDER_UPLOAD_MAX_BYTES``) on the raw bytes and
-    ``UPLOAD_MAX_BYTES_ENCODED`` on the base64 body (models.py:135-142,
-    router.py:296-309). Zero or negative disables the cap, same as there.
+    The containers enforce the SAME knob (env ``PROVIDER_UPLOAD_MAX_BYTES``,
+    default 512 MiB, zero or negative disables) on their side:
+
+    * ``deployables/beam/beam_app.py`` ``upload_file`` (decoded bytes),
+    * ``deployables/modal/image/modal_app.py`` ``FileStorage.put_file``,
+    * ``remote_agent/server.py`` ``upload_file`` (encoded length via
+      ``UPLOAD_MAX_BYTES_ENCODED``, same env, legacy alias
+      ``REMOTE_AGENT_UPLOAD_MAX_BYTES``),
+
+    each reading ``get_upload_size_cap()`` from its own copy of
+    ``provider*_core/http_client.py`` — the copies are a deliberate fork,
+    pinned together by ``tests/test_provider_core_parity.py``. The backend's
+    own pre-check in ``api/routes/files.py`` is the route-local half.
     """
     import os
 

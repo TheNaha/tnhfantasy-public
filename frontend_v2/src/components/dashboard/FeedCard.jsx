@@ -373,7 +373,16 @@ const FeedCard = memo(function FeedCard({
   const handleShowDetails = async () => {
     if (!showDetails && !metadata) {
       setDetailsLoading(true);
-      await ensureMetadata();
+      try {
+        await ensureMetadata();
+      } catch (error) {
+        // ensureMetadata rethrows anything but a 404; without this the
+        // loading flag never cleared (panel stuck in its loading branch),
+        // the panel never opened, and the rejection was unhandled.
+        toast.error(`Could not load details: ${error?.message || error}`);
+        setDetailsLoading(false);
+        return;
+      }
       setDetailsLoading(false);
     }
     setShowDetails(!showDetails);

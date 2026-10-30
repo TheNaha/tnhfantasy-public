@@ -23,6 +23,8 @@ contains it, and a model list is the provider's own list of files.
 
 from typing import Any
 
+from core.workflow_parser import KSAMPLER_NODE_CLASSES
+
 # The node classes the guided path can emit, grouped by what they are for.
 #
 # The VALUES are the class names the provider may use. Several spellings
@@ -52,10 +54,12 @@ ENHANCEMENT_NODE_CLASSES: dict[str, tuple[str, ...]] = {
     "depth": ("MiDaS-DepthMapPreprocessor", "Zoe-DepthMapPreprocessor", "DepthAnythingPreprocessor", "DepthPreprocessor"),
     "openpose": ("OpenposePreprocessor", "DWPreprocessor"),
     "tiled_vae": ("VAEDecodeTiled", "VAEDecode"),
-    # The KSampler node carries the sampler_name and scheduler combo inputs.
-    # Its presence alone doesn't tell us which samplers/schedulers the
-    # provider supports — for that we read the input option lists below.
-    "ksampler": ("KSampler", "KSampler (Efficient)", "KSamplerAdvanced"),
+    # The KSampler family carries the sampler_name and scheduler combo
+    # inputs. Its presence alone doesn't tell us which samplers/schedulers
+    # the provider supports — for that we read the input option lists below.
+    # Shared with workflow_parser so a spelling added for graph parsing is
+    # also hard-blocked here (and vice versa).
+    "ksampler": KSAMPLER_NODE_CLASSES,
 }
 
 # Node class + input name for the sampler and scheduler combo inputs on

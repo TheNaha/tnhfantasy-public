@@ -1508,10 +1508,18 @@ class FileStorage:
             True if successful
         """
         from pathlib import Path
-        
+
+        # Container-side half of the PROVIDER_UPLOAD_MAX_BYTES contract (see
+        # backend services/engines/base.get_upload_size_cap). Cap 0 = disabled.
+        from provider_worker_core.http_client import get_upload_size_cap
+
+        cap = get_upload_size_cap()
+        if cap and len(content) > cap:
+            raise ValueError(f"file exceeds the {cap}-byte upload limit")
+
         full_path = Path(get_safe_path("/mnt/data", path))
         full_path.parent.mkdir(parents=True, exist_ok=True)
-        
+
         with open(full_path, "wb") as f:
             f.write(content)
         

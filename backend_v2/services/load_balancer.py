@@ -64,6 +64,23 @@ _provider_health_cache = TTLCache(
     ttl=15.0
 )
 
+# Capability dicts per provider, fetched lazily from the engine's object_info
+# and cached with a TTL. Used for sampler/scheduler hard-block checks so a
+# provider that cannot run a job's sampler or scheduler is never selected.
+# A TTLCache (not a bare dict) so entries age out even when a provider row is
+# deleted without going through `engine_factory.invalidate_engine`, and the
+# size is bounded by configuration rather than provider churn.
+_CAPABILITY_CACHE_TTL_SECONDS = _parse_positive_float(
+    os.getenv("COMFY_PROVIDER_CAPABILITY_CACHE_TTL_SECONDS"), 60.0
+)
+_CAPABILITY_CACHE_MAX_ENTRIES = _parse_positive_int(
+    os.getenv("COMFY_PROVIDER_CAPABILITY_CACHE_MAX_ENTRIES"), 128
+)
+_capability_cache: TTLCache[str, tuple[float, dict[str, Any] | None]] = TTLCache(
+    maxsize=_CAPABILITY_CACHE_MAX_ENTRIES,
+    ttl=_CAPABILITY_CACHE_TTL_SECONDS,
+)
+
 
 # Circuit-breaker: after N consecutive failures a provider is skipped until
 # its failure streak is reset by a successful job.
@@ -280,6 +297,7 @@ class LoadBalancer:
                 state.reset()
         _model_availability_cache.clear()
         _provider_health_cache.clear()
+        _capability_cache.clear()
     
     @classmethod
     def load_state_from_db(

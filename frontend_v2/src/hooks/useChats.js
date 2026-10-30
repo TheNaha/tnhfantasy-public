@@ -1,4 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import toast from 'react-hot-toast';
 import { api } from '../api';
 import { useCreateResource, useDeleteResource, invalidateVaultAggregates } from './useWorldVaultResource';
 import { buildQueryKey, QUERY_KEYS } from '../constants/queryKeys';
@@ -18,6 +19,14 @@ import { isActiveJobStatus } from '../utils/jobStatus';
 const CHATS_ROOT_KEY = buildQueryKey(QUERY_KEYS.CHATS);
 const MESSAGES_ROOT_KEY = buildQueryKey(QUERY_KEYS.MESSAGES);
 const CHAT_LIST_KEY = [...CHATS_ROOT_KEY, 'list'];
+// `CHAT_DETAIL_KEY('list')` would be byte-identical to CHAT_LIST_KEY, so a
+// chat whose id is literally `list` would let a detail write/invalidation
+// land on the cached list. That is impossible today: chat ids are
+// server-generated uuid4, `CreateChatRequest` whitelists no `id`, and the
+// one producer that accepts a client-supplied id (character-card import)
+// rejects the marker (backend `validate_imported_chat_id`). Pinned by
+// backend tests/test_chat_list_key_collision.py — if the API ever starts
+// accepting client-chosen chat ids, guard it there or reshape this key.
 const CHAT_DETAIL_KEY = (chatId) => [...CHATS_ROOT_KEY, chatId];
 
 export { CHATS_ROOT_KEY, CHAT_LIST_KEY, CHAT_DETAIL_KEY };
@@ -322,6 +331,12 @@ export const useUpdateChatStateSnapshot = () => {
         onSuccess: (_, variables) => {
             queryClient.invalidateQueries({ queryKey: CHAT_DETAIL_KEY(variables.chatId) });
             queryClient.invalidateQueries({ queryKey: CHAT_LIST_KEY });
+        },
+        // Autosave path: the panel writes on field blur. Without an error
+        // handler a failed save was invisible — the next refetch quietly put
+        // the old snapshot back and the edit was simply gone.
+        onError: (error) => {
+            toast.error(`Could not save chat state: ${error?.message || 'request failed'}`);
         },
     });
 };

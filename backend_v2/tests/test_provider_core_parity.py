@@ -28,6 +28,7 @@ import sys
 import pytest
 
 from services.engines.base import get_file_size_cap as backend_cap
+from services.engines.base import get_upload_size_cap as backend_upload_cap
 
 from tests.repo_paths import require_repo_root
 
@@ -111,6 +112,66 @@ class TestGetFileSizeCapAgrees:
         assert not offending, (
             f"{rel} guards the cap with `>= 0`, which turns the documented "
             f"0-means-unlimited value into reject-everything: {offending}"
+        )
+
+
+class TestGetUploadSizeCapAgrees:
+    """The upload cap is one knob across backend, containers and the agent.
+
+    Added with FP-5 (audit-2026-10-30c): `get_upload_size_cap()`'s docstring
+    promised the containers enforced `PROVIDER_UPLOAD_MAX_BYTES` and cited a
+    deleted `router.py`; no deployable enforced any cap. Both fork copies now
+    carry the helper, each enforcement site calls it, and the two copies must
+    agree the same way `get_file_size_cap` does.
+    """
+
+    @pytest.mark.parametrize(
+        "raw,expected",
+        [
+            (None, 512 * 1024 * 1024),     # unset -> the default ceiling
+            ("", 512 * 1024 * 1024),        # blank -> the default ceiling
+            ("garbage", 512 * 1024 * 1024),  # unparseable -> the default, not a crash
+            ("1024", 1024),
+            ("0", 0),   # documented as "disable the cap"
+            ("-1", 0),  # likewise, for the negative spelling
+        ],
+    )
+    def test_same_answer_for_the_same_env(self, monkeypatch, raw, expected):
+        if raw is None:
+            monkeypatch.delenv("PROVIDER_UPLOAD_MAX_BYTES", raising=False)
+        else:
+            monkeypatch.setenv("PROVIDER_UPLOAD_MAX_BYTES", raw)
+
+        deployable_copy = _load_deployable_module("http_client").get_upload_size_cap
+        live_spec = importlib.util.spec_from_file_location(
+            "live_http_client", ROOT / "remote_agent/provider_core/http_client.py"
+        )
+        live_module = importlib.util.module_from_spec(live_spec)
+        live_spec.loader.exec_module(live_module)
+
+        from_backend = backend_upload_cap()
+        assert deployable_copy() == expected
+        assert live_module.get_upload_size_cap() == expected
+        assert from_backend == expected, (
+            "the upload cap copies disagree; PROVIDER_UPLOAD_MAX_BYTES would "
+            "mean different things on each side of the same contract"
+        )
+
+    @pytest.mark.parametrize(
+        ("rel", "needle"),
+        [
+            ("deployables/beam/beam_app.py", "get_upload_size_cap()"),
+            ("deployables/modal/image/modal_app.py", "get_upload_size_cap()"),
+            ("remote_agent/server.py", "PROVIDER_UPLOAD_MAX_BYTES"),
+            ("remote_agent/provider_core/http_client.py", "get_upload_size_cap"),
+            ("deployables/provider_worker_core/http_client.py", "get_upload_size_cap"),
+        ],
+    )
+    def test_every_enforcement_site_reads_the_shared_knob(self, rel, needle):
+        source = (ROOT / rel).read_text()
+        assert needle in source, (
+            f"{rel} no longer reads {needle}; its upload path is outside the "
+            "PROVIDER_UPLOAD_MAX_BYTES contract again"
         )
 
 

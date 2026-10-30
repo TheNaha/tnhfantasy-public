@@ -488,6 +488,11 @@ async def _run_pipeline_stages_isolated(start_key: str, ctx: dict[str, Any]) -> 
     saved, so one broken stage must not delete the rest of the turn's work.
     The stage name is in the log line, because "the pipeline failed" is not a
     thing that can be acted on.
+
+    Twin, not copy: `services.pipeline_runner.run_from` performs this same
+    walk on the request path with failure propagation instead of isolation.
+    Change the control flow of one and you must change the other —
+    `tests/test_pipeline_walk_consistency.py` enforces it.
     """
     async def _run_one(key: str) -> None:
         try:

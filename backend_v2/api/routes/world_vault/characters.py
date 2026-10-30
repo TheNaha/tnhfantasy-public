@@ -460,6 +460,27 @@ def _card_identity(char_data: dict) -> str | None:
     return character_id or None
 
 
+#: Chat ids the frontend's cache layout reserves. `list` is the marker segment
+#: of `CHAT_LIST_KEY` in `frontend_v2/src/hooks/useChats.js`: a chat row stored
+#: under that id makes `CHAT_DETAIL_KEY('list')` byte-identical to the list
+#: key, so detail invalidations and writes land on the cached chat list (the
+#: m5 edge, audit-2026-10-30b). Server-side creates always use uuid4 and
+#: `CreateChatRequest` whitelists no `id`, so this import — where a client
+#: bundle's string becomes a primary key — is the only producer that can hit
+#: the reservation, and it is enforced there.
+RESERVED_CHAT_IDS = frozenset({"list"})
+
+
+def validate_imported_chat_id(chat_id: object) -> str:
+    """Normalize a bundle-supplied chat id and reject the reserved names."""
+    cleaned = str(chat_id or "").strip()
+    if cleaned in RESERVED_CHAT_IDS:
+        raise ValidationError(
+            f"chat id {cleaned!r} is reserved by the client's cache layout"
+        )
+    return cleaned
+
+
 def _restore_bundle(session: Session, character: Character, bundle: dict) -> None:
     """Restore what a bundle carries that a card cannot.
 
@@ -569,7 +590,7 @@ def _restore_bundle(session: Session, character: Character, bundle: dict) -> Non
 
     # The chat history.
     for message in bundle.get("chat") or []:
-        chat_id = str(message.get("chat_id") or "").strip()
+        chat_id = validate_imported_chat_id(message.get("chat_id"))
         if not chat_id:
             continue
         chat = session.get(Chat, chat_id)

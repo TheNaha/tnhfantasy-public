@@ -15,8 +15,6 @@ import ast
 import re
 from pathlib import Path
 
-import pytest
-
 SRC = Path(__file__).resolve().parents[1]
 
 # (limit name, regex to find it in manifest docstrings, coercion type)

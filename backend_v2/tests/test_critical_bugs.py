@@ -1,6 +1,5 @@
 """Tests for critical bugs identified in audit."""
 import pytest
-import asyncio
 import sys
 import os
 
@@ -19,10 +18,51 @@ class TestCriticalBugs:
         # This test will be implemented after the fix
         pass
 
-    def test_capability_cache_unbounded(self):
-        """Test that _capability_cache is bounded."""
-        # This test will be implemented after the fix
-        pass
+    def test_capability_cache_bounded(self):
+        """_capability_cache must exist and be bounded with a TTL.
+
+        Regression: commit 27d74c3c deleted the definition while eight call
+        sites (and engine_factory.invalidate_engine's import) still used it.
+        """
+        from services import load_balancer
+
+        cache = load_balancer._capability_cache
+        assert getattr(cache, "maxsize", None), "capability cache must be bounded"
+        assert getattr(cache, "ttl", 0) > 0, "capability cache must expire"
+        cache["bounded-probe"] = (0.0, {"samplers": ["KSampler"]})
+        assert "bounded-probe" in cache
+
+    def test_invalidate_engine_clears_health_and_capability_caches(self):
+        """Provider rotation must clear health + capability verdicts.
+
+        Regression: the import of `_capability_cache` in invalidate_engine sits
+        inside a bare `try/except Exception: pass`, so when the definition was
+        missing the ImportError was swallowed and rotation silently stopped
+        clearing EVERY health-cache key along with it.
+        """
+        from services import load_balancer
+        from services.engines import engine_factory
+
+        pid = "rotated-provider"
+        keys = [
+            f"in_process:{pid}",
+            f"in_process:{pid}:image",
+            f"in_process:{pid}:llm",
+            f"in_process:{pid}:tts",
+        ]
+        for key in keys:
+            load_balancer._provider_health_cache[key] = True
+        load_balancer._capability_cache[pid] = (0.0, {"samplers": ["KSampler"]})
+
+        engine_factory.invalidate_engine(pid)
+
+        for key in keys:
+            assert key not in load_balancer._provider_health_cache, (
+                f"stale health verdict survived rotation: {key}"
+            )
+        assert pid not in load_balancer._capability_cache, (
+            "stale capability verdict survived rotation"
+        )
 
     def test_secret_redaction_in_exceptions(self):
         """Test that secrets are redacted from exception strings."""

@@ -17,6 +17,31 @@ FILE_TRANSFER_CHUNK_BYTES = 1 << 20
 # is not fetched through this path.
 DEFAULT_GET_FILE_SIZE_CAP = 512 * 1024 * 1024
 
+# Default ceiling on one uploaded file body (decoded bytes) — the same default
+# backend_v2/services/engines/base.py documents for PROVIDER_UPLOAD_MAX_BYTES.
+DEFAULT_UPLOAD_MAX_BYTES = 512 * 1024 * 1024
+
+
+def get_upload_size_cap() -> int:
+    """Ceiling on one uploaded file body, in decoded bytes.
+
+    Override with ``PROVIDER_UPLOAD_MAX_BYTES`` — the name the backend's
+    pre-check (`services/engines/base.get_upload_size_cap`) reads, so the
+    container and the route in front of it agree on one knob. Zero or
+    negative disables the cap, exactly like ``get_file_size_cap``.
+
+    Mirrored in ``remote_agent/provider_core/http_client.py`` (deliberate
+    fork); `tests/test_provider_core_parity.py` pins the two together.
+    """
+    raw = os.getenv("PROVIDER_UPLOAD_MAX_BYTES", "").strip()
+    if not raw:
+        return DEFAULT_UPLOAD_MAX_BYTES
+    try:
+        cap = int(raw)
+    except ValueError:
+        return DEFAULT_UPLOAD_MAX_BYTES
+    return cap if cap > 0 else 0
+
 
 def get_file_size_cap() -> int:
     """Max bytes a provider will relay for one /get-file call.

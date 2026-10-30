@@ -17,7 +17,7 @@
 
 import { Suspense, lazy, useEffect, useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation, useParams, Outlet } from 'react-router-dom';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, MutationCache } from '@tanstack/react-query';
 import { Loader2 } from 'lucide-react';
 import * as Lucide from 'lucide-react';
 
@@ -257,6 +257,23 @@ function App() {
 
     const [queryClient] = useState(() => (
         new QueryClient({
+            // A mutation with no error handler anywhere is invisible by
+            // design: the app has no other global handler, so a 4xx/5xx just
+            // dropped the edit (state-snapshot autosave, collections,
+            // credential delete, asset tags, character reorder all shipped
+            // this way). This is the floor, not a replacement: a mutation that
+            // defines its own hook-level onError keeps full control (React
+            // Query calls both, so we back off), and the shared toast id keeps
+            // the one gap — call-site `mutate(vars, {onError})` callbacks live
+            // on the observer and cannot be detected here — from stacking a
+            // second visible toast over the call site's own.
+            mutationCache: new MutationCache({
+                onError: (error, _variables, _context, mutation) => {
+                    if (typeof mutation.options.onError === 'function') return;
+                    if (error?.name === 'AbortError' || error?.name === 'CanceledError') return;
+                    toast.error(error?.message || 'Request failed', { id: 'mutation-error' });
+                },
+            }),
             defaultOptions: {
                 queries: {
                     staleTime: 1000 * 60 * 5,

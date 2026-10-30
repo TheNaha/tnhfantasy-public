@@ -141,6 +141,43 @@ case "$frontend_bind" in
     ;;
 esac
 
+# The backend DOES publish a host port (`docker-compose.yml`:
+# `${COMFY_BACKEND_BIND:-100.150.0.4}:8002:8002`) — AGENTS.md's "backend
+# publishes NO host port" is the intended posture, but the compose default
+# above is a real publish. Two failure modes the frontend check cannot see:
+#   * 0.0.0.0 — the exact posture AGENTS.md forbids for this unauthenticated
+#     API (DELETE /api/jobs and everything else), which this script would
+#     otherwise pass in silence;
+#   * a hardcoded default that only binds where NetBird is up — on a fresh
+#     host, compose fails with an opaque "Cannot assign requested address"
+#     naming neither cause nor fix while preflight prints "passed".
+# Same shell-over-.env precedence rule as the frontend check: dotenv/compose
+# take the LAST assignment, so read `tail -1` of both sources.
+backend_bind=${COMFY_BACKEND_BIND:-$(grep -E "^COMFY_BACKEND_BIND=" .env 2>/dev/null | tail -1 | cut -d= -f2-)}
+backend_bind=${backend_bind:-100.150.0.4}
+case "$backend_bind" in
+  ""|127.*|localhost|::1)
+    ok "backend is bound to loopback only (${backend_bind})"
+    ;;
+  0.0.0.0|::|"[::]")
+    bad "COMFY_BACKEND_BIND=${backend_bind} publishes the whole unauthenticated API on EVERY interface (DELETE /api/jobs included). Unset it, or name one VPN/LAN address."
+    ;;
+  *)
+    # Is this an address the host actually owns? If not, the port publish
+    # cannot bind and the container dies with an error that never mentions
+    # the bind address as the cause.
+    if command -v ip >/dev/null 2>&1 && ip -4 addr show 2>/dev/null | grep -q "inet ${backend_bind}/"; then
+      note "backend is also bound to ${backend_bind} — correct if that is your VPN/LAN address, but the API is reachable by anything that can route to it"
+    elif hostname -I 2>/dev/null | grep -qw "$backend_bind"; then
+      note "backend is also bound to ${backend_bind} — correct if that is your VPN/LAN address, but the API is reachable by anything that can route to it"
+    elif ! command -v ip >/dev/null 2>&1; then
+      note "COMFY_BACKEND_BIND=${backend_bind} — cannot verify it is local (no 'ip' command); confirm it is an address THIS host owns or compose will fail to publish 8002"
+    else
+      bad "COMFY_BACKEND_BIND=${backend_bind} is not an address on this host, so compose cannot publish it: the backend container will fail to start with an opaque bind error. Set an address listed by 'ip -4 addr' (a VPN/LAN address, or 127.0.0.1), or start NetBird first."
+    fi
+    ;;
+esac
+
 echo
 echo "==> Autostart path"
 # No more provider autostart/deploy from the backend: containerized providers

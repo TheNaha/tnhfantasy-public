@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import useSettingsStore from '../store/settingsStore';
 import { useJobStatus } from './useJobStatus';
+import { claimJobToast, releaseJobToast } from '../utils/jobToastOwnership';
 
 // "Redirect after generate" is documented in Settings as a redirect to the
 // gallery. It used to be '/', which is now a bounce to the roleplay home.
@@ -64,6 +65,18 @@ export function useGeneratorJob(opts = {}) {
     const [generating, setGenerating] = useState(false);
     const { data: jobData } = useJobStatus(currentJobId);
     const redirectTimerRef = useRef(null);
+
+    // While this page is mounted it OWNS its job's terminal toast, so the
+    // global useJobsRealtime does not double it ("Image generated!" +
+    // "Generation complete!" for one completion). Released on clear/unmount:
+    // after a redirect-after-generate the job completes with this page gone,
+    // and the global handler must toast it then — exactly one side always does.
+    useEffect(() => {
+        if (currentJobId) claimJobToast(currentJobId);
+        return () => {
+            if (currentJobId) releaseJobToast(currentJobId);
+        };
+    }, [currentJobId]);
 
     // The delay is the ONLY redirect path. It used to gate a timer armed in the
     // completion effect, while `handleGenerate` navigated synchronously right

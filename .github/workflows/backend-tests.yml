@@ -15,6 +15,13 @@ on:
       # suite — so the check had no trigger at all.
       - 'docs/api.md'
       - '.github/workflows/backend-tests.yml'
+      # The two provider contract tests live in backend_v2/tests but parse
+      # THESE trees: test_deployable_contract.py (engines <-> deployables, both
+      # directions) and test_provider_core_parity.py (provider_worker_core <->
+      # provider_core fork). Neither deployables/** nor remote_agent/** had any
+      # trigger that ran pytest, so breaking either contract shipped green.
+      - 'deployables/**'
+      - 'remote_agent/**'
   pull_request:
     branches: [ "main", "master" ]
     paths:
@@ -29,6 +36,10 @@ on:
       # suite — so the check had no trigger at all.
       - 'docs/api.md'
       - '.github/workflows/backend-tests.yml'
+      # Same reason as push: the deployable/provider-core contract tests parse
+      # deployables/** and remote_agent/**, so those trees must trigger them.
+      - 'deployables/**'
+      - 'remote_agent/**'
 
 jobs:
   test:
@@ -70,6 +81,11 @@ jobs:
         pip install ruff
 
     - name: Lint with ruff
+      run: ruff check .
+
+    - name: Lint deployables (own ruff.toml)
+      working-directory: ./deployables
+      # deployables/ carries its own ruff config; nothing else in CI read it.
       run: ruff check .
 
     - name: Run tests with pytest

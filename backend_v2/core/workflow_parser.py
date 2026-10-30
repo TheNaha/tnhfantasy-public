@@ -48,7 +48,18 @@ MODEL_LOADER_NODES: dict[str, tuple[str, str]] = {
 }
 
 # KSampler-like node classes that carry sampler_name and scheduler combo inputs.
-KSAMPLER_NODE_CLASSES = ("KSampler", "KSampler (Efficient)", "KSamplerAdvanced", "KSampler (Custom)")
+# The single source of truth for "which node classes are KSampler-like".
+# workflow_metadata (graph→gallery metadata), provider_capabilities (hard
+# blocks) and reuseParameters.js on the frontend all need the same answer;
+# each used to keep its own copy of this list and they drifted apart. Add a
+# spelling here, not to a caller.
+KSAMPLER_NODE_CLASSES = (
+    "KSampler",
+    "KSampler (Efficient)",
+    "KSamplerAdvanced",
+    "KSampler (Custom)",
+    "KSampler (Advanced)",
+)
 
 # Nodes with multiple model inputs
 MULTI_INPUT_NODES: dict[str, list[tuple[str, str]]] = {
@@ -155,8 +166,8 @@ def extract_sampler_scheduler_from_workflow(
     """
     Extract sampler name and scheduler name from a ComfyUI workflow.
     
-    Looks at KSampler-like nodes (KSampler, KSampler (Efficient),
-    KSamplerAdvanced) for their `sampler_name` and `scheduler` inputs.
+    Looks at KSampler-like nodes (`KSAMPLER_NODE_CLASSES`) for their
+    `sampler_name` and `scheduler` inputs.
     
     Args:
         workflow: ComfyUI workflow dictionary
