@@ -195,7 +195,7 @@ export default function RuntimeTab({
 
     const activeTelemetry = liveTelemetry || telemetry;
     const vramChartPoints = (activeTelemetry.history?.vram || []).map((sample) => ({
-        ts: sample.ts ? new Date(sample.ts).toLocaleTimeString() : '',
+        ts: sample.ts ? formatTimestamp(sample.ts) : '',
         used: sample.vram_used_mb ?? sample.vram_used ?? 0,
         total: sample.vram_total_mb ?? sample.vram_total ?? 0,
     }));

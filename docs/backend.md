@@ -93,3 +93,26 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build -V -d
 - Tests that create DB sessions must override both `api.deps.get_session` and `infrastructure.database.get_session` — use the `session` fixture and never open your own session.
 - `docs/api.md` is generated; after changing any router, run `scripts/generate_api_docs.py` or `test_api_docs_contract.py` fails.
 - `ruff.toml` selects F only and F401 is on. Every `# noqa: F401` needs a stated reason. Run `ruff check .` from `backend_v2/` (the repo root reports ~450 unrelated errors).
+
+## Hidden surface area (scripts, CLIs, background jobs)
+
+### Host scripts (`scripts/`)
+
+- `scripts/preflight.sh` — create external `metrics`/`proxy` networks; report config that silently disables features.
+- `scripts/deploy.sh {list,check,image,tts,llm,beam,all} [--dry-run]` — the only supported way to deploy cloud workers (run on the host, never from the API).
+- `scripts/generate_api_docs.py` — regenerate `docs/api.md` from `app.openapi()`.
+- `scripts/launch_modal_worker.py`, `scripts/migrate_sqlite_to_pg.py`, `scripts/update_colab_notebooks.py` — maintenance helpers.
+
+### Backend maintenance scripts (`backend_v2/scripts/`)
+
+- `migrate_sqlite_to_postgres.py`, `migrate_output.py`, `migrate_unet_models.py` — data migrations.
+- `reindex_asset_loras.py`, `backfill_download_urls.py`, `clean_preview_cache.py`, `benchmark_statistics.py` — one-off maintenance.
+- `external_worker_client.py` — client helper for remote agents.
+
+### Remote agent (`remote_agent/`)
+
+Separate stack with its own compose file, `agentctl.sh`/`agentctl.bat`, and binary build. See `remote_agent/README.md`.
+
+### Background scheduler jobs (started in `api/lifecycle.py`)
+
+Provider host refresh, DB vacuum, model-preview prefetch, data cleanup, job reaper, idle simulation (opt-in), CivitAI resync, in-process reconciliation, provider telemetry polling, WebSocket broadcast. Job IDs and intervals are registered at startup; `GET /api/settings/scheduler` (or similar) exposes status.

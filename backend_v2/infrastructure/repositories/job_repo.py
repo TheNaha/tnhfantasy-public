@@ -501,8 +501,11 @@ class JobRepository:
                     col_type = None
                 if col_type is datetime:
                     raw = datetime.fromisoformat(raw)
-                elif col_type is dict:
-                    raw = json.loads(raw)
+                elif col_type in (dict, list) or raw.lstrip().startswith(("{", "[")):
+                    try:
+                        raw = json.loads(raw)
+                    except (ValueError, TypeError):
+                        pass
             setattr(job, key, raw)
         return job
 

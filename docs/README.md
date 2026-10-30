@@ -1,15 +1,27 @@
 # TNHComfy Documentation
 
-Welcome to the comprehensive documentation for TNHComfy.
+## Table of contents
 
-## Table of Contents
 1. [Architecture Overview](architecture.md)
-2. [Frontend Documentation](frontend.md)
-3. [Backend Documentation](backend.md)
+2. [Backend Documentation](backend.md)
+3. [Frontend Documentation](frontend.md)
 4. [Deployment Guide](deployment.md)
-5. [API Reference](api.md)
-6. [Provider Architecture](provider-architecture.md) — which tree runs where, and why it is split four ways
-7. [LLM Provider Handoff](llm-provider-handoff.md) — the llama.cpp design brief and its open questions
+5. [API Reference](api.md) (generated from `app.openapi()`)
+6. [Provider Architecture](provider-architecture.md) — which tree runs where, and why it is split
+7. [Roleplay Coherence](roleplay-coherence.md) — World Vault ownership and prompt reachability
+8. [SillyTavern Card Compatibility](sillytavern-compatibility.md)
+9. [LLM Provider Handoff](llm-provider-handoff.md) — llama.cpp design brief
+10. [Status and open work](STATUS.md)
 
 ## Introduction
-TNHComfy is a serverless implementation of ComfyUI designed for scalability and user-friendly Web UI interaction. This project serves as a dynamic, containerized wrapper around ComfyUI that integrates provider-based serverless inferencing (Modal, Beam), a custom job queuing system, an image gallery, and a local model management system without permanently storing large checkpoints on the backend.
+
+TNHComfy is an AI fantasy engine with three pillars — image generation, roleplay chat, and a story sandbox — sharing the World Vault data layer (Characters, Chats, Lorebooks, Stories, Personas, Worlds, Locations, Scenarios, Voices, Memories) in PostgreSQL + pgvector.
+
+The backend is FastAPI + SQLModel with no Alembic (migrations are ordered steps in `infrastructure/migrations/steps.py`). The frontend is React 19 + Vite, bun only, on port 5174. Inference runs in-process via `backend_v2/services/engines/`; cloud workers are deployed only with `scripts/deploy.sh`.
+
+## Conventions that matter
+
+- Backend binds loopback only (`127.0.0.1` / one named address). The API has no authentication.
+- Frontend dev port is **5174**, not 5173.
+- `docs/api.md` is generated; run `scripts/generate_api_docs.py` after changing a router.
+- `.env.example` is the canonical reference for every environment variable.

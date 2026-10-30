@@ -80,6 +80,7 @@ vi.mock('../hooks/useWorldVault', () => ({
     useParseStory: () => ({ mutateAsync: vi.fn() }),
     useExportStoryFormatted: () => ({ mutate: vi.fn(), mutateAsync: vi.fn() }),
     useExportPublishedStory: () => ({ mutate: vi.fn(), mutateAsync: vi.fn() }),
+    useExportChapterComic: () => ({ mutate: vi.fn(), mutateAsync: vi.fn() }),
     usePublishStory: () => mockPublishStory(),
     useUnpublishStory: () => ({ mutate: vi.fn(), mutateAsync: vi.fn() }),
     useNarrateChapter: () => ({ mutate: vi.fn(), mutateAsync: vi.fn() }),

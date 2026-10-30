@@ -2038,33 +2038,38 @@ def _migration_111_remote_agent_ws_connections(conn) -> bool:
     worker_dispatch_result holds the terminal result of cross-process dispatches
     so the calling process can retrieve it.
     """
-    conn.execute(text("""
+    is_postgres = conn.dialect.name == "postgresql"
+    ts_type = "TIMESTAMPTZ" if is_postgres else "TIMESTAMP"
+    now_expr = "NOW()" if is_postgres else "CURRENT_TIMESTAMP"
+    json_type = "JSONB" if is_postgres else "JSON"
+
+    conn.execute(text(f"""
         CREATE TABLE IF NOT EXISTS provider_ws_connections (
             provider_id VARCHAR PRIMARY KEY,
             backend_host VARCHAR NOT NULL,
             backend_port INTEGER NOT NULL,
             pid INTEGER NOT NULL,
-            connected_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            last_heartbeat TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            connected_at {ts_type} NOT NULL DEFAULT {now_expr},
+            last_heartbeat {ts_type} NOT NULL DEFAULT {now_expr}
         )
     """))
-    conn.execute(text("""
+    conn.execute(text(f"""
         CREATE TABLE IF NOT EXISTS worker_dispatch_outbox (
             id VARCHAR PRIMARY KEY,
             provider_id VARCHAR NOT NULL,
-            job_data JSONB NOT NULL,
+            job_data {json_type} NOT NULL,
             status VARCHAR NOT NULL DEFAULT 'pending',
-            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            claimed_at TIMESTAMPTZ
+            created_at {ts_type} NOT NULL DEFAULT {now_expr},
+            claimed_at {ts_type}
         )
     """))
-    conn.execute(text("""
+    conn.execute(text(f"""
         CREATE TABLE IF NOT EXISTS worker_dispatch_result (
             job_id VARCHAR PRIMARY KEY,
             status VARCHAR NOT NULL,
-            result JSONB,
+            result {json_type},
             error TEXT,
-            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            created_at {ts_type} NOT NULL DEFAULT {now_expr}
         )
     """))
     logger.info("migration_tables_created", tables="provider_ws_connections, worker_dispatch_outbox, worker_dispatch_result")

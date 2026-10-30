@@ -2954,8 +2954,7 @@ async def export_chapter_comic(
             await emit_job_event(
                 EventType.JOB_COMPLETED,
                 {
-                    "id": job.id,
-                    "status": "completed",
+                    **job_service._job_to_dict(job),
                     "source": "comic_export",
                     "story_id": story_id,
                     "chapter_id": chapter_id,
@@ -2986,8 +2985,7 @@ async def export_chapter_comic(
                 await emit_job_event(
                     EventType.JOB_FAILED,
                     {
-                        "id": job.id,
-                        "status": "failed",
+                        **job_service._job_to_dict(job),
                         "source": "comic_export",
                         "story_id": story_id,
                         "chapter_id": chapter_id,

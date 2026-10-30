@@ -256,10 +256,18 @@ class JobQueue:
         from infrastructure.database import engine
         from sqlmodel import Session, text
 
+        # Portable stamp: production (Postgres, `_use_db_claims`) uses `now()`,
+        # which the claim query's `IS NOT NULL` predicate relies on. On SQLite
+        # (the unit-test / dev engine, where claims are off) `now()` does not
+        # exist, so use SQLite's own `datetime('now')` instead — otherwise
+        # every enqueue on a SQLite-backed stack would fail to stamp and, when
+        # claims happen to be forced on (the propagation test), would mask the
+        # real failure mode the test exists to exercise.
+        _stamp_fn = "now()" if self._use_db_claims else "datetime('now')"
         try:
             with Session(engine) as session:
                 session.execute(
-                    text("UPDATE jobs SET enqueued_at = now() WHERE id = :id AND enqueued_at IS NULL"),
+                    text(f"UPDATE jobs SET enqueued_at = {_stamp_fn} WHERE id = :id AND enqueued_at IS NULL"),
                     {"id": job_id},
                 )
                 session.commit()

@@ -34,14 +34,11 @@ class TestModelDirectories:
     def test_the_backend_and_the_agent_agree_on_the_list(self):
         """Two hand-maintained copies of the same list. They were identical
         when the drift was found; there is nothing keeping them that way."""
-        from pathlib import Path
+        from tests.repo_paths import repo_root
 
-        agent_models = (
-            Path(__file__).resolve().parents[2]
-            / "remote_agent"
-            / "provider_core"
-            / "models.py"
-        )
+        root = repo_root()
+        assert root is not None, "checkout root not found"
+        agent_models = root / "remote_agent" / "provider_core" / "models.py"
         source = agent_models.read_text(encoding="utf-8")
         start = source.index("MODEL_DIRECTORIES = [")
         end = source.index("]", start)
