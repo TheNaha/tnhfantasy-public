@@ -13,8 +13,8 @@
 import asyncio
 import json
 import os
+import tempfile
 from typing import Any
-
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, ConfigDict, Field
 from sqlmodel import Session
@@ -27,6 +27,13 @@ from infrastructure.logging import get_logger
 logger = get_logger("settings_route")
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
+
+# Serializes read-modify-write routes (system-prompts, system-prompt library)
+# so two concurrent PUTs cannot read the same config value, merge differently,
+# and have the second write overwrite the first.  `update_config`/`reset_config`
+# already serialize their internal merge+write with a threading lock; this
+# asyncio lock extends that atomicity to the caller-side read.
+_library_write_lock = asyncio.Lock()
 
 
 # ============================================================================
@@ -615,16 +622,17 @@ def get_system_prompts() -> dict[str, Any]:
 async def update_system_prompts(request: SystemPromptsRequest) -> dict[str, Any]:
     """Persist edited system-prompt blocks to config.json."""
     try:
-        current = app_config.get_system_prompt_blocks()
-        updates = {}
-        for key, value in request.blocks.items():
-            if key not in SYSTEM_PROMPT_BLOCK_KEYS:
-                continue
-            stripped = (value or "").strip()
-            if stripped:
-                updates[key] = stripped
-        merged = {**current, **updates}
-        await asyncio.to_thread(app_config.update_config, {"system_prompts": merged}, True)
+        async with _library_write_lock:
+            current = app_config.get_system_prompt_blocks()
+            updates = {}
+            for key, value in request.blocks.items():
+                if key not in SYSTEM_PROMPT_BLOCK_KEYS:
+                    continue
+                stripped = (value or "").strip()
+                if stripped:
+                    updates[key] = stripped
+            merged = {**current, **updates}
+            await asyncio.to_thread(app_config.update_config, {"system_prompts": merged}, True)
         return {"status": "success", "blocks": merged}
     except ComfyError:
         raise
@@ -674,15 +682,19 @@ async def create_system_prompt_library_entry(entry: SystemPromptLibraryEntry) ->
         entries = app_config.get_system_prompt_library()
         if any(e["key"] == key for e in entries):
             raise ValidationError(f"A prompt block with key '{key}' already exists.")
-        entries.append({
-            "key": key,
-            "label": entry.label.strip(),
-            "category": (entry.category or "Custom").strip(),
-            "prompt": entry.prompt.strip(),
-        })
-        await asyncio.to_thread(
-            app_config.update_config, {"system_prompt_library": entries}, True
-        )
+        async with _library_write_lock:
+            entries = app_config.get_system_prompt_library()
+            if any(e["key"] == key for e in entries):
+                raise ValidationError(f"A prompt block with key '{key}' already exists.")
+            entries.append({
+                "key": key,
+                "label": entry.label.strip(),
+                "category": (entry.category or "Custom").strip(),
+                "prompt": entry.prompt.strip(),
+            })
+            await asyncio.to_thread(
+                app_config.update_config, {"system_prompt_library": entries}, True
+            )
         return {"status": "success", "entry": entries[-1], "entries": entries}
     except ComfyError:
         raise
@@ -704,9 +716,17 @@ async def update_system_prompt_library_entry(
         found["label"] = entry.label.strip()
         found["category"] = (entry.category or "Custom").strip()
         found["prompt"] = entry.prompt.strip()
-        await asyncio.to_thread(
-            app_config.update_config, {"system_prompt_library": entries}, True
-        )
+        async with _library_write_lock:
+            entries = app_config.get_system_prompt_library()
+            found = next((e for e in entries if e["key"] == target), None)
+            if not found:
+                raise NotFoundError("System prompt block", key)
+            found["label"] = entry.label.strip()
+            found["category"] = (entry.category or "Custom").strip()
+            found["prompt"] = entry.prompt.strip()
+            await asyncio.to_thread(
+                app_config.update_config, {"system_prompt_library": entries}, True
+            )
         return {"status": "success", "entry": found, "entries": entries}
     except ComfyError:
         raise
@@ -723,13 +743,14 @@ async def delete_system_prompt_library_entry(key: str) -> dict[str, Any]:
             raise ValidationError(
                 f"'{target}' is a built-in prompt block and cannot be removed here."
             )
-        entries = app_config.get_system_prompt_library()
-        remaining = [e for e in entries if e["key"] != target]
-        if len(remaining) == len(entries):
-            raise NotFoundError("System prompt block", key)
-        await asyncio.to_thread(
-            app_config.update_config, {"system_prompt_library": remaining}, True
-        )
+        async with _library_write_lock:
+            entries = app_config.get_system_prompt_library()
+            remaining = [e for e in entries if e["key"] != target]
+            if len(remaining) == len(entries):
+                raise NotFoundError("System prompt block", key)
+            await asyncio.to_thread(
+                app_config.update_config, {"system_prompt_library": remaining}, True
+            )
         return {"status": "success", "entries": remaining}
     except ComfyError:
         raise
@@ -788,10 +809,22 @@ def get_branding_config() -> dict[str, Any]:
 
 
 def save_branding_config(config: dict[str, Any]):
-    """Save branding configuration to JSON file."""
-    os.makedirs(os.path.dirname(BRANDING_CONFIG_PATH), exist_ok=True)
-    with open(BRANDING_CONFIG_PATH, 'w') as f:
-        json.dump(config, f, indent=2)
+    """Save branding configuration to JSON file (atomic write)."""
+    directory = os.path.dirname(BRANDING_CONFIG_PATH)
+    os.makedirs(directory, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(dir=directory, prefix=".branding-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(config, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, BRANDING_CONFIG_PATH)
+    except BaseException:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
 
 
 class BrandingRequest(BaseModel):
@@ -845,9 +878,21 @@ def get_favorites_list() -> list:
     return []
 
 def save_favorites_list(favorites: list):
-    os.makedirs(os.path.dirname(FAVORITES_CONFIG_PATH), exist_ok=True)
-    with open(FAVORITES_CONFIG_PATH, 'w') as f:
-        json.dump(favorites, f, indent=2)
+    directory = os.path.dirname(FAVORITES_CONFIG_PATH)
+    os.makedirs(directory, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(dir=directory, prefix=".favorites-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(favorites, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, FAVORITES_CONFIG_PATH)
+    except BaseException:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
 
 class FavoritesRequest(BaseModel):
     favorites: list[str]

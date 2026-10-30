@@ -2,6 +2,7 @@
 
 import json
 import os
+import threading
 from typing import Any
 
 from sqlmodel import Session, select
@@ -20,6 +21,11 @@ _DEFAULT_MODEL_FALLBACK = "default"
 # invalidates the cache, so a stat()-based mtime check is enough to stay correct
 # if anything else writes the file.
 _read_cache: dict[str, Any] = {"mtime": None, "data": None}
+
+# Serializes set_default_provider / set_active_models so two concurrent calls
+# cannot read the same llm_config.json, merge differently, and have the second
+# atomic write overwrite the first.
+_write_lock = threading.Lock()
 
 logger = get_logger("llm_config")
 
@@ -300,27 +306,28 @@ def set_default_provider(provider_id: str, model_id: str) -> None:
     """
     import tempfile
 
-    current = _read_config() or {}
-    payload = dict(current)
-    payload["provider_id"] = provider_id
-    payload["model_id"] = model_id
+    with _write_lock:
+        current = _read_config() or {}
+        payload = dict(current)
+        payload["provider_id"] = provider_id
+        payload["model_id"] = model_id
 
-    directory = os.path.dirname(_CONFIG_PATH)
-    os.makedirs(directory, exist_ok=True)
-    fd, tmp_path = tempfile.mkstemp(dir=directory, prefix=".llm_config.", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w") as f:
-            json.dump(payload, f)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp_path, _CONFIG_PATH)
-    except Exception:
+        directory = os.path.dirname(_CONFIG_PATH)
+        os.makedirs(directory, exist_ok=True)
+        fd, tmp_path = tempfile.mkstemp(dir=directory, prefix=".llm_config.", suffix=".tmp")
         try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
-        raise
-    _invalidate_cache()
+            with os.fdopen(fd, "w") as f:
+                json.dump(payload, f)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, _CONFIG_PATH)
+        except Exception:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
+        _invalidate_cache()
 
 
 def get_active_models(registry: Any = None) -> dict[str, str]:
@@ -371,31 +378,32 @@ def set_active_models(
     """Persist active model choices in llm_config.json."""
     import tempfile
 
-    current = _read_config() or {}
-    updated = dict(current)
-    if active_rp is not None:
-        updated["active_rp"] = active_rp
-    if active_util is not None:
-        updated["active_util"] = active_util
-    if active_decisions is not None:
-        updated["active_decisions"] = active_decisions
-    if active_image is not None:
-        updated["active_image"] = active_image
+    with _write_lock:
+        current = _read_config() or {}
+        updated = dict(current)
+        if active_rp is not None:
+            updated["active_rp"] = active_rp
+        if active_util is not None:
+            updated["active_util"] = active_util
+        if active_decisions is not None:
+            updated["active_decisions"] = active_decisions
+        if active_image is not None:
+            updated["active_image"] = active_image
 
-    directory = os.path.dirname(_CONFIG_PATH)
-    os.makedirs(directory, exist_ok=True)
-    fd, tmp_path = tempfile.mkstemp(dir=directory, prefix=".llm_config.", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w") as f:
-            json.dump(updated, f)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp_path, _CONFIG_PATH)
-    except Exception:
+        directory = os.path.dirname(_CONFIG_PATH)
+        os.makedirs(directory, exist_ok=True)
+        fd, tmp_path = tempfile.mkstemp(dir=directory, prefix=".llm_config.", suffix=".tmp")
         try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
-        raise
-    _invalidate_cache()
+            with os.fdopen(fd, "w") as f:
+                json.dump(updated, f)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, _CONFIG_PATH)
+        except Exception:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
+        _invalidate_cache()
     return get_active_models()
