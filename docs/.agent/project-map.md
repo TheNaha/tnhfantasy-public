@@ -1,6 +1,6 @@
 # TNHComfy — Project Map
 
-**Source of truth for this map:** code read at commit `1b6ea30a` ("chore(maintenance): 2026-10-30 pass fixes and audit"), HEAD of `master` at the time of writing. `git status` is clean. Every claim below traces to a file I read; anything I could not confirm is marked "unverified".
+**Source of truth for this map:** code read at commit `2e954680` (maintenance pass fixes + audit), HEAD of `master`. `git status` is clean. A maintenance pass (commits `0c26f948`…`2e954680`) fixed M1–M5, m8–m10 and m7; those items are marked **[FIXED]** below. Anything I could not confirm is marked "unverified".
 
 This is a read-only briefing document. Do not treat it as executable: verify against the code before assuming anything.
 
@@ -270,13 +270,13 @@ Ordered by likelihood for each user-visible symptom.
 - **Five of six providers disabled by default** — `enabled=false` is sticky (operator-turned-off); discovery-update branch never re-asserts `enabled`. `preflight.sh` reports the count. Not a security control; a capacity/billing decision.
 - **Config.json durability trap** — production compose mounts only `./data:/data`; default `config.json` path is `/app/config.json` (writable layer, lost on recreate). Must set `COMFY_CONFIG_PATH=/data/config.json`.
 - **MutableList in-place dict mutation doesn't persist** — reassign the column (AGENTS.md).
-- **`update_config` / `reset_config`** — read-modify-write of module global under `_config_lock`; called via `asyncio.to_thread` from two routes.
+- **`update_config` / `reset_config`** — read-modify-write of module global under `_config_lock`; called via `asyncio.to_thread` from two routes. **[FIXED]** (`1f19f049`): `reset_config` restores + re-raises on save failure; lazy `_config` load moved inside the lock. Settings routes additionally hold an asyncio lock across their read-modify-write; `llm_config` `set_default_provider`/`set_active_models` use a threading lock.
 - **`_split_unset` previously filtered non-dict sections** — list-valued `system_prompt_library` was a silent no-op (fixed).
 - **Event swallowing** — post-turn Director block wrapped in `except Exception → logger.debug` historically hid three defects; now `logger.warning`.
 - **`docs/archive/`** — historical, documents contradict each other; not guidance.
 - **Half-finished / unverified** — scene graph budget (`scene_spec_cost`) is a ceiling not a price (unverified enforcement); dispatch-time provider prune not implemented (build-time only); no provider-picker UI; `file.path` missing from `/api/files` projection (Provider Status list filters LLM providers out — `ModelDetailsModal.jsx`); `jobs_cleanup` zero consumers; `get_pending_downloads` no per-provider filter.
 - **Tight coupling** — `engine_factory` imports `api.routes.nodes` and `services.load_balancer` internals inside functions to avoid cycles; `base.run_inference` finally calls `drain_pending_engine_closes`.
-- **Frontend lint** — 0 errors / 3 warnings (`react-hooks/exhaustive-deps` in `ChatWorkspaceContext.jsx` and `BatchGenerate.jsx`; `incompatible-library` in `useScrollRoot.js` and `StorySandbox.jsx`).
+- **Frontend lint** — **[FIXED]** (`5426f17b`): 0 errors / 0 warnings. Removed unused eslint-disable directives and unnecessary `filters` deps.
 - **Mobile layout** — one stray `}` previously closed a media query 80 lines early; all 15 `mobileLayoutInvariants` tests passed against it (they regex the stylesheet, never check block membership).
 - **Test OOM risk** — full backend suite (~3900 tests, ~6 min) has OOM'd the 18GB host; run targeted files; never vitest concurrent with docker pytest. `test_vram*` needs `/comfyui` on PYTHONPATH.
 
