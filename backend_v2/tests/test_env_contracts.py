@@ -99,6 +99,9 @@ DYNAMIC_READS = {
     "backend_v2/config.py",
     # Dynamic pass-through env forwarding for child deployment processes
     "backend_v2/services/provider_deploy.py",
+    # Alias loop reads PROVIDER_UPLOAD_MAX_BYTES / REMOTE_AGENT_UPLOAD_MAX_BYTES
+    # by name from a list, so the scanner cannot see the literal.
+    "remote_agent/server.py",
 }
 
 

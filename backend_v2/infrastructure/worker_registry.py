@@ -25,6 +25,7 @@ from pydantic import BaseModel, Field, TypeAdapter, ValidationError, model_valid
 from infrastructure.database import database_url
 from infrastructure.logging import get_logger
 from services.provider_client import ProviderCallError
+from services.job_service import as_utc
 
 logger = get_logger("worker_registry")
 
@@ -268,7 +269,7 @@ def _get_live_worker_unlocked(provider_id: str) -> ConnectedWorker | None:
     if not _is_socket_connected(worker):
         return None
 
-    heartbeat_age = (datetime.now(timezone.utc) - worker.last_heartbeat).total_seconds()
+    heartbeat_age = (datetime.now(timezone.utc) - as_utc(worker.last_heartbeat)).total_seconds()
     if heartbeat_age > WORKER_HEARTBEAT_TIMEOUT_SECONDS:
         logger.warning(
             "worker_heartbeat_stale",

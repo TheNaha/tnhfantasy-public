@@ -29,7 +29,6 @@ import inspect
 import os
 import textwrap
 
-import pytest
 
 
 def _code_only(func) -> str:
@@ -75,11 +74,9 @@ class TestMultiProcessRefusal:
         from api.main import _warn_if_multiple_processes
 
         monkeypatch.setenv("COMFY_UVICORN_WORKERS", "4")
-        with pytest.raises(RuntimeError) as exc:
-            _warn_if_multiple_processes()
-        assert "not supported yet" in str(exc.value)
-        # The message has to say what to do, not just refuse.
-        assert "socket.io" in str(exc.value)
+        # Multi-worker is now supported (job dispatch via FOR UPDATE SKIP
+        # LOCKED, cross-process WS via the NOTIFY bus); the guard only warns.
+        _warn_if_multiple_processes()
 
     def test_heroku_style_concurrency_is_checked_too(self, monkeypatch):
         """`WEB_CONCURRENCY` is the other conventional name for the same thing, and
@@ -88,8 +85,8 @@ class TestMultiProcessRefusal:
 
         monkeypatch.delenv("COMFY_UVICORN_WORKERS", raising=False)
         monkeypatch.setenv("WEB_CONCURRENCY", "2")
-        with pytest.raises(RuntimeError):
-            _warn_if_multiple_processes()
+        # Multi-worker is now supported; the guard only warns.
+        _warn_if_multiple_processes()
 
     def test_a_non_numeric_value_does_not_crash_startup(self, monkeypatch):
         """It is a misconfiguration, not a reason to refuse to boot — the operator

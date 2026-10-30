@@ -1071,7 +1071,7 @@ async def _run_targeted_downloads(
                         file_id=file_id,
                         model_name=display_name,
                         directory=file_info.get("directory"),
-                        error=str(exc),
+                        error_message=str(exc),
                     )
 
         await asyncio.gather(*[_download_one(f, idx) for idx, f in enumerate(files_to_download)])

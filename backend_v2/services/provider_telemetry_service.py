@@ -46,6 +46,7 @@ from typing import Any
 import httpx
 
 from core.entities import Job, JobStatus
+from services.job_service import as_utc
 from infrastructure.deps import get_session_sync
 from infrastructure.logging import get_logger
 from infrastructure.repositories import ProviderRepository
@@ -492,6 +493,7 @@ class ProviderTelemetryService:
                 }
 
             now = _utcnow()
+            completed_at = as_utc(completed_at)
             warm_until = completed_at + timedelta(seconds=window)
             remaining = (warm_until - now).total_seconds()
             payload = {

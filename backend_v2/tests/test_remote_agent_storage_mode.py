@@ -24,6 +24,10 @@ def storage_agent_client(monkeypatch, tmp_path):
     if str(AGENT_DIR) not in sys.path:
         sys.path.insert(0, str(AGENT_DIR))
 
+    # Force a fresh import so WORKER_MODE is read from the env we just set,
+    # even if a prior test cached the module under a different mode.
+    import sys as _sys
+    _sys.modules.pop("server", None)
     import server as srv
     monkeypatch.setattr(srv, "WORKER_MODE", "storage")
     monkeypatch.setattr(srv, "DATA_ROOT", str(data_dir))

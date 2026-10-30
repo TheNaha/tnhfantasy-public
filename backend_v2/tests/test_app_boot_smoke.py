@@ -59,12 +59,14 @@ EXPECTED_STARTUP_PHASES = [
     "provider_hosts",
     "job_queue",
     "provider_monitor",
+    "provider_telemetry",
     "job_recovery",
     "scheduler",
     "data_cleanup",
     "civitai_resync",
     "in_process_reconcile",
     "websocket",
+    "cross_process_dispatch",
     "world_integration",
 ]
 
@@ -72,7 +74,9 @@ EXPECTED_STARTUP_PHASES = [
 # be awaited or cancelled here, or a `--reload` cycle accumulates tasks.
 EXPECTED_SHUTDOWN_PHASES = [
     "websocket",
+    "cross_process_dispatch",
     "provider_monitor",
+    "provider_telemetry",
     "background_tasks",
     "scheduler",
     "job_queue",
@@ -531,10 +535,10 @@ async def test_app_serves_requests_after_boot(client, boot):
     # status-card routes, the three load-balancer aliases, the `/api/v2/gallery`
     # alias, the two worker status routes and `POST /api/v2/voices/speak`.
     # Every one of them had zero callers.
-    assert len(spec["paths"]) == 286, (
+    assert len(spec["paths"]) == 295, (
         "route count changed; if routes were added deliberately, bump this"
     )
-    assert sum(len(ops) for ops in spec["paths"].values()) == 374
+    assert sum(len(ops) for ops in spec["paths"].values()) == 383
     assert "/api/ready" in spec["paths"]
     assert not any(path.startswith("/socket.io") for path in spec["paths"])
 

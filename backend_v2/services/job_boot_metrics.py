@@ -22,6 +22,7 @@ mutation of the existing dict would not persist.
 from datetime import datetime, timezone
 
 from core.exceptions import NotFoundError
+from services.job_service import as_utc
 from infrastructure.logging import get_logger
 
 logger = get_logger("job_boot_metrics")
@@ -79,6 +80,7 @@ async def stamp_boot_seconds(job_service, job_id: str | None) -> None:
     if existing.get("boot_seconds") is not None:
         return
 
+    started_at = as_utc(started_at)
     boot_seconds = (datetime.now(timezone.utc) - started_at).total_seconds()
     metadata = dict(existing)
     metadata["boot_seconds"] = round(boot_seconds, 1)

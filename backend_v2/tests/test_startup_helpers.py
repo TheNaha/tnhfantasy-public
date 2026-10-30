@@ -45,6 +45,8 @@ async def test_startup_application_autostarts_providers_after_cleanup():
     events = []
     provider_monitor_task = MagicMock()
     broadcast_task = MagicMock()
+    telemetry_task = MagicMock()
+    dispatch_listener_task = MagicMock()
 
     def start_background_task_side_effect(coro, task_name, **kwargs):
         close = getattr(coro, "close", None)
@@ -52,6 +54,10 @@ async def test_startup_application_autostarts_providers_after_cleanup():
             close()
         if task_name == "provider_monitor":
             return provider_monitor_task
+        if task_name == "provider_telemetry":
+            return telemetry_task
+        if task_name == "cross_process_dispatch":
+            return dispatch_listener_task
         return broadcast_task
 
     with patch("api.lifecycle.create_db_and_tables"), \
@@ -77,5 +83,7 @@ async def test_startup_application_autostarts_providers_after_cleanup():
     assert events == ["cleanup"]
     assert tasks == {
         "provider_monitor_task": provider_monitor_task,
+        "telemetry_task": telemetry_task,
         "broadcast_task": broadcast_task,
+        "dispatch_listener_task": dispatch_listener_task,
     }

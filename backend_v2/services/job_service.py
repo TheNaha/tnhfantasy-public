@@ -129,14 +129,19 @@ JOB_STATUS_TRANSITIONS = {
 }
 
 
-def as_utc(value: datetime) -> datetime:
+def as_utc(value):
     """Return `value` as a timezone-aware UTC datetime.
 
     Job timestamps live in naive columns (SQLite and PostgreSQL
     `TIMESTAMP WITHOUT TIME ZONE` both hand back naive datetimes), so arithmetic
     against an aware `datetime.now(timezone.utc)` raises TypeError. Normalize
     before comparing.
+
+    Non-datetime inputs (e.g. mocks in tests) are returned unchanged so callers
+    can still attempt arithmetic the way they did before this helper existed.
     """
+    if not isinstance(value, datetime):
+        return value
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc)

@@ -297,7 +297,7 @@ class TestHealthProbeCachesEngineResult:
 
         assert await lb._check_provider_health(provider) is True
         assert await lb._check_provider_health(provider) is True
-        assert lb_module._provider_health_cache["in_process:p1"] is True
+        assert lb_module._provider_health_cache["in_process:p1:image"] is True
         engine.check_health.assert_awaited_once()
 
     async def test_unconstructible_engine_short_circuits_to_unhealthy(

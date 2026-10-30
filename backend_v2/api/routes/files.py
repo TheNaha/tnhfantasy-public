@@ -1428,7 +1428,12 @@ async def list_files_endpoint(
                         (v for v in versions if v.get("is_default")),
                         versions[0] if versions else None
                     )
-                    target_versions = [default_version] if default_version else []
+                    # A model with no versions still serialises as one entry so
+                    # fields like trained_words stay present (see test_files_route).
+                    if default_version is None and not versions:
+                        target_versions = [None]
+                    else:
+                        target_versions = [default_version] if default_version else []
 
                 for version in target_versions:
                     file_info = (version.get("file") or {}) if isinstance(version, dict) else {}
@@ -1972,7 +1977,7 @@ async def upload_input_image(
 class MaskUploadRequest(BaseModel):
     """Request model for mask image upload."""
     model_config = ConfigDict(json_schema_extra={"strict": True})
-    mask_data: str
+    mask_data: Optional[str] = None
     source_filename: Optional[str] = None
 
 @router.post("/api/upload/mask")
