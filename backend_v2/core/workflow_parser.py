@@ -48,7 +48,7 @@ MODEL_LOADER_NODES: dict[str, tuple[str, str]] = {
 }
 
 # KSampler-like node classes that carry sampler_name and scheduler combo inputs.
-KSAMPLER_NODE_CLASSES = ("KSampler", "KSampler (Efficient)", "KSamplerAdvanced")
+KSAMPLER_NODE_CLASSES = ("KSampler", "KSampler (Efficient)", "KSamplerAdvanced", "KSampler (Custom)")
 
 # Nodes with multiple model inputs
 MULTI_INPUT_NODES: dict[str, list[tuple[str, str]]] = {

@@ -1,327 +1,221 @@
 # TNHComfy — Project Map
 
-**Source of truth for this map:** code read at commit `2e954680` (maintenance pass fixes + audit), HEAD of `master`. `git status` is clean. A maintenance pass (commits `0c26f948`…`2e954680`) fixed M1–M5, m8–m10 and m7; those items are marked **[FIXED]** below. Anything I could not confirm is marked "unverified".
+**Recorded commit:** `77e1426c0cc963fbfc0e37927d90fc08b174bf67`
+**Commit date:** 2026-10-30 13:53:07 +0700
+**Branch:** `master` (working directory clean except `.gitignore` edit per HEAD diff — see diff --stat shows only `.gitignore` changed vs HEAD, 4 insertions / 1 deletion).
 
-This is a read-only briefing document. Do not treat it as executable: verify against the code before assuming anything.
+This map is dense and scannable, not a code dump. File/module paths are absolute under the repo root `/home/thenaha/containers/stacks/comfyui`. Claims marked `unverified` were not directly confirmed by reading code.
 
 ---
 
 ## 1. What this is and who uses it
 
-TNHComfy is an **AI fantasy engine** with three pillars sharing one data layer (the **World Vault**):
+TNHComfy is an AI fantasy engine with three pillars sharing one data layer (the **World Vault**): image generation, roleplay chat, and a story sandbox. The end user opens the Web UI on port **5174** and, within a single app, generates images, chats with characters (autonomous agentic turns that can narrate scenes or generate images), and edits AI Dungeon–style story chapters with comic/webtoon export. Everything is backed by PostgreSQL 16 + pgvector. There is **no authentication** — the backend binds loopback/named addresses only (`COMFY_BACKEND_BIND`, never `0.0.0.0`).
 
-- **Image generation** — ComfyUI workflows dispatched to serverless workers (Modal, Beam) or a remote ComfyUI sidecar / Direct ComfyUI.
-- **Roleplay chat** — SillyTavern-style character chats with an agentic, multi-turn "Director" pipeline (triage → act → audit → update → illustrate → chain).
-- **Story sandbox** — an AI Dungeon-style interactive document editor (chapters, branches, beats, illustrations, comic/webtoon export).
+Three pillars over one World Vault:
+1. **Image generation** — original core. Jobs dispatched by load balancer to provider workers (Modal, Beam, direct ComfyUI, remote agent).
+2. **Roleplay chat** — SillyTavern-style, agentic multi-turn pipeline (triage → act → audit → update → illustrate → chain).
+3. **Story sandbox** — chapter editor with branches, revisions, illustrations, comic/webtoon export.
 
-The user is a single end user running the stack locally (Docker Compose) or on a private VPN/LAN address. There is **no authentication** — anyone who can reach the API can call every endpoint, including destructive ones (`DELETE /api/jobs`, which deleted 154 job-history rows on 2026-10-01). The stack is deliberately bound to loopback + named addresses only, never `0.0.0.0`.
-
-Documentation entry points: `README.md`, `VISION.md` (product intent), `docs/STATUS.md` (authoritative status + open findings), `docs/architecture.md`, `AGENTS.md` (conventions). `docs/api.md` is generated from `app.openapi()` and drift-checked by `tests/test_api_docs_contract.py` — after any router change run `cd backend_v2 && .venv/bin/python ../scripts/generate_api_docs.py`.
+Any change must keep working across all three pillars (a stated design rule).
 
 ---
 
 ## 2. Architecture overview
 
-### Stack at a glance
-
 | Layer | Lives in | Technology | Role |
 |---|---|---|---|
-| Frontend | `frontend_v2/` | React 19 + Vite + Zustand + React Query | UI, gallery, chat workspace, story sandbox, provider management |
-| Backend | `backend_v2/` | FastAPI + SQLModel + Python 3.13 | Orchestrator: routes → services → repositories |
-| In-process engines | `backend_v2/services/engines/` | Python (modal/beam SDKs, httpx) | Execute inference against provider workers; never run ComfyUI locally |
-| Cloud worker source | `deployables/` | Modal apps + Beam deployments | What runs in Modal/Beam on the other end of engine calls |
-| Remote agent sidecar | `remote_agent/` | Python + ComfyUI host | Optional self-hosted GPU rig; backend reaches it through `external_worker` |
-| Database | `data/pgdata` (compose `db`) | PostgreSQL 16 + pgvector | The World Vault — jobs, providers, characters, chats, stories, assets |
+| Frontend | `frontend_v2/` | React 19 + Vite + Zustand + React Query | UI, gallery, chat workspace, story sandbox, provider management. Port 5174. Bun only. |
+| Backend | `backend_v2/` | FastAPI + SQLModel + Python 3.13 | Orchestrator: routes → services → repositories. Port 8002 (loopback only, no auth). |
+| In-process engines | `backend_v2/services/engines/` | Python (modal/beam SDKs, httpx) | Execute inference against provider workers; never run ComfyUI locally. |
+| Cloud worker source | `deployables/` | Modal apps + Beam deployments | Runs in Modal/Beam on the other end of engine calls. HOST CLI deploy only (`scripts/deploy.sh`); not imported by backend. |
+| Remote agent sidecar | `remote_agent/` | Python + ComfyUI host | Optional self-hosted GPU rig; backend reaches it through `external_worker`. |
+| Database | compose `db` service | PostgreSQL 16 + pgvector | The World Vault — jobs, providers, characters, chats, stories, assets. |
 
-### Request flow (backend)
+**Communication:** The backend is the only service with an HTTP surface. Frontend talks to backend via REST (`/api`, `/api/v2`) and Socket.IO WebSocket (`/socket.io`, `/ws`). Engines call provider workers over the network. No provider sidecar containers in this stack; no standalone provider websocket hook — provider data flows through `useProvidersPageData`.
 
-```
-Client (HTTP / Socket.IO)
-    ↓
-api/main.py           FastAPI app; lifespan runs startup/shutdown
-    ↓
-api/app_setup.py      CORS, gzip, security headers, router mounting
-    ↓
-api/routes/*.py       FastAPI routers; whitelisted request models (extra="forbid" on several)
-    ↓
-api/deps.py           Depends(get_session) → request-scoped Session; service constructors
-    ↓
-services/*.py         JobService, JobProcessing, ProviderService, DecisionService (Laya), etc.
-    ↓
-infrastructure/repositories/  one SQLModel repo per domain table
-    ↓
-PostgreSQL + pgvector
-```
+**Backend entry:** `backend_v2/api/main.py` — lifespan: (1) SQLite init + schema migrations, (2) load balancer state from DB, (3) async job queue + worker pool, (4) recover PENDING/RUNNING jobs, (5) background scheduler, (6) mount Socket.IO ASGI on `/socket.io`. `configure_app()` in `api/app_setup.py` mounts routers, CORS, gzip, security headers, exception handlers.
 
-Conventions:
-- Services take a request-scoped `Session` and build their own repositories; routes only get deps through `api/deps.py`.
-- Errors come from the `ComfyError` hierarchy in `core/exceptions.py`, not ad hoc `HTTPException`.
-- Events flow through `core/events.py` (`emit_job_event`) → EventBus → Socket.IO on `/socket.io` → frontend rooms (jobs, downloads, reconciliation, provider).
-- Config precedence: `COMFY_*` env vars > `config.json` (runtime-editable via Settings UI, written atomically) > `DEFAULT_CONFIG` in `config.py`.
-- No Alembic. Migrations are `MigrationStep(version=..., apply_fn=...)` appended in `infrastructure/migrations/steps.py`, run once at startup, recorded in `schema_migrations`.
-- Python models use `metadata_`, aliased to `metadata` on the wire.
-- Single uvicorn worker only: `--workers N` is refused at boot because the websocket broadcast, scheduler, and job recovery are all in-process per-process. (Startup says multi-worker is "supported" with advisory locks in `main.py` docstring, but `architecture.md` still says single worker — unverified which is current.)
+**Route groups** (`api/routes/`): `gallery`, `jobs`, `generation`, `health`, `interrogate`, `models`, `models_external`, `nodes`, `prompts`, `providers`, `statistics`, `websocket`, `worker_ws`, `files`, `collections`, `settings`, `world_vault` (prefix `/api/v2`).
 
-### Startup sequence (`api/main.py` lifespan)
+**World Vault routes** (`api/routes/world_vault/__init__.py`): registers `characters`, `chats` (+ `branches` nested), `lorebooks`, `memories`, `scenarios`, `personas`, `worlds`, `stories` (+ chapters/revisions/beats nested), `voices`, `world_hub`, `locations`, `timeline`, `graph_layout`, `graph_edges`, `util`, `onboarding`, `agents`, `llm_config`.
 
-1. Initialize database + run schema migrations.
-2. Load load-balancer state from DB.
-3. Start the async job queue (worker pool, `job_queue.queue_manager`).
-4. Recover PENDING/RUNNING jobs (handles restarts; post-processing jobs finalised before the sweep re-enqueues active ones).
-5. Start background scheduler (vacuum, reconciliation, preview prefetch, data cleanup, job reaper, idle simulation, CivitAI resync).
-6. Mount Socket.IO ASGI app on `/socket.io`.
+**Frontend entry:** `frontend_v2/src/main.jsx` → `App.jsx` (React Router v6, lazy pages, `QueryClientProvider`, `ErrorBoundary`, `ConfirmationHost`, `toast`). Sidebar nav from `constants/navigation.js` (`EXPERT_TOOLS`) rendered in `components/Layout.jsx` and `RoleplayWorkspace.jsx`. Auth: none.
 
-Shutdown reverses: cancels background tasks, stops scheduler, stops telemetry polling and broadcast, closes the cross-process dispatch listener.
+**State split (frontend):** Zustand holds UI state, drafts, realtime job updates only. React Query holds all server data. Rule: do not store server data in Zustand. Stores: `useStore.js` (activeCollection only), `generatorStore.js` (generation drafts, persisted localStorage), `settingsStore.js`, `worldVaultStore.js`, `confirmationStore.js`.
 
-### Providers and engines
+**DB sessions:** request-scoped `Session` via `api/deps.py get_session`; services create their own repositories internally. Tests must override BOTH `api.deps.get_session` and `infrastructure.database.get_session`.
 
-The backend **never imports a deployable**, and a deployable never imports the backend — everything crosses the line over the network.
+**Config precedence:** `COMFY_*` env vars > `config.json` > `DEFAULT_CONFIG` in `config.py`. `.env` (Pydantic Settings) carries infrastructure secrets (`COMFY_DATABASE_URL`, `OUTPUT_DIR`, `INPUT_DIR`, `COMFY_PREVIEW_CACHE_DIR`, `HF_TOKEN`, `CIVITAI_TOKEN`, `MODAL_TOKEN_*`, `BEAM_API_KEY`, `COMFY_CORS_ORIGINS`, `COMFY_WORKER_BACKEND_URL`). `config.json` carries runtime app behavior (job concurrency, timeouts, retries, image processing, scheduler intervals) and is UI-editable via API.
 
-| Tree | Runs where | Engine examples |
-|---|---|---|
-| `backend_v2/services/engines/` | In-process, in backend container | `ModalEngine`, `BeamEngine`, `DirectComfyEngine`, `OpenAICompatLLMEngine`, `AnthropicLLMEngine`, `GoogleLLMEngine`, `ModalLlamaCPPEngine` (llama.cpp, **not** vLLM), `ModalTTSEngine`, `BeamLLMEngine`, `BeamTTSEngine`, `RemoteLLMEngine`, `RemoteTTSEngine`, `DirectTTSEngine`, `HybridRemoteEngine` |
-| `deployables/` | Modal / Beam cloud | `comfy-modal-stack`, `comfy-modal-tts`, `tnh-llm`, Beam apps |
-| `remote_agent/` | Self-hosted Docker host | agent sidecar reached via `external_worker` |
+**Entity aliasing:** Python models use `metadata_`, aliased to `metadata` in API payloads.
 
-Routing: `services/engines/engine_factory.py` resolves provider type via `services/engines/registry.py` (`resolve_provider_type`), checks credentials via `can_create_engine`, caches engines in a TTLCache (`COMFY_ENGINE_CACHE_TTL_SECONDS`, default 1800s). Per-provider credential files `.env.<provider_id>` are searched at the project root (`COMFY_PROVIDER_ENV_PATH`, default `/comfyui`).
-
-Which provider gets a job: `services/load_balancer.py` (circuit breaker on failure streak, `state_id` per task type — image=1, LLM=2, TTS=3), filtered by capability (`provider.serves(task_type)`). Engine selection by type is in `engine_factory.py`. `job_runner.execute_job` runs dispatch/retry/failover/completion/cancellation for both task types; cancellation uses `JobCancellationTracker`-style abort registry on `InProcessEngine` (base.py `_ACTIVE_JOB_ENGINES` + `_job_aborts`), with stream `aclose` as the actual upstream-interrupt lever.
-
-### Frontend architecture
-
-```
-React Query (all server data)   ←  api/client.js (fetch wrapper, 30s default timeout, idempotency-key support)
-Zustand (UI state only)          ←  useStore.js (activeCollection), worldVaultStore.js (activeChatId), settingsStore.js, confirmationStore.js
-Pages (React.lazy chunks)        ←  src/pages/*.jsx
-Hooks                            ←  src/hooks/use*.js (one per domain)
-WebSocket                        ←  src/api/websocket.js (socket.io-client, joins rooms)
-```
-
-Rule: **Zustand holds UI state, drafts, realtime job updates; React Query holds server data. Never store server data in Zustand.** Persist World Vault relationships through mutations (`updateStory.mutate`, etc.), not transient UI state. `frontend_v2/STATE_MANAGEMENT.md` governs state logic.
-
-Dev port 5174 (not 5173). Bun only — preinstall guard rejects npm/pnpm/yarn. In Docker, Vite proxy target is `backend_v2`; fallback chain `VITE_PROXY_TARGET` → `VITE_API_URL` → `http://localhost:8002`.
+**Migrations:** No Alembic. `infrastructure/migrations/steps.py` — `MigrationStep(version, description, apply_fn)`; 111 steps versions `001_jobs_started_completed` … `111_...`. `schema_migrations` table records applied versions; each step idempotent (checks columns/tables before `ALTER TABLE ... ADD COLUMN`). `run_migrations(engine)` acquires a Postgres advisory lock at startup. Steps run once at startup and are recorded. `test_database` asserts subsets only.
 
 ---
 
 ## 3. User-facing glossary
 
-Terms a user might say, mapped to screens/flows/code.
+**Sidebar / navigation** — `components/Layout.jsx` + `constants/navigation.js` (`EXPERT_TOOLS`). Entries: World Vault (`/world-vault`), World Architect (`/world-architect`), Characters (`/characters`), Personas (`/personas`), Activity (`/activity`), World Graph (`/world-graph`), Locations (`/locations`), Scenarios (`/scenarios`), Voices (`/voices`), Lorebooks (`/lorebooks`), LLM Studio (`/llm-studio`). Expert tools appear behind a disclosure control on both Layout sidebar and Roleplay Home. If a user says "the thing in the sidebar doesn't update," look at `EXPERT_TOOLS` (shared list, kept in sync) + `Layout.jsx` active state + React Query invalidation for that page.
 
-### Screens / pages (`frontend_v2/src/pages/`)
+**Dashboard** — `pages/Dashboard.jsx`. Gallery of generated images; realtime WS job events; lightbox delete (`Dashboard.lightboxDelete.test.jsx`); auto-refresh hook `useGalleryAutoRefresh.js`.
 
-| What a user might call it | Actual name / path | What it does | Chain behind it |
-|---|---|---|---|
-| "the front door", "roleplay home" | `RoleplayWorkspace.jsx` (`/`) | Chat list, story list, world count cards, provider-health banner, first-run onboarding wizard | `useChats`, `useStories`, `useWorlds`, `useWorldVaultDashboard`, `useProvidersHealth`; `GET /api/v2/chats`, `/stories`, `/worlds`, `/llm/providers/health` |
-| "the gallery", "image grid" | `Dashboard.jsx` (`/dashboard`) | Image gallery grid, date rail, filters, collections, lightbox, active/failed jobs panel, queue visualization | `useGallery`, `useDashboardItems`, `useActiveJobs`, `useJobsRealtime`; `GET /api/gallery`, `/api/jobs`; Socket.IO job rooms |
-| "the chat", "chat workspace" | `ChatWorkspace.jsx` (`/roleplay`) | Message timeline, chat input, scene gallery, character/lorebook/world modals, affinity HUD, stage mode | `useChatWorkspace` context, `useMessages`, `useSendMessage`, `useChatJobs`; `POST /api/v2/chats/{id}/messages`; Socket.IO |
-| "the story editor", "AI Dungeon" | `StorySandbox.jsx` (`/story/:storyId`) | Chapter editor, beat input, director deck, illustrations, branches, revisions, export | `useStories`, `useStoryChapters`, `useContinueChapter`, `useAddStoryBeat`, `useStoryAiAction`, `usePublishStory`; `POST /api/v2/stories/{id}/chapters`, `/chapters/{id}/continue` |
-| "characters" | `Characters.jsx` | Character list, create/edit, import (SillyTavern card), export (bundle / .tnhzip) | `useCharacters`; `GET/POST/PATCH /api/v2/characters`, `POST /import/analyze`, `/import/commit` |
-| "lorebooks" | `Lorebooks.jsx` | Lorebook entries, keys, enabled/constant/selective flags | `useLorebooks`; `GET/POST/PATCH /api/v2/lorebooks` |
-| "worlds" | `Worlds.jsx` | World list, create/edit | `useWorlds`; `GET/POST/PATCH /api/v2/worlds` |
-| "locations", "scenarios", "personas", "voices" | `Locations.jsx`, `Scenarios.jsx`, `Personas.jsx`, `Voices.jsx` | CRUD for each World Vault entity | corresponding `use*()` hooks + `/api/v2/*` routes |
-| "LLM Studio" | `LLMStudio.jsx` | Agent/providers/prompt-variant configuration, Director Playground | `useAgents`, `useProvidersPageData`; `/api/v2/llm/*`, `/api/v2/agents/*` |
-| "Providers" | `Providers.jsx` | Provider list, enable/disable toggle, health, lifecycle chips, telemetry, VRAM chart, boot times, shutdown control | `useProvidersPageData`; `GET/PATCH /api/v2/providers/*`, `/load-balancer/stats`, `/providers/health` |
-| "Models" | `InstalledModels.jsx`, `DiscoverModels.jsx` | Model catalogue, download, validation, civitai sync | `useModels`, `useCivitaiSearch`; `/api/v2/models/*` |
-| "Settings" | `Settings.jsx` | Runtime config (system prompts, checkpoint, roles, rag, tts, memory extraction) | `useSettingsStore`; `GET/PUT/DELETE /api/v2/settings`, config.json |
-| "Simple/Advanced/Batch/Img2Img/Inpaint generator" | `SimpleGenerator.jsx`, `AdvancedGenerator.jsx`, `BatchGenerate.jsx`, `Img2ImgGenerator.jsx`, `InpaintGenerator.jsx` | Image generation forms, enhancements panel (FreeU, PAG, FaceDetailer), presets | `useGenerationPreflight`, `useGeneratorCore`, `useGeneratorJob`; `POST /api/jobs`, `/api/generate` |
-| "Relationship graph" | `RelationshipGraph.jsx` | Node-based wiki of characters/locations/lorebooks | `useWorldVaultSearch`; `/api/v2/world-vault/*` graph routes |
-| "Activity", "Statistics" | `Activity.jsx`, `Statistics.jsx` | Job history, download stats | `useJobsRealtime`, `/api/v2/statistics` |
-| "World Vault Hub" | `WorldVaultHub.jsx` | Unified vault entry | `useWorldVaultDashboard` |
+**Generator pages** — `SimpleGenerator.jsx` (t2i preset), `AdvancedGenerator.jsx` (custom ReactFlow graph compiled by `utils/WorkflowCompiler`), `BatchGenerate.jsx`, `Img2ImgGenerator.jsx`, `InpaintGenerator.jsx`. Draft lives in `store/generatorStore.js` (Zustand, persisted localStorage). "Generate" → `api/jobs.js` `POST /api/jobs` `{workflow, metadata, task_type: "image"}` + `Idempotency-Key` header. If a user says "that button does nothing" after import/generation, look here → job submission → engine → WS event → gallery.
 
-### Buttons / controls a user might mention
+**ChatWorkspace** — `pages/ChatWorkspace.jsx` + context `contexts/ChatWorkspaceContext.jsx` (`useChatWorkspaceMutations`). Send path: user types → `sendMessage` mutation → `POST /api/v2/chats/{chat_id}/messages` → `api/routes/world_vault/chats.py` `add_message` → `_send_message` → `pipeline_runner.run_from("triage", ctx)`.
 
-- **"Send" / chat input** — `ChatInputContainer` → `useSendMessage` → `POST /api/v2/chats/{id}/messages` with idempotency key. Optimistic `temp-` message inserted into `useMessages` cache; server reply arrives via polling/refetch (chat jobs poll every 5s while active).
-- **"Swipe" / "Regenerate" / "Impersonate" / "Narrate"** — message-level actions on `POST /api/v2/chats/{id}/messages/{id}/swipe`, `/regenerate`, `/impersonate`, `/narrate`.
-- **"Generate" (image)** — generator page → `useGeneratorJob` → `POST /api/jobs` → job queue → engine → Socket.IO `JOB_PROGRESS` → gallery refresh.
-- **"Cancel" (job)** — `cancel_job` → engine abort registry → sets `_cancelled_jobs` flag + `_abort_job` (fetcher `task.cancel` or response `aclose`) → terminal CANCELLED state.
-- **"Recover" (stale job)** — `POST /api/jobs/recover` (force flag). Reports stale jobs instead of failing unless `force=true`; stale window is per job's task-type timeout (was a broken global 300s).
-- **"Import card" / "Commit"** — `POST /characters/import/analyze` (dry run, writes nothing), `POST /characters/import/commit` (writes). Re-import merges via `data.extensions.tnhcomfy` id.
-- **"Export story" / "Publish story"** — story → comic/webtoon/PDF export (comic exporter job events), `GET /published/{token}/export`.
-- **"Enable TTS"** — Settings `ai.ttsEnabled` + `PATCH /api/v2/settings` → `TTS_ENABLE_PAYLOAD`.
-- **"Force updater" / "Evaluate director"** — `POST /chats/{id}/director/evaluate`.
+**RoleplayWorkspace** — `pages/RoleplayWorkspace.jsx`. Gallery/launcher listing chats and stories; clicking a chat navigates into ChatWorkspace.
 
-### Notification / status behaviors
+**LLM Studio** — `pages/LLMStudio.jsx`. Models, agents, and the roleplay pipeline. Serves the pipeline manifest (`GET /api/v2/llm/pipeline` — backend `services/chat_pipeline.py` is authoritative; `GET /api/v2/llm/director/gates` for gates). AgentPromptVariant (`variant:<slug>`) editable here; overrides prompt+samplers; wired into job_processing, chats, simulate.
 
-- "Disconnected from server. Trying to reconnect" toast — Socket.IO handshake 400 when the connecting origin is not in `COMFY_CORS_ORIGINS` (e.g. `http://100.150.0.4:5174` vs `https://100.150.0.4`). HTTP still works; realtime is dead.
-- "X is thinking…" placeholder — a failed chat reply that arrived after the terminal WS event; fixed so the terminal handler clears the placeholder (store-level fix).
-- Provider "enabled=false" — user paused it on purpose (cost/billing/maintenance). Never treated as broken. Five of six providers are disabled by default; `preflight.sh` reports the count.
-- "No providers configured" — was a lie when `useProvidersPageData` published `[]` on a failed fetch; now publishes `isError`/`error` and renders `QueryErrorState`.
+**StorySandbox** — `pages/StorySandbox.jsx`. Chapter editor; branches; revisions; AI continuations; comic/webtoon export (`services/comic_exporter.py`). `StoryReader.jsx` for reading.
+
+**Characters / Personas / Lorebooks / Worlds / Locations / Scenarios / Voices** — CRUD pages under `pages/` + World Vault routes. `Characters.jsx` has `confirmationStore` mock in tests (gotcha: page tests need confirmationStore mock).
+
+**Providers** — `pages/Providers.jsx` + `Providers.realtime.test.jsx`. Fleet dashboard: overview strip, transport grouping, lifecycle chips, VRAM chart, boot times, toasts. Shutdown endpoint + UI control (`POST /api/v2/providers/{id}/shutdown` uses `ValidationError` 400 not `ComfyError` 500). Continuous telemetry polling; telemetry status engine; warm-window lifecycle.
+
+**Notifications** — `react-hot-toast` toasts (top-right, dark theme). `ConfirmationHost`/`ConfirmationModal` + `confirmationStore.js` for destructive actions.
+
+**Global command palette** — `components/GlobalCommandPalette.jsx`; keyboard shortcuts via `useKeyboardShortcuts.js`.
+
+**Jobs / queue** — `components/QueueVisualization.jsx`; realtime via `useJobsRealtime.jsx`, `useJobStatus.js`, `useJobRecovery.js`. Job events over Socket.IO `tnhcomfy_job_events` channel.
 
 ---
 
 ## 4. Key flows traced end to end
 
-### Flow A: Send a chat message (roleplay)
+### A. Image generation (UI click → gallery refresh)
+1. Frontend generator page (`SimpleGenerator`/`AdvancedGenerator`) builds ComfyUI workflow + metadata from `generatorStore` draft. `useGeneratorJob` wires `handleGenerate`.
+2. `api/jobs.js` `POST /api/jobs` `{workflow, metadata, task_type:"image"}` + idempotency key. `frontend_v2/src/api/websocket.js` `cancelJob`, Socket.IO to `/ws`, subscribes to `job.*` events.
+3. Backend `api/routes/jobs.py` `create_job` → `JobService.create_job` → validation → DB insert (initial status) → `job_queue.enqueue`.
+4. Worker pool claims job → `_process_job` → `_call_provider`: `load_balancer` picks provider (gates on `status=="healthy"`), `engine_factory` builds engine (reads config before fallback; registry `default` seeds `ProviderModal`), engine calls provider worker over network (Modal/Beam HTTP/WebSocket, direct URL, or remote agent). Retries via tenacity (base 1s, max 60s); 400 bypasses retries; `COMFY_JOB_TIMEOUT` (default 3600s) client stream timeout.
+5. Images returned → `asset_reconciler` → `/api/files` (thumbnails + blurhash) → `job.status = COMPLETED` → WebSocket event (`emit_job_event`, `CROSS_PROCESS_EVENT_CHANNEL = tnhcomfy_job_events`) → frontend gallery refresh.
+6. Error paths: retryable vs non-retryable; job failure states. `enabled:false` on a provider means paused on purpose — never treated as broken.
 
-1. User types in `ChatInputContainer`, hits send → `useSendMessage` mutation → `POST /api/v2/chats/{chatId}/messages` with idempotency key (collapses retries across tabs into one server execution).
-2. Optimistic `temp-` message written into React Query `MESSAGES` cache; `api/client.js` posts to backend.
-3. Backend `api/routes/world_vault/chats.py` → chat service → **6-stage pipeline** via `services/pipeline_runner.py` walking `services/chat_pipeline.py` manifest:
-   - **Triage** (Laya, inline): `DecisionService.evaluate_pre_generation_triage` — picks agent/variant, pacing directive, Fate & Skill check. 4-tier cascade: remote agent → in-process `LayaRunner` → generative JSON fallback → deterministic heuristic (`decision_service.py`, `decision_schema.py`). 15s timeout (`DIRECTOR_TIMEOUT_SECONDS`).
-   - **Act** (actor, a job): chosen persona generates the reply through the LLM router / job system.
-   - **Audit** (Laya, inline): completion check; truncated replies continue inline (continuation budget `MAX_CONTINUATION_ATTEMPTS=4` counts attempts). Continuation is a branch OUT of audit — illustrate/update/chain do not run on a continuation.
-   - **Update** (updater, a job): Statekeeper writes gated state deltas (mood, inventory, clock, location, relationships) strictly to gates that fired (≥ `UPDATER_GATE_THRESHOLD=0.55`). Gate-scoped via `GATE_FIELD_MAP` + `allowed_updater_fields`; affinity written only by updater.
-   - **Illustrate** (illustrator, optional job): Illustrator agent authors a bounded scene spec (sampler, resolution, steps, LoRA, hires — not a raw ComfyUI graph) when `IMAGE_TRIGGER_THRESHOLD=0.65` crossed. Opt-in per chat.
-   - **Chain** (Laya, deferred to updater's completion hook): up to 4 autonomous turns (`MAX_AUTONOMOUS_TURNS=4`) or yield to user. Deferred so it reads the post-update snapshot.
-4. Limits all read from `core/pipeline_limits.py`; manifest served at `GET /api/v2/llm/pipeline`.
-5. Frontend refetches messages; new assistant message appears; Socket.IO job events carry `task_type` and `phase` (LLM sub-state travels as `phase`, not `status`).
+### B. Roleplay chat turn (send message → state update → image)
+1. `ChatWorkspace` `sendMessage` → `POST /api/v2/chats/{chat_id}/messages` → `chats.py` `add_message` → `_send_message`: inserts user message row, loads chat/messages/characters/ctx_overrides, builds pipeline context dict.
+2. `pipeline_runner.run_from("triage", ctx)` walks manifest stages (`services/chat_pipeline.py`): triage → act → audit → update → illustrate → chain. Executors in `pipeline_stages.py` resolved by dotted path at call time.
+   - **Triage (Laya System 1):** routes speaker, evaluates pacing, Fate & Skill anti-godmoding check.
+   - **Act (Actor Agent):** generation by Character/Narrator/Custom Agent with tailored prompt, variant, directive. LLM call via `llm_engine` / `engine_factory` / `load_balancer`.
+   - **Audit (Laya System 1):** evaluates completion; audits 16 narrative state gates.
+   - **Update (Statekeeper/Updater):** gated — runs only when a `gate_*` probability crosses `UPDATER_GATE_THRESHOLD` (0.55) or manually triggered. Writes JSON state deltas restricted to fired gates. `GATE_FIELD_MAP` + `allowed_updater_fields` (None/wild=all, []=scene_summary). **Affinity written only by updater.**
+   - **Illustrate (Illustrator Agent):** if `IMAGE_TRIGGER_THRESHOLD` (0.65) crossed, formulates ComfyUI visual prompt → image job. `IMAGE_TRIGGER 0.65`.
+   - **Chain (Laya System 1):** multi-turn conductor deciding next speaker (up to `MAX_AUTONOMOUS_TURNS=4` autonomous turns) or yielding to user. If `updater_job_id` set, chain is deferred to updater job's completion hook.
+3. `is_complete`: bands <0.4 incomplete / >0.6 complete else syntax; `snapshot completion_policy` overrides.
+4. Continuations: parent job id in `metadata.continuation_of_job_id`; resolved at write to message via `message_metadata.source_job_id`; same-bubble merge; `continuation_job_ids` stamped on parent. `MAX_CONTINUATION_ATTEMPTS=4` total attempts per turn (confirmed by user).
+5. Completion → WS event → frontend updates chat transcript. AgentPromptVariant migration 103: globally unique slug, per-agent `is_active`; `resolve_agent()` accepts `variant:<slug>`; overrides prompt+samplers.
 
-### Flow B: Generate an image
+### C. Story sandbox edit → chapter revision
+`StorySandbox` → story CRUD via `api/routes/world_vault/stories.py`; chapters nested `/stories/{id}/chapters`; revisions via story revision repo. `character_ids`/`lorebook_ids` persisted through `updateStory.mutate` (not transient UI state). Images finalize → `asset_reconciler` → `/api/files`. Comic/webtoon export via `comic_exporter.py`. `reference_cleanup.scrub_entity_references` scrubs Story+Chat references on delete.
 
-1. Generator page → `useGeneratorJob` → preflight (`useGenerationPreflight`) → `POST /api/jobs` → `JobService.create_job` → `job_queue.enqueue`.
-2. Worker coroutine picks job → `execute_job()` (`job_runner.py`) → load balancer picks provider (capability-filtered, circuit-breaker aware) → `engine_factory.get_engine` → `InProcessEngine.inference` streams TaskEvents (`started`, `node`, `progress`, `completed`, `failed`, `cancelled`).
-3. Provider runs ComfyUI over HTTP/WebSocket; ComfyUI ends prompt with `execution_success`, not `executing{null}`.
-4. Results saved → `asset_reconciler` (`asset_reconciler.py`) writes thumbnails, blurhash, `assets` row → `job.status = COMPLETED` → `emit_job_event(EventType.JOB_PROGRESS)` → Socket.IO → frontend gallery refresh (`refetchNewestGalleryPage`).
-5. Retries: tenacity exponential backoff (base 1s, max 60s); 4xx permanent, 5xx/429/408 transient. Failover to next healthy provider via `job_runner.select_next_provider`.
-6. Post-processing background hook `_process_image_background` announces thumbnails done (now carries full job payload with `task_type`, otherwise the frontend realtime handler drops it).
+### D. Provider lifecycle
+Register/update via `services/provider_service.py` `ProviderService` (`create_provider`, `update_provider`; whitelisted fields; `null` clears). `enabled` defaults True. `enabled:false` = paused on purpose. Setup via `provider_lifecycle_service.py` `setup_provider` (requires in-process engine; 30s `wait_for` `engine.setup_models()`). Health: `check_health` config-only; `load_balancer` gates `status=="healthy"`. Telemetry continuous polling; telemetry status engine; warm-window lifecycle; boot times; VRAM chart. Deploy only via `scripts/deploy.sh` {image,tts,llm,beam,all} [--dry-run] from repo root; no deploy route.
 
-### Flow C: Story action (continue / rewrite / expand / illustrate)
-
-1. Story editor → `useContinueChapter` etc. → `POST /api/v2/stories/{id}/chapters` or `/chapters/{id}/continue` → LLM router + job system (same as chat Act stage).
-2. Result written as chapter text; branches and beats tracked; revisions retained with a limit (autosave path previously bypassed the revision repository — fixed).
-3. `Story.chat_id` / `Chat.story_id` are nullable provenance columns, one-way each direction; `useExportChatToStory` links a chat to a story.
-
-### Flow D: Provider / model management
-
-1. `Providers.jsx` → `useProvidersPageData` → `GET /api/v2/providers` + health + load-balancer stats.
-2. Toggle enabled → `PATCH /api/v2/providers/{id}` → `ProviderService` → `invalidate_engine(provider_id)` (drops cached engine, defers close if a job is streaming, clears load-balancer health cache and object-info cache).
-3. Model download → `model_downloader.py` with resume (`Content-Range`, `If-Range`, "server ignored Range" restart path, 29 tests in `test_download_resume.py`).
-4. Reconciliation tick (`in_process_reconciliation`, `model_reconciliation`) validates model files, emits `MODEL_SYNC_*` events (4 toasts), marks orphans.
+### E. WebSocket / realtime
+`api/routes/websocket.py` `ws_manager`; Socket.IO app `socket_app` on `/socket.io`; cross-process NOTIFY channel `tnhcomfy_job_events`; each worker's `WebSocketManager` LISTENs and re-broadcasts to local Socket.IO clients. Frontend `api/websocket.js` `cancelJob` + `job.*` subscriptions.
 
 ---
 
 ## 5. State and data
 
-### Source of truth
-- **PostgreSQL 16 + pgvector** is the single source of truth for all World Vault entities: `characters`, `chats`, `messages`, `lorebooks`, `lorebook_entries`, `stories`, `story_chapters`, `story_revisions`, `branches`, `personas`, `worlds`, `locations`, `scenarios`, `voice_models`, `memories`, `jobs`, `providers`, `assets`, `load_balancer_states`, `schema_migrations`. World membership is one indexed `world_id` per member table (migration `090_world_membership_fks`), owned by `services/world_ownership.py`.
-- **pgvector** powers semantic search over `LorebookEntry.embedding` (`Vector(384)`) and character memories. Cosine-distance cutoff `ai.ragMaxDistance` (default 0.6) applied to both character-memory and lorebook search. **The embedding stack has no CI coverage** (`sentence-transformers` present, `torchvision` absent, local venv cannot import `transformers`) — unverified whether semantic search works end to end in test.
+**Source of truth:** PostgreSQL 16 + pgvector (World Vault). Tables/repos: Character/character_repo, Chat/chat_repo (get only), Message/message_repo, Story/story_repo, StoryChapter/story_chapter_repo, StoryChapterRevision/story_revision_repo, StoryBeat/story_beat_repo (row-based; beats also JSON on chapter), Lorebook/lorebook_repo, LorebookEntry/lorebook_entry_repo, Persona/persona_repo, World/world_repo, Location/location_repo, Scenario/scenario_repo, VoiceModel/voice_model_repo, CharacterMemory. All in `core/entities.py` + `infrastructure/repositories/`.
 
-### Frontend state
-- **React Query**: all server data. Query keys follow `buildQueryKey(QUERY_KEYS.*)` in `src/constants/queryKeys`. Chat list key is `chatListKey()` (distinct per workspace/limit/offset/query/character_id to avoid prefix-collision invalidations). Messages keyed per `([messages, chatId, limit, offset, branch, search, tail])`.
-- **Zustand**: UI state only — `useStore.js` (activeCollection), `worldVaultStore.js` (activeChatId), `settingsStore.js`, `confirmationStore.js`. Streaming job state was migrated to React Query (`useStreamingJobs.js`).
-- **localStorage**: `isSetupComplete` gates the first-run onboarding wizard (unverified whether it also persists other prefs).
+**Persists:** jobs, providers, characters, chats, messages, stories, chapters, revisions, lorebooks, personas, worlds, locations, scenarios, voices, memories, assets, schema_migrations.
 
-### Persistence boundaries
-- **config.json** (path via `COMFY_CONFIG_PATH`, default `backend_v2/config.json`): runtime-editable settings. In the container the default resolves to `/app/config.json` (the writable layer) unless `COMFY_CONFIG_PATH` points to `/data/config.json` — production compose sets it there. `_seed_config_file` copies defaults on first boot only. `update_config` / `reset_config` write atomically (mkstemp + fsync + os.replace) under `_config_lock`. Blank string means "unset" only for `generator.default_checkpoint`.
-- **Images / assets**: filesystem under `data/output/{user_id}/{workspace}/YYYY/MM/DD/`; `assets` table is the source of truth for gallery — **no filesystem scans at startup**. Thumbnails + blurhash generated by asset reconciler. `.sha256` sidecar is read but never compared to an upstream hash (no integrity verification).
-- **Jobs**: `jobs` table grows without bound — `jobs_cleanup` has zero consumers (unverified whether intended).
+**Does not persist (ephemeral/UI only):** Zustand `useStore` (activeCollection only), `generatorStore` drafts (persisted to localStorage, not DB — a draft survives refresh but not a different device unless synced), `settingsStore`, `confirmationStore`, React Query server cache.
 
-### What does NOT persist
-- Nothing beyond the above is explicitly transient; draft messages live in React Query cache only until sent.
+**MutableList gotcha:** in-place dict mutation inside a `MutableList` does not persist — reassign the column.
+
+**Startup recovery:** re-enqueues PENDING and RUNNING jobs (preserve when changing lifecycle code).
 
 ---
 
 ## 6. Config and external dependencies
 
-### Environment variables (`COMFY_*` prefix; `.env.example` is the canonical reference)
+**Env vars (`.env.example` canonical):** `COMFY_DATABASE_URL`, `OUTPUT_DIR`, `INPUT_DIR`, `COMFY_PREVIEW_CACHE_DIR`, `HF_TOKEN`, `CIVITAI_TOKEN`, `MODAL_TOKEN_*`, `BEAM_API_KEY`, `COMFY_CORS_ORIGINS`, `COMFY_WORKER_BACKEND_URL`, `COMFY_BACKEND_BIND` (bind address, loopback only), `COMFY_JOB_TIMEOUT`. `PGVECTOR_TEST_URL` for Postgres/pgvector tests (only set in CI).
 
-| Var | Role | Breaks when missing |
-|---|---|---|
-| `COMFY_DATABASE_URL` (assembled from `POSTGRES_HOST/PORT/USER/PASSWORD/DB`) | DB DSN | Backend won't start; every provider waits on the backend healthcheck |
-| `COMFY_CONFIG_PATH` | Where config.json lives | Defaults to `backend_v2/config.json` — in a container that's the writable layer, Settings changes are lost on recreate |
-| `COMFY_CORS_ORIGINS` | Socket.IO + CORS origins | Wrong/missing origin → handshake 400 → permanent "Disconnected... reconnecting" toast while HTTP works |
-| `COMFY_BACKEND_BIND` / `COMFY_FRONTEND_BIND` | Named bind addresses (never wildcard) | `0.0.0.0` exposes the unauthenticated API to the LAN |
-| `COMFY_PROVIDER_TOKEN` / `X-Provider-Token` | Backend↔provider auth (single bearer token) | Empty → auth failed open historically; now fails closed with 503 |
-| `HF_TOKEN`, `CIVITAI_TOKEN` | Model download auth | Downloads fail for gated models |
-| `MODAL_TOKEN_ID/SECRET`, `BEAM_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, `OPENAI_API_BASE` | Provider credentials | Engine not constructible (`can_create_engine` → False) |
-| `PROVIDER_UPLOAD_MAX_BYTES` (0 = disabled) | Upload size cap | `encoded_upload_over_cap` treats 0 as "refuse all uploads" (fixed to `bool(cap) and ...`) |
-| `PROVIDER_GET_FILE_MAX_BYTES` | Get-file stream cap | Default 512 MiB |
-| `COMFY_ENGINE_CACHE_TTL_SECONDS` | Engine cache TTL | Credential rotation self-heals at worst one TTL late |
-| `COMFY_JOB_TIMEOUT`, `jobs.timeout` (3600) | Client-side stream timeout for image jobs | Lowering below the worker's timeout abandons a running workflow |
+**External services:** Modal (comfy-modal-stack, comfy-modal-tts, tnh-llm llama.cpp), Beam (comfy-gpu, comfy-storage, comfy-download, comfyui-extractor, comfy-llm, comfy-tts), direct ComfyUI URL, remote agent (ComfyUI host), Civitai API, HuggingFace. `modal_llm` alias `modal_vllm` runs llama.cpp not vLLM.
 
-### External services / providers
-- **Modal** (`comfy-modal-stack`, `comfy-modal-tts`, `tnh-llm`): `modal_llm` alias `modal_vllm` runs **llama.cpp**, not vLLM. Modal serialises return values across RPC → 8 MiB range slices, slower than other engines for large checkpoints (unverified fix: presigned URL or volume mount).
-- **Beam**: serverless REST + websocket; no modal package.
-- **Direct ComfyUI / remote_comfy**: `http://localhost:8188` default; `remote_comfy` defaults agent URL to `http://localhost:8001` with a loud warning.
-- **Hosted LLM**: Anthropic, Google, OpenAI-compat (incl. Ollama).
-- **Remote agent**: optional self-hosted rig on the machine hosting ComfyUI; `remote_agent/provider_core/` is a deliberate fork of `deployables/provider_worker_core` — **do not unify** (contract test `test_provider_core_parity.py`).
+**What breaks when missing:** DB down → startup fails (migrations can't run); provider down → load balancer excludes it (gates on healthy), `enabled:false` is intentional pause not breakage; Modal/Beam credentials missing → those provider engines can't call workers but others still work.
 
-### What breaks when missing
-- DB down: backend fails healthcheck, frontend retries forever (5xx), everything stops.
-- Provider down / `enabled=false`: load balancer skips it; no failover if only one provider (five of six are disabled by default — a capacity/billing decision, not a bug).
-- Modal package absent (`HAS_MODAL` False): Modal engines not constructible.
-- `transformers`/`torchvision` absent: embedding paths never executed by any suite (local or CI).
+**Contracts (tests that pin behavior):** `test_deployable_contract.py` AST-parses `services/engines/` vs `deployables/` both directions (do not unify). `test_provider_core_parity.py` pins `deployables/provider_worker_core` ↔ `remote_agent/provider_core` fork (do not unify). `test_api_docs_contract.py` checks `docs/api.md` (generated) for drift — after router changes run `cd backend_v2 && .venv/bin/python ../scripts/generate_api_docs.py`.
 
 ---
 
 ## 7. Symptom → suspect table
 
-Ordered by likelihood for each user-visible symptom.
-
-| Symptom | Most likely places to look (in order) |
+| User symptom | Most likely places to look (in order) |
 |---|---|
-| "The thing in the sidebar doesn't update" | React Query key prefix collision (`chatListKey` / `useChats` invalidation), `invalidateVaultAggregates`, `useWorldVaultResource`; optimistic writes in `useSendMessage`/`useEditMessage`/`useDeleteMessage`; check `settingsStore` vs `useSettingsStore` (two settings stores — unverified if both still writable) |
-| "It feels slow after I import" | `reference_cleanup` scrubs Story+Chat on import; `invalidateVaultAggregates` refetches aggregates; chat list refetch; `useChatJobs` 5s polling while active |
-| "That button does nothing" | `extra="forbid"` request model dropping a misspelled field (silent 200 before the fix — now 422); mutation with no `onSuccess` invalidation (e.g. `enableTts` mutation swallows errors); invisible-but-tappable overlay (`useEscapeKey` registry, 16 of 33 overlays still hand-rolled) |
-| "Data missing after refresh" | React Query cache cold + failed fetch rendered as empty vault (`QueryState` primitive fixed 7 of 8 pages); `useProvidersPageData` publishing `[]` on error; `assets` table is source of truth (no FS scan) |
-| "Stale view" | `useGalleryAutoRefresh` per-second polling on top of live WS; bare `['gallery']` prefix invalidation walking every loaded page; engine cache TTL (1800s) serving stale credentials/object_info; `invalidate_object_info_cache` only called from `invalidate_engine` |
-| "Slow" (image generation) | Modal RPC 8 MiB slicing for 7GB checkpoints; provider cold start; `DIRECTOR_TIMEOUT_SECONDS=15` per Director decision; sync routes blocking the event loop (`SYNC_CHAINED` in `test_event_loop_invariant.py`, 29 routes) |
-| "Job stuck generating" | Job reaper sweep every 300s (`JOB_REAPER_INTERVAL_SECONDS`); stale window per task-type timeout; `cancel_job` abort not reaching a quiet provider (fixed via abort registry) |
-| "500 on import" | Card-supplied `extensions.voice_model_id` written to a FK (fixed: check/drop/report as lost); table-class request bodies (fixed with DTOs) |
-| "Empty vault with working Create button" | Failed fetch rendered as empty state (fixed with `QueryState` on 8/8 pages) |
-| "Gallery badge says wrong provider count" | Denominator was every online provider incl. LLM/TTS (fixed); badge vs submit-time gate answer different questions (unverified fix) |
-| "Reimport creates a duplicate" | Card lacks `data.extensions.tnhcomfy` id; re-import should UPDATE via that id |
+| "The thing in the sidebar doesn't update" | `constants/navigation.js` `EXPERT_TOOLS` (shared list), `components/Layout.jsx` active-state, React Query invalidation for the page, `useProvidersPageData` |
+| "That button does nothing" (generate/send) | `pages/*Generator.jsx` → `api/jobs.js` POST /api/jobs; `ChatWorkspaceContext` `sendMessage` → `chats.py` `_send_message`; check WS `job.*` events / 400 bypassing retries |
+| "Data missing after refresh" | `generatorStore` drafts are localStorage-only (not DB); `useStore` activeCollection only; server data is React Query (refetch on invalidate) |
+| "Stale view" / gallery not showing new images | WS event path `emit_job_event` → `CROSS_PROCESS_EVENT_CHANNEL` → `WebSocketManager` LISTEN; `useGalleryAutoRefresh`; `useJobsRealtime` |
+| "Feels slow after I import" | `services/character_portability.py` / `reference_cleanup` import; `model_sync` interval 300s; provider health checks / load balancer; large context `MAX_CONTEXT_MESSAGES` |
+| "Agent doesn't respond / turn hangs" | `pipeline_runner.run_from` stage walk; `DIRECTOR_TIMEOUT_SECONDS=15`; LLM engine/provider load balancer; `halt` key; chain deferral to updater completion hook |
+| "Image not generated from chat" | `illustrate` stage + `IMAGE_TRIGGER_THRESHOLD=0.65`; image submission `services/image_submission.py`; `asset_reconciler` |
+| "Provider card says broken but it's paused" | `enabled:false` handling — never treat as broken; `provider_service.get_enabled_providers()` |
 
 ---
 
-## 8. Fragile or surprising areas (do not touch blindly)
+## 8. Fragile or surprising areas
 
-- **`docs/api.md` drift** — generated; router changes must regenerate or `test_api_docs_contract.py` fails. The check's assertion is `pair & {real_paths, real_ops}` (one match suffices), so stale prose can pass.
-- **No authentication** — every destructive endpoint reachable by anyone who can reach the API. `DELETE /api/jobs` deleted 154 rows on 2026-10-01. Assets survived (un-FK'd soft reference).
-- **Five of six providers disabled by default** — `enabled=false` is sticky (operator-turned-off); discovery-update branch never re-asserts `enabled`. `preflight.sh` reports the count. Not a security control; a capacity/billing decision.
-- **Config.json durability trap** — production compose mounts only `./data:/data`; default `config.json` path is `/app/config.json` (writable layer, lost on recreate). Must set `COMFY_CONFIG_PATH=/data/config.json`.
-- **MutableList in-place dict mutation doesn't persist** — reassign the column (AGENTS.md).
-- **`update_config` / `reset_config`** — read-modify-write of module global under `_config_lock`; called via `asyncio.to_thread` from two routes. **[FIXED]** (`1f19f049`): `reset_config` restores + re-raises on save failure; lazy `_config` load moved inside the lock. Settings routes additionally hold an asyncio lock across their read-modify-write; `llm_config` `set_default_provider`/`set_active_models` use a threading lock.
-- **`_split_unset` previously filtered non-dict sections** — list-valued `system_prompt_library` was a silent no-op (fixed).
-- **Event swallowing** — post-turn Director block wrapped in `except Exception → logger.debug` historically hid three defects; now `logger.warning`.
-- **`docs/archive/`** — historical, documents contradict each other; not guidance.
-- **Half-finished / unverified** — scene graph budget (`scene_spec_cost`) is a ceiling not a price (unverified enforcement); dispatch-time provider prune not implemented (build-time only); no provider-picker UI; `file.path` missing from `/api/files` projection (Provider Status list filters LLM providers out — `ModelDetailsModal.jsx`); `jobs_cleanup` zero consumers; `get_pending_downloads` no per-provider filter.
-- **Tight coupling** — `engine_factory` imports `api.routes.nodes` and `services.load_balancer` internals inside functions to avoid cycles; `base.run_inference` finally calls `drain_pending_engine_closes`.
-- **Frontend lint** — **[FIXED]** (`5426f17b`): 0 errors / 0 warnings. Removed unused eslint-disable directives and unnecessary `filters` deps.
-- **Mobile layout** — one stray `}` previously closed a media query 80 lines early; all 15 `mobileLayoutInvariants` tests passed against it (they regex the stylesheet, never check block membership).
-- **Test OOM risk** — full backend suite (~3900 tests, ~6 min) has OOM'd the 18GB host; run targeted files; never vitest concurrent with docker pytest. `test_vram*` needs `/comfyui` on PYTHONPATH.
+- `MutableList` in-place dict mutation doesn't persist — reassign column (backend convention).
+- `edit-tool` substring hazards; re-read after edit (project memory).
+- Frontend `vi.mock` factories must enumerate EVERY page hook; page tests need `confirmationStore` mock.
+- `test_deployable_contract.py` / `test_provider_core_parity.py` pin engine↔deployable and provider_core forks — do NOT unify.
+- `docs/api.md` is generated; drift fails `test_api_docs_contract.py`. Regenerate after router changes.
+- No Alembic; migrations appended to `steps.py` and run once at startup with advisory lock.
+- `config.json` keys that nothing reads (e.g., `max_concurrent`, `timeout` semantics) — settings page may promise an effect that never happened (config.py notes).
+- `comfy.db` SQLite + `config.json` present at repo root of backend_v2 (dev/local).
+- `remote_agent/` and `deployables/` are separate trees not imported by backend; engines name every class/function in them.
+- `LoadBalancer` keeps class-level state — do not add more shared mutable globals; don't fire async tasks without tracking.
+- Known env failure: `test_pre_generation_triage_with_custom_agents` (real Laya picks user); baseline 125 failures `/tmp/opencode/baseline_failures.txt` (2026-10-15).
+- ST JSONL: `export?format=jsonl` + import multipart.
+- `ValidationError` → 400; `RequestValidationError.errors()` no `include_url`.
+- `UpdateStory`/`ChatRequest` explicit allowed-field whitelists — add new fields; `null` clears.
+- `test_database` asserts subsets only; migrations recorded on minimal fixtures.
 
 ---
 
 ## 9. How to run, build, and test
 
-### Backend
-- In container (preferred, right deps + `/comfyui` mount + Postgres):
-  `docker exec tnhcomfy-backend python -m pytest -q tests/<file.py>` or `::test_name`
-- Host (SQLite by default, different DB than compose):
-  `cd backend_v2 && .venv/bin/uvicorn api.main:app --host 127.0.0.1 --port 8002 --reload`
-- Lint (host, from `backend_v2/`): `ruff check .` (F only, F401 on; every `# noqa: F401` needs a reason). Repo root ruff reports ~450 unrelated errors — run from `backend_v2/`.
-- Full suite is heavy; run targeted files. Postgres/pgvector tests need `PGVECTOR_TEST_URL`.
+**New host:** `bash scripts/preflight.sh` (creates external `metrics`/`proxy` networks; reports config that silently disables features). Then:
+```
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build -V -d
+```
+(`-V` matters in dev; frontend `node_modules` anonymous volume.) Containers: `tnhcomfy-backend`, `tnhcomfy-frontend`, `tnhcomfy-db`. Dev override mounts `./backend_v2:/app` and repo at `/comfyui`; without it code edits don't reach the running backend. Frontend on port **5174**. Backend bound to loopback/named address via `COMFY_BACKEND_BIND`.
 
-### Frontend
-- `cd frontend_v2 && bun run lint && bun run test && bun run build` (`bun run verify`, CI order).
-- Single file: `bun run test -- src/path/to/file.test.jsx`.
-- E2E (Playwright): `bun run test:e2e` — starts its own dev server on 5174; **never run vitest concurrent with backend pytest**.
-- Bun only; preinstall guard rejects npm/pnpm/yarn.
+**Backend tests (in container):**
+```
+docker exec tnhcomfy-backend python -m pytest -q tests/test_job_service.py
+docker exec tnhcomfy-backend python -m pytest -q tests/test_job_service.py::test_create_job
+```
+Full suite ~370s / 3900 tests; host OOMs at 18GB — run targeted files, never vitest concurrent with docker pytest. `test_vram*` needs `/comfyui` on PYTHONPATH. `pytest.ini` `addopts = -n auto` (xdist). Postgres/pgvector tests only when `PGVECTOR_TEST_URL` set.
 
-### Stack
-- New host: `bash scripts/preflight.sh` (creates external `metrics`/`proxy` networks, reports config that silently disables features).
-- `docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build -V -d` (`-V` renews the anonymous frontend `node_modules` volume; lockfile bumps are invisible without it).
-- Frontend on port 5174; backend publishes `127.0.0.1:8002` and `${COMFY_BACKEND_BIND:-100.150.0.4}:8002` only. Verify backend from inside container: `docker compose exec backend_v2 curl -s localhost:8002/api/live`.
-- Deploy cloud workers (host CLI only): `bash scripts/deploy.sh {image,tts,llm,beam,all} [--dry-run]`. No deploy HTTP route.
+**Backend lint (host):** `cd backend_v2 && ruff check .` (F only; F401 on; `deployables/` has own ruff.toml; repo root ruff reports ~450 unrelated style errors).
 
-### CI workflows
-- `backend_v2/**` or `docs/api.md` → `backend-tests.yml` (Python 3.13, ruff, pytest, pgvector service).
-- `frontend_v2/**` → `frontend-tests.yml` (lint, vitest, build).
-- `frontend_v2/**` or `backend_v2/**` → `frontend-e2e.yml`.
-- `remote_agent/**`, `scripts/**`, `docker-compose*.yml` → `provider-tests.yml`.
-- Any path → `secret-scan.yml` (gitleaks).
+**Frontend (bun only; preinstall guard rejects npm/pnpm/yarn):**
+```
+cd frontend_v2 && bun run lint && bun run test && bun run build   # == bun run verify
+bun run test -- src/path/to/file.test.jsx   # single file
+bun run test:e2e                             # Playwright, dev server 5174
+```
+
+**Backend outside Docker:** `cd backend_v2 && .venv/bin/uvicorn api.main:app --host 127.0.0.1 --port 8002 --reload`
+
+**Deploy (host CLI only):** `bash scripts/deploy.sh {image,tts,llm,beam,all} [--dry-run]`; Beam from repo root.
 
 ---
 
 ## 10. Unverified or unclear
 
-- Whether multi-worker uvicorn is actually supported (docstring in `main.py` says yes with advisory locks; `architecture.md` says single worker only).
-- Whether semantic memory search works end to end (no CI coverage for `transformers`/`torchvision`).
-- Whether `useSettingsStore` and `useUpdateSettings` are both writable paths or one is legacy.
-- Whether `jobs_cleanup` having zero consumers is intentional policy.
-- Whether the badge vs submit-time gate model-availability disagreement is fixed (one function for both was proposed, not confirmed done).
-- Whether `file.path` absence from `/api/files` projection is fixed.
-- Whether scene-graph budget is enforced at dispatch time (proposed, not confirmed).
-- Whether the gallery "drops a completed job" bug (`dashboardItems.js` not pushing completed-but-unindexed jobs) is fixed.
-- Whether `useEscapeKey` focus trap in `ModalOverlay` is safe to touch (a previous attempt broke 8 tests and was reverted).
-- Whether all 9 mobile Playwright tests run in any CI workflow (previously ran in none).
+- Exact caller in `ChatWorkspaceContext.jsx` that invokes `sendMessage` on Enter vs send button (referenced but not re-read in this session).
+- Whether `Backend outside Docker` `.venv` exists in this checkout (`.venv/` directory present but unverified functional).
+- Exact line counts / line numbers for most stage executors (map intentionally avoids line numbers).
+- Whether `test_pre_generation_triage_with_custom_agents` failure is still current (baseline dated 2026-10-15; may have been addressed in later commits).
+- `frontend_v2/src/pages/` role of `WorldVaultHub.jsx` vs `World Architect` page relationship — not traced.
+- The `schedule`/`openspec` directory (`openspec/config.yaml`, `changes/`, `specs/`) purpose not investigated beyond a config read.
+- `.agents/`, `.claude/`, `.gemini/`, `.kilo/`, `.kilocode/`, `.poolside/` root directories — purpose unknown, not investigated.
+- Exact WebSocket path frontend uses (`/ws` vs `/socket.io` vs proxy) not line-verified.
+- Whether all 111 migration steps actually exist (last seen `111_...`; count asserted but full list not enumerated).
+- `LLMStudio` test file exists (`LLMStudio.test.jsx`) but pipeline-manifest→UI wiring details not re-verified.

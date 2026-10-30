@@ -64,13 +64,6 @@ _provider_health_cache = TTLCache(
     ttl=15.0
 )
 
-# Capability dicts per provider, fetched lazily from the engine's object_info
-# and cached with a TTL. Used for sampler/scheduler hard-block checks so a
-# provider that cannot run a job's sampler or scheduler is never selected.
-_CAPABILITY_CACHE_TTL_SECONDS = _parse_positive_float(
-    os.getenv("COMFY_PROVIDER_CAPABILITY_CACHE_TTL_SECONDS"), 60.0
-)
-_capability_cache: dict[str, tuple[float, dict[str, Any] | None]] = {}
 
 # Circuit-breaker: after N consecutive failures a provider is skipped until
 # its failure streak is reset by a successful job.

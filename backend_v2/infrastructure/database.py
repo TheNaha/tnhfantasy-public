@@ -78,7 +78,7 @@ def get_db_pool_size() -> int:
 DB_POOL_TIMEOUT = _positive_int_env("COMFY_DB_POOL_TIMEOUT", 30)
 # Recycle below the usual 1h/infra limit so a long-lived pool never hands out a
 # connection the far side has already dropped.
-DB_POOL_RECYCLE = _positive_int_env("COMFY_DB_POOL_RECYCLE", 1800)
+DB_POOL_RECYCLE = _positive_int_env("COMFY_DB_POOL_RECYCLE", 3600)
 
 
 def _database_url_from_postgres_env() -> str | None:
