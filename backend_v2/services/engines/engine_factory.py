@@ -184,7 +184,7 @@ def can_create_engine(provider: Any) -> bool:
 
     # Self-hosted containers: a service token and a URL. The same keys the image
     # agent sidecar uses, so a provider row written for one works for the other.
-    if rtype in ("remote_llm", "remote_tts", "remote_hybrid"):
+    if rtype in ("remote_llm", "remote_tts"):
         service_token = (
             creds.get("agent_token")
             or creds.get("token")
@@ -209,6 +209,21 @@ def can_create_engine(provider: Any) -> bool:
             or os.getenv("REMOTE_AGENT_URL")
         )
         return bool(service_token and container_url)
+
+    if rtype == "remote_hybrid":
+        # remote_hybrid mirrors get_engine: base_url defaults to
+        # http://localhost when none is configured, so a provider with only a
+        # token is still constructible. Don't false-negative it here.
+        service_token = (
+            creds.get("agent_token")
+            or creds.get("token")
+            or creds.get("remote_agent_token")
+            or env_vars.get("AGENT_TOKEN")
+            or env_vars.get("REMOTE_AGENT_TOKEN")
+            or os.getenv("AGENT_TOKEN")
+            or os.getenv("REMOTE_AGENT_TOKEN")
+        )
+        return bool(service_token)
 
     # Direct ComfyUI (TTS dialect), same rule as direct_url: always
     # constructible, the URL defaults to localhost.
@@ -1034,9 +1049,18 @@ def invalidate_engine(provider_id: str) -> None:
         # created to do it.
         close_engine_when_idle(_stale)
     try:
-        from services.load_balancer import _provider_health_cache
+        from services.load_balancer import _provider_health_cache, _capability_cache
 
-        _provider_health_cache.pop(f"in_process:{provider_id}", None)
+        # _check_provider_health writes both the bare key and per-task-type
+        # keys (image/llm/tts). Pop all of them so a just-rotated provider is
+        # re-probed for every modality instead of trusting a stale verdict for
+        # up to the 15s TTL.
+        for task_type in (None, "image", "llm", "tts"):
+            key = f"in_process:{provider_id}" if task_type is None else f"in_process:{provider_id}:{task_type}"
+            _provider_health_cache.pop(key, None)
+        # Capability cache is keyed by provider id; stale sampler/scheduler
+        # capabilities can select a provider for a job it cannot run.
+        _capability_cache.pop(provider_id, None)
     except Exception:
         pass
     # The cached ComfyUI node graph goes with it. This is the one place every
