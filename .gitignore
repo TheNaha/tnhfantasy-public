@@ -53,6 +53,9 @@ data/db/comfy.db
 
 .ocx/
 .opencode/
+.gemini/
+.kilo/
+.kilocode/
 .agents/
 .jules/
 .Jules/
