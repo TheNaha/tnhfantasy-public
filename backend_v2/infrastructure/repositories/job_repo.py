@@ -495,11 +495,32 @@ class JobRepository:
             if key == "status" and isinstance(raw, str):
                 raw = JobStatus[raw]
             elif isinstance(raw, str):
+                col = Job.__table__.columns[key]
+                # Determine the effective python type. For SQLAlchemy 2.1+,
+                # `UTCDateTime` (a TypeDecorator) returns `object` for
+                # `python_type` rather than delegating to its `DateTime` impl.
+                # Check the impl chain to get the real python type.
+                col_type = None
                 try:
-                    col_type = Job.__table__.columns[key].type.python_type
+                    col_type = col.type.python_type
                 except (NotImplementedError, AttributeError):
-                    col_type = None
-                if col_type is datetime:
+                    pass
+                # `python_type` returning `object` is useless for type
+                # discrimination — fall through to the impl.
+                if col_type is None or col_type is object:
+                    if hasattr(col.type, "impl"):
+                        try:
+                            col_type = col.type.impl.python_type
+                        except (NotImplementedError, AttributeError):
+                            pass
+                # `python_type` can return `object` instead of `datetime`
+                # (e.g. SQLAlchemy 2.1's UTCDateTime TypeDecorator). Check
+                # issubclass as well to catch datetime subclasses.
+                if col_type is datetime or (
+                    col_type is not None
+                    and isinstance(col_type, type)
+                    and issubclass(col_type, datetime)
+                ):
                     raw = datetime.fromisoformat(raw)
                 elif col_type in (dict, list) or raw.lstrip().startswith(("{", "[")):
                     try:

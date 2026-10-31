@@ -149,6 +149,20 @@ def _redirect_sync_sessions(engine):
     original_engine = _infra_db.engine
     _infra_db.engine = engine
 
+    # Re-evaluate `_use_db_claims` on the module-level `queue_manager` singleton
+    # so it matches the *actual* test engine dialect. The singleton was created
+    # at import time, when the engine may have been PostgreSQL (container
+    # env has POSTGRES_HOST set). Tests override the engine to in-memory
+    # SQLite, so Postgres claim behaviour must not leak into SQLite tests.
+    from services.job_queue import queue_manager
+    _qm_original = {
+        name: pool._use_db_claims
+        for name, pool in queue_manager.pools.items()
+    }
+    _use_db_claims_now = engine.dialect.name == "postgresql"
+    for pool in queue_manager.pools.values():
+        pool._use_db_claims = _use_db_claims_now
+
     known_originals = {id(original_infra), id(original_deps)}
 
     rebound: list[tuple[object, str, object]] = []
@@ -183,6 +197,8 @@ def _redirect_sync_sessions(engine):
         _infra_db.get_session_sync = original_infra
         _api_deps.get_session_sync = original_deps
         _infra_db.engine = original_engine
+        for name, pool in queue_manager.pools.items():
+            pool._use_db_claims = _qm_original[name]
         for module, original in rebound:
             module.get_session_sync = original
 

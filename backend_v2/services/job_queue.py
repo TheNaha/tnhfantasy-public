@@ -27,6 +27,25 @@ logger = get_logger("job_queue")
 # SQLite (tests / local file dev) keeps the pure in-memory queue behavior.
 _DB_CLAIMS_ENABLED = database_url.startswith("postgresql")
 
+
+def _db_claims_enabled() -> bool:
+    """Determine whether DB-backed claims should be used, based on the
+    *actual* engine dialect at call time.
+
+    The module-level ``_DB_CLAIMS_ENABLED`` constant is computed from the
+    env-resolved ``database_url`` at import time.  In the Docker container
+    ``POSTGRES_HOST`` is set, so that constant is ``True`` even when tests
+    override the engine to in-memory SQLite.  This function checks the real
+    engine dialect so that newly-constructed ``JobQueue`` instances in tests
+    get the correct default (``False``).
+    """
+    try:
+        from infrastructure.database import engine
+
+        return engine.dialect.name == "postgresql"
+    except Exception:  # engine not created yet / import error
+        return _DB_CLAIMS_ENABLED
+
 _NOTIFY_CHANNEL = "job_queue_wake"
 
 # Backoff between `_PgNotifyListener` reconnect attempts. Capped rather than
@@ -188,7 +207,12 @@ class JobQueue:
         self._claim_task_types = frozenset(claim_task_types or (task_type,))
         # Postgres mode: workers claim PENDING rows from the DB instead of
         # popping an in-process deque. In-process queue is wakeup-only then.
-        self._use_db_claims = _DB_CLAIMS_ENABLED
+        # `_DB_CLAIMS_ENABLED` is computed from the env-resolved `database_url`
+        # at import time, but the *actual* engine dialect may differ: in the
+        # Docker container POSTGRES_HOST is set so the constant is True, but
+        # tests override the engine to SQLite. Check the real engine dialect
+        # to stay consistent with the test database.
+        self._use_db_claims = _db_claims_enabled()
         
         # Job processor callback - set by the API layer
         self._processor: Callable[[str, str | None], Awaitable[None]] | None = None
