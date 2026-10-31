@@ -2,7 +2,7 @@ import math
 import os
 import re
 from typing import Any, Optional, Union
-from datetime import datetime
+from datetime import datetime, timezone
 from pydantic import BaseModel, Field
 
 
@@ -279,7 +279,7 @@ class WorkflowBuilder:
         return node_id
 
     def _generate_filename_prefix(self, type_str: str = "T2I") -> str:
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         date_str = now.strftime("%Y-%m-%d")
         time_str = now.strftime("%H-%M-%S")
         return f"{type_str}_{date_str}_{time_str}"

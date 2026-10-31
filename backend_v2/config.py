@@ -533,9 +533,9 @@ def _quarantine_unreadable_config(path: str) -> str | None:
 
     Returns the new path, or None if the move did not happen.
     """
-    import datetime
+    import datetime as _dt
 
-    stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    stamp = _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%d-%H%M%S")
     quarantine = f"{path}.unreadable-{stamp}"
     try:
         os.replace(path, quarantine)
