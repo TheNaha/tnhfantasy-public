@@ -39,7 +39,12 @@ LEGACY_DEPLOY_CONFIG_FIELDS = {
 
 
 def utcnow_iso() -> str:
-    return datetime.now(timezone.utc).replace(tzinfo=timezone.utc).isoformat()
+    """Return the current UTC time as an ISO 8601 string.
+
+    `datetime.now(timezone.utc)` already produces a timezone-aware datetime,
+    so calling `.replace(tzinfo=timezone.utc)` is a no-op — kept minimal.
+    """
+    return datetime.now(timezone.utc).isoformat()
 
 
 def parse_utc_timestamp(raw_value: str | None) -> datetime | None:

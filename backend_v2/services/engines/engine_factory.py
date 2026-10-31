@@ -61,6 +61,11 @@ ENGINE_CACHE_TTL_SECONDS = parse_positive_float(
     os.getenv("COMFY_ENGINE_CACHE_TTL_SECONDS"), 1800.0
 )
 _ENGINE_CACHE: TTLCache = TTLCache(maxsize=128, ttl=ENGINE_CACHE_TTL_SECONDS)
+# Guards the check-then-act on `_ENGINE_CACHE` in `get_engine()`. Without it
+# two concurrent coroutines can both miss the cache and both construct (and
+# load GPU models for) the same InProcessEngine — a resource leak and a
+# wasted ~seconds of model loading on every duplicate race.
+_ENGINE_CACHE_LOCK = threading.Lock()
 
 # Locations to search for .env files
 #
@@ -328,8 +333,11 @@ def get_engine(provider_id: Any, provider: Optional[Any] = None) -> Optional[InP
         provider = provider_id
         provider_id = str(provider.id)
 
-    if provider_id in _ENGINE_CACHE:
-        return _ENGINE_CACHE[provider_id]
+    # Check cache under lock to prevent a race where two threads both see a
+    # cache miss and both construct an engine for the same provider.
+    with _ENGINE_CACHE_LOCK:
+        if provider_id in _ENGINE_CACHE:
+            return _ENGINE_CACHE[provider_id]
 
     if provider is None:
         try:
@@ -927,7 +935,8 @@ def get_engine(provider_id: Any, provider: Optional[Any] = None) -> Optional[InP
 
 def register_engine(provider_id: str, engine: InProcessEngine) -> None:
     """Manually register an in-process engine (e.g. for testing)."""
-    _ENGINE_CACHE[provider_id] = engine
+    with _ENGINE_CACHE_LOCK:
+        _ENGINE_CACHE[provider_id] = engine
 
 
 #: Close tasks awaiting completion. `loop.create_task(close())` on its own holds
@@ -1020,9 +1029,10 @@ def clear_engine_cache() -> None:
     `close_engine_when_idle`. This is the shutdown path — it is also how a
     provider deleted mid-generation eventually frees its client.
     """
-    for engine in list(_ENGINE_CACHE.values()):
-        close_engine_when_idle(engine)
-    _ENGINE_CACHE.clear()
+    with _ENGINE_CACHE_LOCK:
+        for engine in list(_ENGINE_CACHE.values()):
+            close_engine_when_idle(engine)
+        _ENGINE_CACHE.clear()
 
 
 def invalidate_engine(provider_id: str) -> None:
@@ -1035,7 +1045,8 @@ def invalidate_engine(provider_id: str) -> None:
     need invalidating.) The load-balancer health entry goes with it so the
     next dispatch re-probes instead of trusting a verdict for the old config.
     """
-    _stale = _ENGINE_CACHE.pop(provider_id, None)
+    with _ENGINE_CACHE_LOCK:
+        _stale = _ENGINE_CACHE.pop(provider_id, None)
     if _stale is not None:
         # Idle-aware: closes now when nothing is streaming, defers to job
         # completion otherwise. The plain close here used to abort an in-flight
