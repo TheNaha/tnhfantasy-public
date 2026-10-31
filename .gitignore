@@ -100,3 +100,6 @@ ss2.png
 /TNHComfy_LLM_Decision_Brief.md
 /maintenance/
 docs/audit-*.md
+docs/.audit/
+docs/archive/
+docs/maintenance/
