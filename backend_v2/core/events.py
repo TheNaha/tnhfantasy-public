@@ -37,7 +37,7 @@ except ImportError:
 #
 # Payload is a small JSON object: {"event": "<event_type>", "job": {"id": ...}}
 # — kept small because Postgres NOTIFY payloads are capped at 8 KB.
-CROSS_PROCESS_EVENT_CHANNEL = "tnhcomfy_job_events"
+CROSS_PROCESS_EVENT_CHANNEL = "tnhfantasy_job_events"
 
 
 # ---------------------------------------------------------------------------

@@ -1,11 +1,11 @@
 # -*- mode: python ; coding: utf-8 -*-
 """
-PyInstaller spec for the TNHComfy Remote Agent standalone executable.
+PyInstaller spec for the TNHFantasy Remote Agent standalone executable.
 
 Build (Linux) — run it from ``remote_agent/``, not from the repository root:
 
     cd remote_agent
-    pyinstaller --noconfirm --distpath ./dist --workpath ./build tnhcomfy-agent.spec
+    pyinstaller --noconfirm --distpath ./dist --workpath ./build tnhfantasy-agent.spec
 
 The ``cd`` is load-bearing, not a convenience. ``Analysis(["server.py"])`` below
 resolves ``server.py`` against the *current working directory*, and there is no
@@ -85,7 +85,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name="tnhcomfy-agent",
+    name="tnhfantasy-agent",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

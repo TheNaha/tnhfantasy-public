@@ -12,7 +12,7 @@ The card codec (`backend_v2/core/character_cards.py`, 731 lines) is good work: P
 
 The problem is not the codec. It is that **the project is bigger than the card**, and nothing in the product says so.
 
-A TNHComfy character carries, beyond what a card can express:
+A TNHFantasy character carries, beyond what a card can express:
 
 | Beyond the card | Where it lives |
 |---|---|
@@ -68,7 +68,7 @@ Three ideas do most of the work.
 Every export carries a manifest, so import always knows what it is reading:
 
 ```json
-{ "kind": "tnhcomfy-bundle", "version": 1, "exported_at": "...",
+{ "kind": "tnhfantasy-bundle", "version": 1, "exported_at": "...",
   "character_id": "...", "app_version": "...", "includes": ["expressions", "world", "voice"] }
 ```
 
@@ -78,7 +78,7 @@ An ST card has no manifest, and that is how import tells the two apart.
 
 This is the keystone, and it costs one JSON key.
 
-TNHComfy writes `extensions.tnhcomvy = {"character_id": "..."}` into the card it exports. SillyTavern **preserves unknown extensions**, and so does this app's residual blob. So:
+TNHFantasy writes `extensions.tnhcomvy = {"character_id": "..."}` into the card it exports. SillyTavern **preserves unknown extensions**, and so does this app's residual blob. So:
 
 - A card exported from TNHComyu, edited in SillyTavern, and re-imported here is **recognised as the same character** — even though the card itself has no id.
 - A foreign ST card has no such extension → treated as new, and offered "create new" or "merge into <existing>".
@@ -116,7 +116,7 @@ The bugs. Small, local, and they are what a user importing a real card hits firs
 
 | ST field | Today | Plan |
 |---|---|---|
-| `constant` | **dropped** | Map to a keyless entry. TNHComfy's always-on test is *keyless* (`services/rag_pipeline.py:337`, `services/context_builder.py:568`), so an ST `constant: true` entry **with** keys must become keyless to stay always-on. |
+| `constant` | **dropped** | Map to a keyless entry. TNHFantasy's always-on test is *keyless* (`services/rag_pipeline.py:337`, `services/context_builder.py:568`), so an ST `constant: true` entry **with** keys must become keyless to stay always-on. |
 | `enabled` | **dropped** | A disabled entry must not activate. `LorebookEntry` has no such column → **migration 109**: `lorebook_entries.enabled BOOLEAN NOT NULL DEFAULT TRUE`, and the activation query must respect it. |
 | `selective` | **dropped** | With `secondary_keys` dropped, selective matching cannot work. Either map both, or report them as "preserved but not executed". Mapping both is better: store `secondary_keys` on the entry and honour `selective` + `selective_logic` in the activation query. |
 | `secondary_keys` | **dropped** | Store on the entry; used with `selective`. |
@@ -182,7 +182,7 @@ character.tnhzip
   chat.jsonl             optional: the chat history
 ```
 
-**3.2 — The export menu.** `frontend_v2/src/components/characters/CharacterCardExportMenu.jsx` gains a "TNHComfy bundle" entry with checkboxes for what to include (expressions, voice binding, generation settings, world, lorebooks, chat history). The ST entries stay exactly as they are.
+**3.2 — The export menu.** `frontend_v2/src/components/characters/CharacterCardExportMenu.jsx` gains a "TNHFantasy bundle" entry with checkboxes for what to include (expressions, voice binding, generation settings, world, lorebooks, chat history). The ST entries stay exactly as they are.
 
 **3.3 — The export must state what it dropped.** Every export response carries the same three buckets as the import report, so *"exported as a SillyTavern card; 6 expressions, 1 voice model, 1 world and 12 chats could not be carried"* is visible in the UI, not inferred from silence.
 

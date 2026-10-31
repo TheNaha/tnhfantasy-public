@@ -917,11 +917,11 @@ class TestHttpRoundTrip:
         # so it carries its own id in the app's extension namespace. That is
         # what lets a card be recognised as the same character on a LATER
         # import — and what stops an import from silently overwriting one.
-        assert third["data"]["extensions"]["tnhcomfy"]["character_id"] == again.json()["id"]
-        assert payload["data"]["extensions"]["tnhcomfy"]["character_id"] == char_id
-        third["data"]["extensions"].pop("tnhcomfy")
+        assert third["data"]["extensions"]["tnhfantasy"]["character_id"] == again.json()["id"]
+        assert payload["data"]["extensions"]["tnhfantasy"]["character_id"] == char_id
+        third["data"]["extensions"].pop("tnhfantasy")
         expected = json.loads(json.dumps(payload))
-        expected["data"]["extensions"].pop("tnhcomfy")
+        expected["data"]["extensions"].pop("tnhfantasy")
         assert third == expected
 
     def test_json_export_import_round_trip(self, client):

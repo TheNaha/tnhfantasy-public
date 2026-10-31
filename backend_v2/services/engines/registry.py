@@ -175,7 +175,7 @@ ENGINE_SPECS: Dict[str, Dict[str, Any]] = {
         "category": "image",
         "worker_type": "image",
         "capabilities": ["image"],
-        "description": "Dedicated remote GPU server running ComfyUI alongside the TNHComfy Remote Agent sidecar.",
+        "description": "Dedicated remote GPU server running ComfyUI alongside the TNHFantasy Remote Agent sidecar.",
         "engine": "DirectComfyEngine",
         "manages_model_files": True,
         "credentials": [
@@ -421,7 +421,7 @@ ENGINE_SPECS: Dict[str, Dict[str, Any]] = {
         "category": "llm",
         "worker_type": "llm",
         "capabilities": ["llm"],
-        "description": "The TNHComfy LLM container, deployed on any Docker host with a GPU. OpenAI-compatible, speaks the remote_agent service token, and owns a models tree it can list, download into, validate and delete from — 1-to-1 with modal_llm.",
+        "description": "The TNHFantasy LLM container, deployed on any Docker host with a GPU. OpenAI-compatible, speaks the remote_agent service token, and owns a models tree it can list, download into, validate and delete from — 1-to-1 with modal_llm.",
         "engine": "RemoteLLMEngine",
         # True, and it is the parity claim. The sidecar serves /list-models,
         # /download-model, /validate-models, /delete-model, /upload-file and
@@ -450,7 +450,7 @@ ENGINE_SPECS: Dict[str, Dict[str, Any]] = {
         "category": "tts",
         "worker_type": "tts",
         "capabilities": ["tts"],
-        "description": "The TNHComfy TTS container, deployed on any Docker host with a GPU. Speaks the remote_agent service token and owns a storage root it can list, upload to and delete from — 1-to-1 with modal_tts.",
+        "description": "The TNHFantasy TTS container, deployed on any Docker host with a GPU. Speaks the remote_agent service token and owns a storage root it can list, upload to and delete from — 1-to-1 with modal_tts.",
         "engine": "RemoteTTSEngine",
         # False, matching `modal_tts`: a TTS worker's storage root holds audio
         # clips, not a ComfyUI models tree. The engine still has the mixin's full

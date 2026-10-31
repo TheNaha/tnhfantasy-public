@@ -1,8 +1,8 @@
-# TNHComfy — Refine, Unify, Polish (Phased Plan)
+# TNHFantasy — Refine, Unify, Polish (Phased Plan)
 
 ## Context
 
-TNHComfy evolved from a ComfyUI image wrapper into an "AI Fantasy Engine" (Image + Roleplay + Story) over a single-user, filesystem + PostgreSQL (`pgvector`) stack. The vision (`VISION.md`) calls for a *Universal Adapter* worker pattern and *unified* TaskEvent protocol, but the current code does **not** match the vision: there are two incompatible worker stream dialects, a dead parallel provider abstraction, no asset index table, roleplay agentic mode is 100% broken, and there is meaningful repo rot.
+TNHFantasy evolved from a ComfyUI image wrapper into an "AI Fantasy Engine" (Image + Roleplay + Story) over a single-user, filesystem + PostgreSQL (`pgvector`) stack. The vision (`VISION.md`) calls for a *Universal Adapter* worker pattern and *unified* TaskEvent protocol, but the current code does **not** match the vision: there are two incompatible worker stream dialects, a dead parallel provider abstraction, no asset index table, roleplay agentic mode is 100% broken, and there is meaningful repo rot.
 
 This plan is **phased** so the site stays reachable after every phase. **Scope (per user):** refine existing systems, fix bugs, dedupe, improve performance, finish the vision's core pillars, and defer Audio/TTS and multi-tenancy auth. Decisions below were confirmed with the user via interview.
 
@@ -10,7 +10,7 @@ The user runs the stack with:
 ```
 docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile providers up --build -V -d
 ```
-Frontend on `:5174`, backend on `:8002`, db `tnhcomfy-db`. All migrations run automatically at backend startup (`infrastructure/migrations/steps.py`).
+Frontend on `:5174`, backend on `:8002`, db `tnhfantasy-db`. All migrations run automatically at backend startup (`infrastructure/migrations/steps.py`).
 
 ---
 

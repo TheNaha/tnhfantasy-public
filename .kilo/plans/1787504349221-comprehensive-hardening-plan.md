@@ -1,4 +1,4 @@
-# TNHComfy — Consolidated Hardening & Feature-Completeness Plan
+# TNHFantasy — Consolidated Hardening & Feature-Completeness Plan
 
 > **Authoritative.** Consolidates and supersedes: `PLAN.md`, `REMEDIATION_PLAN_v2.md`, `DEMO_GAPS_PLAN.md`, `ROADMAP.md`, and all prior `.kilo/plans/*.md` files. This plan reflects a code audit performed **2026-08-23**.
 

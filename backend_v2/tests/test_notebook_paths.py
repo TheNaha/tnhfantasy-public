@@ -8,8 +8,8 @@ The result was a **hard failure at cell 5**:
 
     ModuleNotFoundError: No module named 'ram_manager'
 
-because cell 5 put `/content/tnhcomfy/remote_agent` on `sys.path` — the
-Colab path — while cell 3 had cloned the repository to `/root/tnhcomfy`, and
+because cell 5 put `/content/tnhfantasy/remote_agent` on `sys.path` — the
+Colab path — while cell 3 had cloned the repository to `/root/tnhfantasy`, and
 `remote_agent` was not where anything was looking for it.
 
 The subtle part is WHY the two disagreed. Cell 3 chose the workspace root by
@@ -119,8 +119,8 @@ class TestTheNotebookIsGenerated:
         """
         module = _load_generator()
         for path in (
-            ROOT / "TNHComfy_Colab_Worker.ipynb",
-            ROOT / "remote_agent" / "TNHComfy_Colab_Worker.ipynb",
+            ROOT / "TNHFantasy_Colab_Worker.ipynb",
+            ROOT / "remote_agent" / "TNHFantasy_Colab_Worker.ipynb",
         ):
             if not path.exists():
                 continue
@@ -236,7 +236,7 @@ class TestNoHardcodedWorkspacePaths:
         for index, source in _cells().items():
             if "from ram_manager import" not in source:
                 continue
-            assert '"/content/tnhcomfy/remote_agent"' not in source, (
+            assert '"/content/tnhfantasy/remote_agent"' not in source, (
                 f"cell {index} puts a hardcoded Colab path on sys.path"
             )
             assert "WORKSPACE_ROOT" in source or "workspace_root" in source, (

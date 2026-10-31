@@ -423,12 +423,12 @@ class TestMultiGPUAndStorageStrategies:
         assert mgr.cache_in_ram is False
 
         # Create a mock modal volume path
-        modal_dir = tmp_path / "mnt_data" / "tnhcomfy" / "llm_models" / "artemis"
+        modal_dir = tmp_path / "mnt_data" / "tnhfantasy" / "llm_models" / "artemis"
         modal_dir.mkdir(parents=True)
         gguf_file = modal_dir / "artemis_31b_q4.gguf"
         gguf_file.write_bytes(b"dummy_weights")
 
-        monkeypatch.setenv("PERSISTENT_STORAGE_PATH", str(tmp_path / "mnt_data" / "tnhcomfy" / "llm_models"))
+        monkeypatch.setenv("PERSISTENT_STORAGE_PATH", str(tmp_path / "mnt_data" / "tnhfantasy" / "llm_models"))
 
         p, mid = mgr._resolve_model_path("artemis_31b_q4")
         assert p == str(gguf_file)

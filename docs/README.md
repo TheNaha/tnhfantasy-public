@@ -1,4 +1,4 @@
-# TNHComfy Documentation
+# TNHFantasy Documentation
 
 ## Table of contents
 
@@ -15,7 +15,7 @@
 
 ## Introduction
 
-TNHComfy is an AI fantasy engine with three pillars — image generation, roleplay chat, and a story sandbox — sharing the World Vault data layer (Characters, Chats, Lorebooks, Stories, Personas, Worlds, Locations, Scenarios, Voices, Memories) in PostgreSQL + pgvector.
+TNHFantasy is an AI fantasy engine with three pillars — image generation, roleplay chat, and a story sandbox — sharing the World Vault data layer (Characters, Chats, Lorebooks, Stories, Personas, Worlds, Locations, Scenarios, Voices, Memories) in PostgreSQL + pgvector.
 
 The backend is FastAPI + SQLModel with no Alembic (migrations are ordered steps in `infrastructure/migrations/steps.py`). The frontend is React 19 + Vite, bun only, on port 5174. Inference runs in-process via `backend_v2/services/engines/`; cloud workers are deployed only with `scripts/deploy.sh`.
 

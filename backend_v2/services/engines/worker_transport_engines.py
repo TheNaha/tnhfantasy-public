@@ -507,7 +507,7 @@ class BeamTTSEngine(_BeamLLMEngineBase):
 
 
 class RemoteLLMEngine(RemoteAgentFileMixin, OpenAICompatLLMEngine):
-    """The self-hosted TNHComfy LLM container.
+    """The self-hosted TNHFantasy LLM container.
 
     Speaks the OpenAI protocol — that is why the container is deployable
     anywhere and fronted by llama.cpp or vLLM — so this is
@@ -655,7 +655,7 @@ def _tts_request_from_workflow(workflow: dict) -> dict:
 
 
 class RemoteTTSEngine(RemoteAgentFileMixin, InProcessEngine):
-    """The self-hosted TNHComfy TTS container.
+    """The self-hosted TNHFantasy TTS container.
 
     A synthesis request is not a progress stream: it is a POST whose useful
     signal is the clip that comes back, so this engine yields exactly the three

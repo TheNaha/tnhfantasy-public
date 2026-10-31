@@ -1072,7 +1072,7 @@ export default function Characters() {
                         type="file"
                         accept={CARD_ACCEPT}
                         multiple
-                        title="Import SillyTavern cards (.png, .json, .charx) or a TNHComfy bundle"
+                        title="Import SillyTavern cards (.png, .json, .charx) or a TNHFantasy bundle"
                         className="hidden"
                         onChange={handleImportCard}
                     />

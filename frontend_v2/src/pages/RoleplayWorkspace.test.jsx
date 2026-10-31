@@ -52,7 +52,7 @@ vi.mock('../components/onboarding/OnboardingWizard', async () => {
 
 describe('RoleplayWorkspace', () => {
     beforeEach(() => {
-        localStorage.setItem('tnhcomfy_setup_complete', 'true');
+        localStorage.setItem('tnhfantasy_setup_complete', 'true');
         mockApi.get.mockResolvedValue([{ id: 'world-1', name: 'Emberfall' }]);
     });
 
@@ -135,7 +135,7 @@ describe('RoleplayWorkspace', () => {
     });
 
     it('shows the first-run wizard when setup is not complete, and does not bring it back', () => {
-        localStorage.removeItem('tnhcomfy_setup_complete');
+        localStorage.removeItem('tnhfantasy_setup_complete');
         const { unmount } = renderWorkspace();
 
         expect(screen.getByRole('dialog', { name: 'Onboarding wizard' })).toBeInTheDocument();

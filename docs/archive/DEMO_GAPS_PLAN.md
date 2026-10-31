@@ -2,12 +2,12 @@
 > stale or superseded when archived and may contradict current code.
 > **Archived. See docs/STATUS.md and docs/archive/README.md.**
 
-> **SUPERSEDED** by `.kilo/plans/1787583794283-tnhcomfy-hardening-plan.md` (2026-08-24 audit). Many "demonstrated gaps" here were debunked — the features are already implemented. Use the new plan as the authoritative source.
+> **SUPERSEDED** by `.kilo/plans/1787583794283-tnhfantasy-hardening-plan.md` (2026-08-24 audit). Many "demonstrated gaps" here were debunked — the features are already implemented. Use the new plan as the authoritative source.
 
 # Feature-Completeness Plan — Eliminating the "Demo" Feel
 
 > Companion to `PLAN.md` (which tracks the original 8-feature roadmap).  
-> Scope: make TNHComfy usable **out-of-box for casual users** while adding **depth for power users**.  
+> Scope: make TNHFantasy usable **out-of-box for casual users** while adding **depth for power users**.  
 > Auth is intentionally out of scope (local single-user AI studio). All paths below assume the standard `docker compose --profile providers` stack.
 
 ## Problem diagnosis (evidence)

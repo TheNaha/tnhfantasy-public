@@ -108,7 +108,7 @@ def migrate(
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Migrate a TNHComfy SQLite database to PostgreSQL")
+    parser = argparse.ArgumentParser(description="Migrate a TNHFantasy SQLite database to PostgreSQL")
     parser.add_argument(
         "--sqlite-url",
         default=os.getenv("COMFY_SQLITE_DATABASE_URL"),

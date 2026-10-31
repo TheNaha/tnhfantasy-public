@@ -1,8 +1,8 @@
-# TNHComfy Codebase Hardening & Feature Completeness Plan
+# TNHFantasy Codebase Hardening & Feature Completeness Plan
 
 ## Current State Summary
 
-TNHComfy is a **Comprehensive AI Fantasy Engine** with three pillars: Image Generation, Roleplay Chat, and Story Sandbox. The working tree contains substantial recent changes (~1500 insertions across 25 files) adding group chat support, TTS, swipe generation, workflow builder consolidation, and story parsing. However, these additions are currently **broken or incomplete**, with 14 failing frontend tests and multiple blocking bugs.
+TNHFantasy is a **Comprehensive AI Fantasy Engine** with three pillars: Image Generation, Roleplay Chat, and Story Sandbox. The working tree contains substantial recent changes (~1500 insertions across 25 files) adding group chat support, TTS, swipe generation, workflow builder consolidation, and story parsing. However, these additions are currently **broken or incomplete**, with 14 failing frontend tests and multiple blocking bugs.
 
 ## Phase 1: Fix Blocking Bugs (Do First)
 

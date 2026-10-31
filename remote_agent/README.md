@@ -7,7 +7,7 @@ downloads models, downloads sidecars, validates storage, and uploads results
 *through* this agent instead of hitting ComfyUI directly — giving the same
 storage semantics as the Modal/Beam workers.
 
-A standalone executable (`tnhcomfy-agent` on Linux, `tnhcomfy-agent.exe` on
+A standalone executable (`tnhfantasy-agent` on Linux, `tnhfantasy-agent.exe` on
 Windows) is provided so you do **not** need Docker or Python installed on the
 ComfyUI host.
 
@@ -20,14 +20,14 @@ ComfyUI host.
      cd remote_agent
      pip install -r build-requirements.txt
      pip install -r requirements.txt
-     pyinstaller --noconfirm --distpath ./dist --workpath ./build tnhcomfy-agent.spec
+     pyinstaller --noconfirm --distpath ./dist --workpath ./build tnhfantasy-agent.spec
      ```
-     → `dist/tnhcomfy-agent`
+     → `dist/tnhfantasy-agent`
    - **Windows**: grab the `windows` artifact from the same workflow (the
      `.spec` cross-compiles cleanly on a Windows runner). To build locally on
      Windows: install Python 3.13, `pip install -r build-requirements.txt` and
      the runtime pins, then run the same `pyinstaller` command →
-     `dist\tnhcomfy-agent.exe`.
+     `dist\tnhfantasy-agent.exe`.
 
 2. **Configure**
    ```bash
@@ -183,9 +183,9 @@ the same llama-server from the same GGUFs. `model` and `tts` do not, and carryin
 a CUDA runtime they never use would allocate a card on a rig that may have none.
 
 ```bash
-docker build -f remote_agent/Dockerfile -t tnhcomfy-agent ..            # model / tts
+docker build -f remote_agent/Dockerfile -t tnhfantasy-agent ..            # model / tts
 docker build -f remote_agent/Dockerfile \
-    --build-arg CUDA_RUNTIME=runtime-llama -t tnhcomfy-agent-llm ..     # llm
+    --build-arg CUDA_RUNTIME=runtime-llama -t tnhfantasy-agent-llm ..     # llm
 ```
 
 Two notes on the CUDA base, both found by building rather than by reading: it
@@ -213,15 +213,15 @@ would drift, a second copy of the parser is not.
 
 ## Google Colab
 
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/TheNaha/TNHComfy/blob/main/remote_agent/TNHComfy_Colab_Worker.ipynb)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/TheNaha/TNHFantasy/blob/main/remote_agent/TNHFantasy_Colab_Worker.ipynb)
 
-A ready-to-use Jupyter Notebook is provided at [`remote_agent/TNHComfy_Colab_Worker.ipynb`](TNHComfy_Colab_Worker.ipynb) (and copied to repo root [`TNHComfy_Colab_Worker.ipynb`](../TNHComfy_Colab_Worker.ipynb)). It provides a graphical Colab Form with step-by-step cells for:
+A ready-to-use Jupyter Notebook is provided at [`remote_agent/TNHFantasy_Colab_Worker.ipynb`](TNHFantasy_Colab_Worker.ipynb) (and copied to repo root [`TNHFantasy_Colab_Worker.ipynb`](../TNHFantasy_Colab_Worker.ipynb)). It provides a graphical Colab Form with step-by-step cells for:
 1. **Google Drive Persistence & GPU Detection**: Mounts `/content/drive/MyDrive` to persist NetBird configuration, bearer tokens, and model directories.
-2. **Private Repository Access**: Clones the private TNHComfy repository using your GitHub Personal Access Token (`GITHUB_TOKEN` from form or Colab Secrets).
+2. **Private Repository Access**: Clones the private TNHFantasy repository using your GitHub Personal Access Token (`GITHUB_TOKEN` from form or Colab Secrets).
 3. **NetBird by Default with Static IP**: Saves `/var/lib/netbird` to Google Drive upon initial setup so the setup key is only required **once**. On subsequent runs, it reconnects automatically with the **same static WireGuard IP** without burning peer licenses.
 4. **Google Drive ComfyUI Integration**: Directly mounts and runs your existing ComfyUI workspace from Google Drive (`/content/drive/MyDrive/comfyui` copied from Modal). All checkpoints, LoRAs, VAEs, and custom nodes are immediately available without re-downloading.
 5. **Multi-Model LLM Parity**: Serves curated roleplay (`rp`) and utility/tool (`util`) models matching `backend_v2/modal_llm/models.json` via CUDA-accelerated `llama-server`.
-6. **Zero Duplicate Secrets**: `HF_TOKEN` and `CIVITAI_TOKEN` are resolved on-demand directly from your TNHComfy backend per request.
+6. **Zero Duplicate Secrets**: `HF_TOKEN` and `CIVITAI_TOKEN` are resolved on-demand directly from your TNHFantasy backend per request.
 7. **Connection Card & Keep-Alive**: Renders a styled HTML card with connection parameters, and includes an inaudible audio context keep-alive to prevent Colab idle timeouts.
 8. **Automatic provider registration**: The notebook creates (or updates) the
    provider row on your backend itself, using a provider id derived from the
@@ -338,7 +338,7 @@ by default in most agents of this shape, and `/delete-model`, `/delete-file` and
    agentctl.bat
    curl http://localhost:8001/health
    ```
-2. **Windows Defender Firewall** — allow `tnhcomfy-agent.exe` (or port 8001) on
+2. **Windows Defender Firewall** — allow `tnhfantasy-agent.exe` (or port 8001) on
    *Private* networks so the backend machine can reach it.
 3. On the **backend orchestrator** machine, point
    `.env.remote-comfy` (used by the `provider-remote-comfy` worker) at your

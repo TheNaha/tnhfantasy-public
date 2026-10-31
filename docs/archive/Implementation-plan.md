@@ -2,10 +2,10 @@
 > stale or superseded when archived and may contradict current code.
 > **Archived. See docs/STATUS.md and docs/archive/README.md.**
 
-# Implementation Plan: TNHComfy "Demo to Pro" & Future Frontiers
+# Implementation Plan: TNHFantasy "Demo to Pro" & Future Frontiers
 
 ## Goal Description
-This plan outlines the strategic steps to evolve TNHComfy from an image generation wrapper with "demo-like" new features into a polished, feature-complete **Comprehensive AI Fantasy Engine**. It addresses immediate technical debt, significantly expands Quality-of-Life (QoL) features for the newworkspaces, and maps out the integration of massive future capabilities (TTS, RAG, AI Parsing).
+This plan outlines the strategic steps to evolve TNHFantasy from an image generation wrapper with "demo-like" new features into a polished, feature-complete **Comprehensive AI Fantasy Engine**. It addresses immediate technical debt, significantly expands Quality-of-Life (QoL) features for the newworkspaces, and maps out the integration of massive future capabilities (TTS, RAG, AI Parsing).
 
 Once approved, the first execution step will be to formally document these future frontiers into `PLAN.md` and `VISION.md` at the project root for all future agents to reference.
 

@@ -7,7 +7,7 @@ x-bounded-logging: &bounded-logging
 services:
   db:
     image: pgvector/pgvector:pg16
-    container_name: tnhcomfy-db
+    container_name: tnhfantasy-db
     environment:
       - POSTGRES_USER=${POSTGRES_USER:-comfy}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-comfy}
@@ -15,7 +15,7 @@ services:
     volumes:
       - ./data/pgdata:/var/lib/postgresql/data
     networks:
-      - tnhcomfy
+      - tnhfantasy
     restart: unless-stopped
     logging: *bounded-logging
     # The one service here with neither. Docker's default /dev/shm is 64 MiB,
@@ -37,7 +37,7 @@ services:
 
   backend_v2:
     build: ./backend_v2
-    container_name: tnhcomfy-backend
+    container_name: tnhfantasy-backend
     depends_on:
       db:
         condition: service_healthy
@@ -134,12 +134,12 @@ services:
       # rebuild-then-verify step, not a compose edit:
       #   1. docker compose -f docker-compose.yml -f docker-compose.dev.yml build backend_v2
       #   2. docker compose ... up -d backend_v2   (no PYTHONPATH)
-      #   3. docker exec tnhcomfy-backend python3 -c "import modal; print(modal.__file__)"
+      #   3. docker exec tnhfantasy-backend python3 -c "import modal; print(modal.__file__)"
       #      -> .../site-packages/modal/__init__.py, not /data/modal_pkg/...
       #   4. delete this line
       - PYTHONPATH=/data/modal_pkg
     networks:
-      - tnhcomfy
+      - tnhfantasy
       - metrics
       - proxy
     restart: unless-stopped
@@ -164,7 +164,7 @@ services:
     build:
       context: ./frontend_v2
       target: prod
-    container_name: tnhcomfy-frontend
+    container_name: tnhfantasy-frontend
     depends_on:
       backend_v2:
         condition: service_healthy
@@ -214,7 +214,7 @@ services:
       - homepage.href=http://comfy.lan.thenaha.my.id/
       - homepage.description=Image generation service
     networks:
-      - tnhcomfy
+      - tnhfantasy
       - proxy
     restart: unless-stopped
     healthcheck:
@@ -242,7 +242,7 @@ services:
   #   build:
   #     context: .
   #     dockerfile: remote_agent/Dockerfile
-  #   container_name: tnhcomfy-remote-agent
+  #   container_name: tnhfantasy-remote-agent
   #   environment:
   #     - DATA_DIR=/models
   #     - PORT=8001
@@ -277,8 +277,8 @@ services:
   # on a plain `up` exactly as the comment above always intended.
 
 networks:
-  tnhcomfy:
-    name: tnhcomfy
+  tnhfantasy:
+    name: tnhfantasy
     driver: bridge
   metrics:
     name: metrics

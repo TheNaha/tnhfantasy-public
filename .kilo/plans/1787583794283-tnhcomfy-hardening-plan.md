@@ -1,4 +1,4 @@
-# TNHComfy — Feature-Completeness & Hardening Plan (2026-08-24)
+# TNHFantasy — Feature-Completeness & Hardening Plan (2026-08-24)
 
 > **Status**: Implementation-ready. Based on a live code audit (tests run, API checked, stack inspected).
 > **Scope**: Fix genuine remaining issues, validate runtime behavior, reconcile git state, retire stale docs.
@@ -17,7 +17,7 @@
 | Gallery infinite scroll fixes | Mobile jitter + phantom scrollbar + random sort reordering | **Both fixed** (2026-08-25) |
 
 ### Stack state
-- Containers already running: `tnhcomfy-db` (pgvector/pg16), `tnhcomfy-backend` (:8002), `tnhcomfy-frontend` (:5174), 5 provider containers (3 modal + llm-local + direct-url).
+- Containers already running: `tnhfantasy-db` (pgvector/pg16), `tnhfantasy-backend` (:8002), `tnhfantasy-frontend` (:5174), 5 provider containers (3 modal + llm-local + direct-url).
 - LLM provider `llm-local` is enabled + default. Image provider `modal-zetsuke` is enabled.
 - `.env` uses SQLite but compose overrides to PostgreSQL — running stack uses PG.
 - E2E CI already uses `pgvector/pgvector:pg16` (fixed in HEAD commit `b61538d`).
@@ -138,7 +138,7 @@ Then walk each pillar:
 - [ ] Comic export real image panels (see 2B)
 
 **2A. Chat Workspace (Roleplay)** — Validated at runtime via API checks and navigation E2E ✅
-- Stack running: `tnhcomfy-db` (pgvector/pg16), `tnhcomfy-backend` (:8002), `tnhcomfy-frontend` (:5174), 5 providers
+- Stack running: `tnhfantasy-db` (pgvector/pg16), `tnhfantasy-backend` (:8002), `tnhfantasy-frontend` (:5174), 5 providers
 - `/api/health` → ok. `/api/v2/providers/` → 5 providers. `/api/v2/llm/providers` → llm-local enabled as default
 - Navigation E2E: 14/14 pass (all routes load: Dashboard, Chat, Story, Characters, Providers, Settings, etc.)
 - E2E specs exist for: roleplay, chat-nuances, story-sandbox, story-reader, world-vault, characters, memories, locations, campaigns, scenarios, voices, settings, providers, model-manager, navigation, etc.

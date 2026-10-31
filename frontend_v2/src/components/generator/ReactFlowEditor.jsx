@@ -43,7 +43,7 @@ export default function ReactFlowEditor({ providerId, onGraphChange }) {
   // Load initial state from local storage
   const [initialNodes, initialEdges] = useMemo(() => {
     try {
-      const saved = localStorage.getItem('tnh-comfy-workflow');
+      const saved = localStorage.getItem('tnh-fantasy-workflow');
       if (saved) {
         const parsed = JSON.parse(saved);
         if (parsed.nodes && parsed.edges) return [parsed.nodes, parsed.edges];
@@ -79,7 +79,7 @@ export default function ReactFlowEditor({ providerId, onGraphChange }) {
   const persistGraph = React.useCallback(() => {
     const { nodes: latestNodes, edges: latestEdges } = latestGraphRef.current;
     try {
-      localStorage.setItem('tnh-comfy-workflow', JSON.stringify({ nodes: latestNodes, edges: latestEdges }));
+      localStorage.setItem('tnh-fantasy-workflow', JSON.stringify({ nodes: latestNodes, edges: latestEdges }));
     } catch (e) {
       console.warn('Failed to persist workflow to localStorage', e);
     }

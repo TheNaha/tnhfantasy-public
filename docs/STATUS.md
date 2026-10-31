@@ -1,4 +1,4 @@
-# TNHComfy — Project Status
+# TNHFantasy — Project Status
 
 **The single authoritative status document.** Everything here was verified
 against the code on **2026-10-10**, not carried over from an earlier plan.
@@ -41,7 +41,7 @@ one-account-one-container policy. Three pillars over one World Vault data layer
 > workers were folded into in-process engines; `provider_core` relocated to
 > `remote_agent/provider_core`. `EventType.PROVIDER_CONTAINER_STATUS`,
 > `PROVIDER_DEPLOY_*`, the discovery/health/deploy worker HTTP endpoints, and the
-> `tnhcomfy-{ID}` container-naming convention are all gone.
+> `tnhfantasy-{ID}` container-naming convention are all gone.
 
 Conventions live in `AGENTS.md` and are worth reading before changing anything:
 error handling via the `ComfyError` hierarchy, `metadata_` in Python and
@@ -76,7 +76,7 @@ deleting code without updating its consumers. See the entry below.
 > workers were folded into in-process engines; `provider_core` relocated to
 > `remote_agent/provider_core`. `EventType.PROVIDER_CONTAINER_STATUS`,
 > `PROVIDER_DEPLOY_*`, the discovery/health/deploy worker HTTP endpoints, and the
-> `tnhcomfy-{ID}` container-naming convention are all gone. `COMFY_USE_IN_PROCESS_ENGINES`
+> `tnhfantasy-{ID}` container-naming convention are all gone. `COMFY_USE_IN_PROCESS_ENGINES`
 > no longer exists — in-process is the only runtime.
 
 > **The "known flaky" backend test was not flaky.** This section previously carried
@@ -307,7 +307,7 @@ you ask for.
 **Re-import merges instead of duplicating.** Re-importing a card used to
 INSERT a second character with the same name, every time, and nothing said so.
 A card exported from this app carries the character's id in the app's own
-`data.extensions.tnhcomfy`, and SillyTavern preserves unknown extensions —
+`data.extensions.tnhfantasy`, and SillyTavern preserves unknown extensions —
 so a card that has been through SillyTavern still says which character it
 is. A re-import UPDATES it.
 

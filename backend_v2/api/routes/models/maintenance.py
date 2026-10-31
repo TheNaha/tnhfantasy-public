@@ -119,7 +119,7 @@ def list_model_tags(session: Session, model_id: str) -> list[dict]:
 
 
 def _civitai_headers() -> dict[str, str]:
-    headers = {"User-Agent": "TNHComfy/1.0"}
+    headers = {"User-Agent": "TNHFantasy/1.0"}
     token = os.getenv("CIVITAI_TOKEN", "").strip()
     if token:
         headers["Authorization"] = f"Bearer {token}"

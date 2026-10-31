@@ -1,7 +1,7 @@
 # Codebase Hardening & Vision Alignment
 
 ## Current State
-TNHComfy has a working multimodal foundation: PostgreSQL + pgvector, FastAPI backend, React frontend, Modal provider containers, and a complete World Vault schema. The agentic orchestrator, context builder, and streaming infrastructure are functional. There are critical bugs, missing integrations, code duplication, and performance issues blocking the VISION.
+TNHFantasy has a working multimodal foundation: PostgreSQL + pgvector, FastAPI backend, React frontend, Modal provider containers, and a complete World Vault schema. The agentic orchestrator, context builder, and streaming infrastructure are functional. There are critical bugs, missing integrations, code duplication, and performance issues blocking the VISION.
 
 ---
 

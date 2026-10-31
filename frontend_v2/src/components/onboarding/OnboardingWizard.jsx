@@ -89,7 +89,7 @@ export default function OnboardingWizard({ onClose }) {
                     {step.id === 'welcome' && (
                         <div className="space-y-3 text-gray-400 text-sm leading-relaxed">
                             <p>
-                                TNHComfy is your private AI fantasy engine — unrestricted image
+                                TNHFantasy is your private AI fantasy engine — unrestricted image
                                 generation, immersive roleplay chatbots, and interactive story
                                 crafting, all in one place.
                             </p>

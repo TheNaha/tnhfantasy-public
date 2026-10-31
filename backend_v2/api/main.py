@@ -112,7 +112,7 @@ def _warn_if_multiple_processes() -> None:
 
     Multi-worker is now supported: job dispatch is safe under `FOR UPDATE
     SKIP LOCKED`, and WebSocket events cross processes via the Postgres
-    NOTIFY bus (`tnhcomfy_job_events`) — each worker's `WebSocketManager`
+    NOTIFY bus (`tnhfantasy_job_events`) — each worker's `WebSocketManager`
     LISTENs on the channel and re-broadcasts to its local Socket.IO clients.
 
     Boot-time side effects (migrations, scheduler, asset migration, job

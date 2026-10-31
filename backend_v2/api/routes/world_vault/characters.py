@@ -441,7 +441,7 @@ def _card_identity(char_data: dict) -> str | None:
     """The id of the character this card came from, if it says.
 
     A card exported from this app carries the character id in the app's own
-    `data.extensions.tnhcomfy` namespace. SillyTavern preserves unknown
+    `data.extensions.tnhfantasy` namespace. SillyTavern preserves unknown
     extensions, so a card that has been through SillyTavern still carries it —
     which is what lets a re-import UPDATE the character instead of creating a
     second one with the same name.
@@ -636,7 +636,7 @@ def analyze_character_card_import(
     filename = file.filename or ""
     if not filename.lower().endswith(CARD_FILE_SUFFIXES):
         raise ValidationError(
-            "Only PNG, JSON, CHARX and TNHComfy bundle files are supported"
+            "Only PNG, JSON, CHARX and TNHFantasy bundle files are supported"
         )
     payload = read_upload_file_bounded(file, MAX_CARD_BYTES)
     if not payload:
@@ -719,7 +719,7 @@ async def commit_character_card_import(
     filename = file.filename or ""
     if not filename.lower().endswith(CARD_FILE_SUFFIXES):
         raise ValidationError(
-            "Only PNG, JSON, CHARX and TNHComfy bundle files are supported"
+            "Only PNG, JSON, CHARX and TNHFantasy bundle files are supported"
         )
     payload = read_upload_file_bounded(file, MAX_CARD_BYTES)
     if not payload:
@@ -783,7 +783,7 @@ def import_character_card(
     filename = file.filename or ""
     if not filename.lower().endswith(CARD_FILE_SUFFIXES):
         raise ValidationError(
-            "Only PNG, JSON, CHARX and TNHComfy bundle files are supported"
+            "Only PNG, JSON, CHARX and TNHFantasy bundle files are supported"
         )
 
     # Bounded read: a card is a few hundred KB, so a huge body is refused after
@@ -1419,7 +1419,7 @@ def export_character(
     export_format: str = Query(
         default="default",
         alias="format",
-        description="default/v2: PNG with chara + ccv3 chunks. v3: canonical V3 spec in ccv3. json: plain JSON card. charx: ZIP card with avatar assets. bundle: the TNHComfy bundle, which carries what a card cannot.",
+        description="default/v2: PNG with chara + ccv3 chunks. v3: canonical V3 spec in ccv3. json: plain JSON card. charx: ZIP card with avatar assets. bundle: the TNHFantasy bundle, which carries what a card cannot.",
     ),
     include: str = Query(
         default="",
@@ -1428,7 +1428,7 @@ def export_character(
     session: Session = Depends(get_session),
     character_repo: CharacterRepository = Depends(get_character_repo),
 ):
-    """Export a character as a SillyTavern card, or as a TNHComfy bundle.
+    """Export a character as a SillyTavern card, or as a TNHFantasy bundle.
 
     PNG exports always carry the backward-compatible `chara` chunk plus the V3
     `ccv3` chunk, so old and new clients both read the same file. Fields with no
@@ -1439,7 +1439,7 @@ def export_character(
     fixed vocabulary; this app's characters have expression image sets, a
     voice binding, a world with locations, a lorebook library, a gallery and
     chats. The bundle carries those, and the card alongside, so one file is
-    both a SillyTavern card and a complete TNHComfy character.
+    both a SillyTavern card and a complete TNHFantasy character.
     """
     character = character_repo.get(character_id)
     if not character:

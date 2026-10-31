@@ -1,4 +1,4 @@
-"""The TNHComfy character bundle — a native export that is not a card.
+"""The TNHFantasy character bundle — a native export that is not a card.
 
 A SillyTavern card has a small, fixed vocabulary: some prose, a greeting, an
 example, an embedded lorebook, an avatar. This app's characters carry more
@@ -41,7 +41,7 @@ from core.character_cards import (
     parse_png_chunks,
 )
 
-BUNDLE_KIND = "tnhcomfy-bundle"
+BUNDLE_KIND = "tnhfantasy-bundle"
 BUNDLE_VERSION = 1
 BUNDLE_SUFFIX = ".tnhzip"
 
@@ -59,7 +59,7 @@ BUNDLE_SECTIONS = (
 # The app's own namespace inside a card's `data.extensions`. SillyTavern
 # preserves unknown extensions, so a card that has been through SillyTavern
 # still carries the identity of the character it came from.
-APP_EXTENSION_KEY = "tnhcomfy"
+APP_EXTENSION_KEY = "tnhfantasy"
 
 
 def app_extension(character_id: str) -> dict[str, Any]:

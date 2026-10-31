@@ -70,15 +70,15 @@ models/models/ultralytics/bbox/hand_yolov8n.pt
 models/models/ultralytics/seg/person_yolov8n-seg.pt
 models/models/upscale_models/RealESRGAN_x4plus_anime_6B.pth
 models/models/upscale_models/RealESRGAN_x4plus.pth
-remote_agent/build/tnhcomfy-agent/Analysis-00.toc
-remote_agent/build/tnhcomfy-agent/base_library.zip
-remote_agent/build/tnhcomfy-agent/EXE-00.toc
-remote_agent/build/tnhcomfy-agent/PKG-00.toc
-remote_agent/build/tnhcomfy-agent/PYZ-00.pyz
-remote_agent/build/tnhcomfy-agent/PYZ-00.toc
-remote_agent/build/tnhcomfy-agent/tnhcomfy-agent.pkg
-remote_agent/build/tnhcomfy-agent/warn-tnhcomfy-agent.txt
-remote_agent/build/tnhcomfy-agent/xref-tnhcomfy-agent.html
+remote_agent/build/tnhfantasy-agent/Analysis-00.toc
+remote_agent/build/tnhfantasy-agent/base_library.zip
+remote_agent/build/tnhfantasy-agent/EXE-00.toc
+remote_agent/build/tnhfantasy-agent/PKG-00.toc
+remote_agent/build/tnhfantasy-agent/PYZ-00.pyz
+remote_agent/build/tnhfantasy-agent/PYZ-00.toc
+remote_agent/build/tnhfantasy-agent/tnhfantasy-agent.pkg
+remote_agent/build/tnhfantasy-agent/warn-tnhfantasy-agent.txt
+remote_agent/build/tnhfantasy-agent/xref-tnhfantasy-agent.html
 # Playwright e2e output. The html reporter writes index.html *and* data/*.zip
 # (traces, because playwright.config.js sets trace: 'on-first-retry'), so the
 # single-file rules these replace left captured page content unignored.

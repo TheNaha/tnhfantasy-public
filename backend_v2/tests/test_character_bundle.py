@@ -1,4 +1,4 @@
-"""The TNHComfy character bundle.
+"""The TNHFantasy character bundle.
 
 A SillyTavern card has a small, fixed vocabulary. This app's characters
 carry expression image sets, a voice binding, world membership with its
@@ -10,7 +10,7 @@ character as this app understands it, with the card alongside so it can still
 go to SillyTavern.
 
 It also carries the IDENTITY — the character id, in the card's own
-`data.extensions.tnhcomfy`. SillyTavern preserves unknown extensions, so a
+`data.extensions.tnhfantasy`. SillyTavern preserves unknown extensions, so a
 card that has been through SillyTavern still knows which character it came
 from, and a re-import can UPDATE that character instead of creating a second
 one.
@@ -60,7 +60,7 @@ class TestBundleExport:
         assert "tnhzip" in resp.headers["content-disposition"]
 
         manifest = _manifest(resp.content)
-        assert manifest["kind"] == "tnhcomfy-bundle"
+        assert manifest["kind"] == "tnhfantasy-bundle"
         assert manifest["character_id"] == char["id"]
         assert manifest["name"] == char["name"]
 
@@ -150,7 +150,7 @@ class TestIdentity:
         char = _seed_character(client)
         resp = client.get(f"/api/v2/characters/{char['id']}/export?format=json")
         card = resp.json()
-        assert card["data"]["extensions"]["tnhcomfy"]["character_id"] == char["id"]
+        assert card["data"]["extensions"]["tnhfantasy"]["character_id"] == char["id"]
 
     def test_the_identity_is_not_carried_twice(self, client):
         """It is written on every export and kept out of the residual, so a
@@ -158,11 +158,11 @@ class TestIdentity:
         char = _seed_character(client)
         resp = client.get(f"/api/v2/characters/{char['id']}/export?format=json")
         card = resp.json()
-        assert card["data"]["extensions"]["tnhcomfy"] == {"character_id": char["id"]}
+        assert card["data"]["extensions"]["tnhfantasy"] == {"character_id": char["id"]}
 
         # And re-exporting is stable.
         again = client.get(f"/api/v2/characters/{char['id']}/export?format=json").json()
-        assert again["data"]["extensions"]["tnhcomfy"] == card["data"]["extensions"]["tnhcomfy"]
+        assert again["data"]["extensions"]["tnhfantasy"] == card["data"]["extensions"]["tnhfantasy"]
 
 
 class TestBundleDetection:

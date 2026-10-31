@@ -38,7 +38,7 @@ dist/
 # binary, and the frontend image runs `npm run build` inside the container.
 #
 # Measured with these absent: 57.9 MB build context, of which 22.2 MB was
-# `remote_agent/build/.../tnhcomfy-agent.pkg`, 6.6 MB `PYZ-00.pyz` and 3.1 MB
+# `remote_agent/build/.../tnhfantasy-agent.pkg`, 6.6 MB `PYZ-00.pyz` and 3.1 MB
 # `frontend_v2/.vite/deps/*.map` — 44 MB of 58 MB shipped to the daemon on every
 # remote-agent build so it could be discarded at the first instruction.
 remote_agent/build/

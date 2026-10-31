@@ -101,7 +101,7 @@ class TestMetricsOutput:
     def test_generate_metrics_contains_app_info(self):
         output = metrics.generate_metrics().decode("utf-8")
         assert "app_info" in output
-        assert "tnhcomfy" in output
+        assert "tnhfantasy" in output
 
     def test_generate_metrics_contains_http_metrics(self):
         metrics.track_request("GET", "/test", 200, 0.01)

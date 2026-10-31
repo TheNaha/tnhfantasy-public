@@ -117,7 +117,7 @@ class TestConvenienceFunctions:
             assert response.status_code == 200
 
 
-_PROVIDER_HOST = "tnhcomfy-modal-zetsuke"
+_PROVIDER_HOST = "tnhfantasy-modal-zetsuke"
 
 
 class TestProviderTokenOnStreamingRequests:
@@ -333,8 +333,8 @@ class TestProviderHostLookupDoesNotTouchTheDatabase:
 
         assert http_client.load_known_provider_hosts(force=True) is None
 
-        http_client.publish_provider_host("tnhcomfy-Modal-Zetsuke:8000")
+        http_client.publish_provider_host("tnhfantasy-Modal-Zetsuke:8000")
 
         published = http_client.published_known_provider_hosts()
         assert published is not None
-        assert "tnhcomfy-modal-zetsuke:8000" in published
+        assert "tnhfantasy-modal-zetsuke:8000" in published

@@ -39,13 +39,13 @@ for net in metrics proxy; do
   fi
 done
 
-# `tnhcomfy` is NOT external — compose creates and owns it. It used to be in the
+# `tnhfantasy` is NOT external — compose creates and owns it. It used to be in the
 # loop above, which meant every `up` warned that an existing network was not
 # created by compose. Check it for information only; never create it.
-if docker network inspect tnhcomfy >/dev/null 2>&1; then
-  ok "network 'tnhcomfy' exists (compose-managed; safe to delete while stopped)"
+if docker network inspect tnhfantasy >/dev/null 2>&1; then
+  ok "network 'tnhfantasy' exists (compose-managed; safe to delete while stopped)"
 else
-  echo "  note 'tnhcomfy' not present yet; compose will create it on first up"
+  echo "  note 'tnhfantasy' not present yet; compose will create it on first up"
 fi
 
 echo

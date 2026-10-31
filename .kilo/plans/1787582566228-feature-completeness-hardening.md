@@ -1,4 +1,4 @@
-# TNHComfy — Feature-Completeness & Hardening Plan
+# TNHFantasy — Feature-Completeness & Hardening Plan
 
 > **Status:** Implementation-ready. Supersedes `ROADMAP.md` (2026-08-24), which is **stale** — most of its Track A (P0/P1/P2) backend items are already fixed in HEAD. This plan is based on a fresh code audit + live test runs performed 2026-08-24.
 

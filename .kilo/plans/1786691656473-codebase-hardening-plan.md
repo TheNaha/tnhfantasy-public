@@ -1,4 +1,4 @@
-# TNHComfy Codebase Hardening & Expansion Plan
+# TNHFantasy Codebase Hardening & Expansion Plan
 
 ## Goal
 Refine existing systems, fix bugs, remove duplication, improve test coverage, and strengthen cross-pillar integration so the project reliably delivers the "AI Fantasy Engine" vision (Image Gen + Roleplay + Story Sandbox + World Vault).

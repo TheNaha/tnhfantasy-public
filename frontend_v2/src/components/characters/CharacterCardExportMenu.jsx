@@ -169,7 +169,7 @@ export default function CharacterCardExportMenu({ character, onExport, disabled 
                                 ))}
                             </ul>
                             <p className="mt-1.5 text-2xs leading-4 text-gray-500">
-                                The TNHComfy bundle carries these.
+                                The TNHFantasy bundle carries these.
                             </p>
                         </div>
                     )}

@@ -72,7 +72,7 @@ def _derive_key(secret: str) -> bytes:
     digest from ever being usable as a key in any other context that derives one
     from the same passphrase.
     """
-    digest = hashlib.sha256(f"tnhcomfy/credential-crypto/v1\x00{secret}".encode("utf-8")).digest()
+    digest = hashlib.sha256(f"tnhfantasy/credential-crypto/v1\x00{secret}".encode("utf-8")).digest()
     return base64.urlsafe_b64encode(digest)
 
 

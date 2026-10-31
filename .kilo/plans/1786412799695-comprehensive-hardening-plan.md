@@ -1,8 +1,8 @@
-# TNHComfy — Comprehensive Hardening & Vision Alignment Plan
+# TNHFantasy — Comprehensive Hardening & Vision Alignment Plan
 
 ## Current State Summary
 
-TNHComfy is a mature, multi-modal AI Fantasy Engine with three working pillars (Image Gen, Roleplay, Story Sandbox) backed by PostgreSQL + pgvector, a unified TaskEvent provider protocol, and a DB-backed asset indexer. The Universal Adapter Pattern is implemented. The codebase is functional but carries accumulated tech debt: race conditions, deprecated APIs, code duplication, large frontend monoliths, and performance hot paths that will degrade as the user base and content grow.
+TNHFantasy is a mature, multi-modal AI Fantasy Engine with three working pillars (Image Gen, Roleplay, Story Sandbox) backed by PostgreSQL + pgvector, a unified TaskEvent provider protocol, and a DB-backed asset indexer. The Universal Adapter Pattern is implemented. The codebase is functional but carries accumulated tech debt: race conditions, deprecated APIs, code duplication, large frontend monoliths, and performance hot paths that will degrade as the user base and content grow.
 
 ## Goals
 
@@ -92,7 +92,7 @@ TNHComfy is a mature, multi-modal AI Fantasy Engine with three working pillars (
 
 - Backend: `docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile providers up --build -V -d` succeeds; `curl http://localhost:8002/api/health` returns 200.
 - Frontend: `http://localhost:5174` loads; React Query devtools show no stale cache errors.
-- Workers: `tnhcomfy-modal-zetsuke` and `tnhcomfy-llm-local` health checks pass.
+- Workers: `tnhfantasy-modal-zetsuke` and `tnhfantasy-llm-local` health checks pass.
 - E2E: Create chat → send message → trigger agentic image → verify image appears in chat + roleplay gallery.
 - Story: Create story → continue → branch → illustrate → verify images appear in story gallery.
 - Performance: Backend startup <15s; LB state writes <1 per minute under load; asset migration skips walk on warm starts.

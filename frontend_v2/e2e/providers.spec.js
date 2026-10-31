@@ -197,7 +197,7 @@ test.describe('Provider Management (Module E)', () => {
     test('Send Ping Test reaches the real modal worker container', async ({ page }) => {
         await page.goto('/providers');
 
-        // tnhcomfy-modal-zetsuke is the enabled Modal provider from docker-compose.dev.yml.
+        // tnhfantasy-modal-zetsuke is the enabled Modal provider from docker-compose.dev.yml.
         await providerCard(page, 'modal-zetsuke').click();
         await expect(page.getByRole('button', { name: 'Send Ping Test', exact: true })).toBeVisible();
 

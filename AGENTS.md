@@ -1,6 +1,6 @@
 # AGENTS.md
 
-TNHComfy is an AI fantasy engine with three pillars: **image generation** (ComfyUI run on serverless Modal/Beam workers), **roleplay chat** (SillyTavern-style, with agentic turns that can narrate scenes or generate images), and a **story sandbox**. All three share the **World Vault** data layer (Characters, Chats, Lorebooks, Stories, Personas) in PostgreSQL + pgvector. Design changes so they keep working across all three.
+TNHFantasy is an AI fantasy engine with three pillars: **image generation** (ComfyUI run on serverless Modal/Beam workers), **roleplay chat** (SillyTavern-style, with agentic turns that can narrate scenes or generate images), and a **story sandbox**. All three share the **World Vault** data layer (Characters, Chats, Lorebooks, Stories, Personas) in PostgreSQL + pgvector. Design changes so they keep working across all three.
 
 ## Layout
 
@@ -16,12 +16,12 @@ TNHComfy is an AI fantasy engine with three pillars: **image generation** (Comfy
 # New host: create the external `metrics`/`proxy` networks first, otherwise compose fails with an unrelated-looking error
 bash scripts/preflight.sh
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build -V -d
-# Containers: tnhcomfy-backend, tnhcomfy-frontend, tnhcomfy-db. The dev override mounts ./backend_v2:/app and the repo at /comfyui.
+# Containers: tnhfantasy-backend, tnhfantasy-frontend, tnhfantasy-db. The dev override mounts ./backend_v2:/app and the repo at /comfyui.
 # Without the dev override, code edits do NOT reach the running backend.
 
 # Backend tests: prefer running them inside the container (it has the right deps, /comfyui mount and Postgres)
-docker exec tnhcomfy-backend python -m pytest -q tests/test_job_service.py
-docker exec tnhcomfy-backend python -m pytest -q tests/test_job_service.py::test_create_job
+docker exec tnhfantasy-backend python -m pytest -q tests/test_job_service.py
+docker exec tnhfantasy-backend python -m pytest -q tests/test_job_service.py::test_create_job
 # Lint on the host:
 cd backend_v2 && ruff check .
 

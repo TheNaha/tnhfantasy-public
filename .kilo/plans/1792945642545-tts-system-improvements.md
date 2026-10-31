@@ -245,7 +245,7 @@ User creates voice (Design/Preset/Clone)
 
 ### Infrastructure
 - `scripts/update_colab_notebooks.py` — add TTS service launch in hybrid mode
-- `remote_agent/TNHComfy_Colab_Worker.ipynb` — regenerated from script
+- `remote_agent/TNHFantasy_Colab_Worker.ipynb` — regenerated from script
 - `deployables/modal/tts/modal_app.py` — add `/v1/voices` to TTSWorker
 
 ---

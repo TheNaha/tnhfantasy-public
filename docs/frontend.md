@@ -1,6 +1,6 @@
 # Frontend Documentation
 
-The frontend of TNHComfy (`tnhcomfy-frontend`) is built with **React 19** and **Vite**, focusing on speed, modularity, and a modern developer experience. It runs on port **5174** (not 5173 — some older docs still say 5173).
+The frontend of TNHFantasy (`tnhfantasy-frontend`) is built with **React 19** and **Vite**, focusing on speed, modularity, and a modern developer experience. It runs on port **5174** (not 5173 — some older docs still say 5173).
 
 ## Package manager — bun only
 

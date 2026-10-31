@@ -8,9 +8,9 @@
 #
 # Two runtimes from one file, selected by which base the final stage inherits:
 #
-#     docker build -f remote_agent/Dockerfile -t tnhcomfy-agent ..        # model/tts
+#     docker build -f remote_agent/Dockerfile -t tnhfantasy-agent ..        # model/tts
 #     docker build -f remote_agent/Dockerfile --build-arg CUDA=1 \
-#         -t tnhcomfy-agent-llm ..                                        # llm
+#         -t tnhfantasy-agent-llm ..                                        # llm
 #
 # `FROM ${CUDA_RUNTIME}` with `CUDA_RUNTIME` defaulting to a local stage name is
 # the documented Docker form for choosing a base at build time. Two Dockerfiles

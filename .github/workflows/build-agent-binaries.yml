@@ -1,6 +1,6 @@
 name: build-agent-binaries
 
-# Produces standalone tnhcomfy-agent executables for BOTH Linux and Windows,
+# Produces standalone tnhfantasy-agent executables for BOTH Linux and Windows,
 # so users can run the remote agent on the ComfyUI host machine without Docker
 # or a Python install. See remote_agent/README.md.
 
@@ -56,7 +56,7 @@ jobs:
         run: |
           # SPECPATH must be absolute so the spec can resolve REPO/pathex
           # correctly on the build host.
-          pyinstaller --noconfirm --distpath ./dist --workpath ./build "${{ github.workspace }}/remote_agent/tnhcomfy-agent.spec"
+          pyinstaller --noconfirm --distpath ./dist --workpath ./build "${{ github.workspace }}/remote_agent/tnhfantasy-agent.spec"
 
       - name: Verify binary (Linux)
         if: runner.os == 'Linux'
@@ -70,7 +70,7 @@ jobs:
           REMOTE_AGENT_TOKEN=ci-verification-token \
             PORT=8001 \
             DATA_DIR=/tmp/agentverify \
-            ./dist/tnhcomfy-agent & AGENT_PID=$!
+            ./dist/tnhfantasy-agent & AGENT_PID=$!
           trap 'kill $AGENT_PID 2>/dev/null || true; rm -rf /tmp/agentverify' EXIT
           mkdir -p /tmp/agentverify
           for i in $(seq 1 20); do
@@ -91,7 +91,7 @@ jobs:
           $env:REMOTE_AGENT_TOKEN = "ci-verification-token"
           $env:PORT = "8001"
           $env:DATA_DIR = "$env:TEMP\agentverify"
-          $p = Start-Process -FilePath "dist\tnhcomfy-agent.exe" -PassThru -NoNewWindow
+          $p = Start-Process -FilePath "dist\tnhfantasy-agent.exe" -PassThru -NoNewWindow
           for ($i = 0; $i -lt 20; $i++) {
             if ($p.HasExited) { Write-Error "agent exited early"; exit 1 }
             try {
@@ -104,6 +104,6 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: tnhcomfy-agent-${{ runner.os }}
+          name: tnhfantasy-agent-${{ runner.os }}
           path: remote_agent/dist/*
           if-no-files-found: error

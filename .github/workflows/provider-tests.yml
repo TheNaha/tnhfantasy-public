@@ -68,13 +68,13 @@ jobs:
         ruff check - --select F provider_core
 
     - name: Build the remote agent image
-      run: docker build -f remote_agent/Dockerfile -t tnhcomfy-provider-test-agent:latest .
+      run: docker build -f remote_agent/Dockerfile -t tnhfantasy-provider-test-agent:latest .
 
     - name: Build the backend image
-      run: docker build -f backend_v2/Dockerfile -t tnhcomfy-backend-build-check:latest backend_v2
+      run: docker build -f backend_v2/Dockerfile -t tnhfantasy-backend-build-check:latest backend_v2
 
     - name: Build the frontend image (prod target)
-      run: docker build --target prod -f frontend_v2/Dockerfile -t tnhcomfy-frontend-build-check:latest frontend_v2
+      run: docker build --target prod -f frontend_v2/Dockerfile -t tnhfantasy-frontend-build-check:latest frontend_v2
 
     - name: Build the frontend image (dev target)
-      run: docker build --target dev -f frontend_v2/Dockerfile -t tnhcomfy-frontend-dev-build-check:latest frontend_v2
+      run: docker build --target dev -f frontend_v2/Dockerfile -t tnhfantasy-frontend-dev-build-check:latest frontend_v2

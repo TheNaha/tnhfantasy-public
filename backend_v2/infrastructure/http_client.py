@@ -13,9 +13,9 @@ from infrastructure.logging import http_logger
 logger = http_logger()
 
 # Historical container-name prefix, kept locally (infrastructure.provider_naming
-# is gone): legacy provider rows may still carry a `tnhcomfy-{id}` container
+# is gone): legacy provider rows may still carry a `tnhfantasy-{id}` container
 # name in config, and host recognition must keep matching them.
-_PROVIDER_CONTAINER_PREFIX = "tnhcomfy-"
+_PROVIDER_CONTAINER_PREFIX = "tnhfantasy-"
 
 # Singleton HTTP client instance
 _client: httpx.AsyncClient | None = None
@@ -92,7 +92,7 @@ def load_known_provider_hosts(*, force: bool = False) -> frozenset[str] | None:
 
     Hostnames of every provider the backend knows about.
 
-    The `tnhcomfy-` prefix convention only matches containers this project
+    The `tnhfantasy-` prefix convention only matches containers this project
     started under that name. A self-discovered provider registers
     `discovery_url` built from `socket.gethostname()`, which on a default Compose
     network is the 12-character container id — so *no* discovered provider matched
@@ -196,7 +196,7 @@ def _provider_token_headers(url: str, headers: dict[str, str] | None) -> dict[st
 
     Provider containers fail CLOSED when the token is unset, so a missing header
     surfaces as a 401 that looks exactly like an outage. Hosts are resolved from
-    the database rather than the `tnhcomfy-` naming convention, because a
+    the database rather than the `tnhfantasy-` naming convention, because a
     self-discovered provider registers its container id as its hostname.
 
     Shared by the pooled and streaming paths — see the note on the class for why

@@ -23,7 +23,7 @@ def story_with_character(session):
         title="Published Tale",
         description="A story for publishing test",
         genre="fantasy",
-        memory="Written by TNHComfy",
+        memory="Written by TNHFantasy",
         character_ids=[char.id],
     )
     session.add(story)

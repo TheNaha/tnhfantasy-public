@@ -1,4 +1,4 @@
-# TNHComfy Remediation Plan — Feature Completeness & Codebase Hardening
+# TNHFantasy Remediation Plan — Feature Completeness & Codebase Hardening
 
 > **Status**: Ready for implementation
 > **Scope**: Make the 3 pillars (Image Generation, Roleplay Chat, Story Sandbox) genuinely usable end-to-end; eliminate "demo feel"; unify architecture; fix all P0/P1 bugs.
@@ -8,7 +8,7 @@
 
 ## Executive Summary
 
-TNHComfy is a **Comprehensive AI Fantasy Engine** — a ComfyUI wrapper with serverless providers (Modal, Beam), roleplay chatbots, and a story sandbox, all backed by PostgreSQL + pgvector. The current test count is healthy (backend 1523 pass, frontend 561 pass, lint 0 errors), but the working tree contains **56 modified + 5 untracked files** with several critical bugs, integration gaps, and architectural inconsistencies that prevent casual/power-user usability.
+TNHFantasy is a **Comprehensive AI Fantasy Engine** — a ComfyUI wrapper with serverless providers (Modal, Beam), roleplay chatbots, and a story sandbox, all backed by PostgreSQL + pgvector. The current test count is healthy (backend 1523 pass, frontend 561 pass, lint 0 errors), but the working tree contains **56 modified + 5 untracked files** with several critical bugs, integration gaps, and architectural inconsistencies that prevent casual/power-user usability.
 
 This plan prioritizes:
 1. **P0 critical bugs** that crash at runtime

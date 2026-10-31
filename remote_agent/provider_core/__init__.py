@@ -1,5 +1,5 @@
 """
-Provider Core - shared library for the TNHComfy remote agent.
+Provider Core - shared library for the TNHFantasy remote agent.
 
 This package used to live under ``provider_containers/`` alongside the
 legacy containerized provider workers (image/llm/tts ``worker.py`` HTTP

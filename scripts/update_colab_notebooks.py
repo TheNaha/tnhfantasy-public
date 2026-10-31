@@ -1,4 +1,4 @@
-"""Update TNHComfy_Colab_Worker.ipynb and remote_agent/TNHComfy_Colab_Worker.ipynb
+"""Update TNHFantasy_Colab_Worker.ipynb and remote_agent/TNHFantasy_Colab_Worker.ipynb
 
 Synchronizes both notebooks with multi-environment support (Google Colab and Modal Sandboxes/Notebooks),
 Modal volume comfy-storage integration, low-RAM volume streaming toggle, multi-GPU device allocation,
@@ -12,8 +12,8 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 NOTEBOOK_PATHS = [
-    REPO_ROOT / "TNHComfy_Colab_Worker.ipynb",
-    REPO_ROOT / "remote_agent" / "TNHComfy_Colab_Worker.ipynb",
+    REPO_ROOT / "TNHFantasy_Colab_Worker.ipynb",
+    REPO_ROOT / "remote_agent" / "TNHFantasy_Colab_Worker.ipynb",
 ]
 
 
@@ -53,20 +53,20 @@ if IS_COLAB:
         from google.colab import drive
         if not os.path.exists("/content/drive/MyDrive"):
             drive.mount("/content/drive")
-        PERSISTENT_ROOT = "/content/drive/MyDrive/tnhcomfy"
+        PERSISTENT_ROOT = "/content/drive/MyDrive/tnhfantasy"
         os.makedirs(PERSISTENT_ROOT, exist_ok=True)
         print(f"✅ Google Drive mounted successfully at /content/drive/MyDrive (persistence: {PERSISTENT_ROOT})")
     except Exception as e:
         print(f"⚠️ Google Drive mount notice: {e}")
-        PERSISTENT_ROOT = os.path.join(WORKSPACE_ROOT, "tnhcomfy_storage")
+        PERSISTENT_ROOT = os.path.join(WORKSPACE_ROOT, "tnhfantasy_storage")
         os.makedirs(PERSISTENT_ROOT, exist_ok=True)
 elif IS_MODAL or os.path.exists("/mnt/data"):
     print("⚡ Detected Modal Sandbox / Container environment with persistent Volume!")
-    PERSISTENT_ROOT = "/mnt/data/tnhcomfy"
+    PERSISTENT_ROOT = "/mnt/data/tnhfantasy"
     modal_subdirs = [
-        "/mnt/data/tnhcomfy",
-        "/mnt/data/tnhcomfy/bin",
-        "/mnt/data/tnhcomfy/llm_models",
+        "/mnt/data/tnhfantasy",
+        "/mnt/data/tnhfantasy/bin",
+        "/mnt/data/tnhfantasy/llm_models",
         "/mnt/data/models",
         "/mnt/data/models/checkpoints",
         "/mnt/data/models/loras",
@@ -79,7 +79,7 @@ elif IS_MODAL or os.path.exists("/mnt/data"):
     print(f"✅ Modal Volume active at /mnt/data (shared with Modal image worker comfy-storage!)")
 else:
     print("💻 Detected generic Linux container / cloud VM environment.")
-    PERSISTENT_ROOT = os.path.expanduser("~/tnhcomfy_storage")
+    PERSISTENT_ROOT = os.path.expanduser("~/tnhfantasy_storage")
     os.makedirs(PERSISTENT_ROOT, exist_ok=True)
 
 # 2. GPU Hardware & Multi-GPU Topology Inspection
@@ -179,8 +179,8 @@ NETBIRD_MANAGEMENT_URL = "" #@param {type:"string"}
 NETBIRD_ADMIN_URL = "" #@param {type:"string"}
 
 #@markdown ---
-#@markdown #### 🌐 TNHComfy Backend Sync (Backend as Single Source of Truth):
-#@markdown Enter your TNHComfy backend URL (e.g. http://100.150.0.1:8002 via NetBird or domain). If left blank, uses local curated catalog:
+#@markdown #### 🌐 TNHFantasy Backend Sync (Backend as Single Source of Truth):
+#@markdown Enter your TNHFantasy backend URL (e.g. http://100.150.0.1:8002 via NetBird or domain). If left blank, uses local curated catalog:
 BACKEND_URL = "" #@param {type:"string"}
 PROVIDER_ID = "colab_worker" #@param {type:"string"}
 
@@ -206,7 +206,7 @@ GDRIVE_COMFY_PATH = "/content/drive/MyDrive/comfyui" #@param {type:"string"}
 #@markdown #### 💬 LLM / Hybrid Mode — Curated Models from models.json:
 LLM_RP_MODEL = "artemis_31b_q4" #@param ["artemis_31b_q4", "artemis_31b", "sompoa_26b_a4b", "goetia_26b_a4b", "styletune_v2_26b_a4b", "dark_thoughts_v2_31b", "split_untied_31b", "weirdcompound_24b", "gemma3_12b_heretic", "writers_31b_v2", "gemma4_31b_heretic", "magnum_diamond_24b"]
 LLM_UTIL_MODEL = "same_as_rp" #@param ["same_as_rp", "artemis_31b_q4", "artemis_31b", "sompoa_26b_a4b", "gemma3_12b_heretic_util", "gemma4_26b_a4b_heretic_util", "gemma4_31b_heretic_util", "mistral_small_32_it", "qwen2.5_14b"]
-GDRIVE_LLM_PATH = "/content/drive/MyDrive/tnhcomfy/llm_models" #@param {type:"string"}
+GDRIVE_LLM_PATH = "/content/drive/MyDrive/tnhfantasy/llm_models" #@param {type:"string"}
 
 #@markdown ---
 #@markdown #### 🧠 System 1 Decision Maker (Laya Engine):
@@ -289,7 +289,7 @@ print("=" * 65 + "\\n")
 
 
 def build_cell_3_source() -> list[str]:
-    code = """#@title 3. 📥 Clone / Update TNHComfy Repository
+    code = """#@title 3. 📥 Clone / Update TNHFantasy Repository
 import os
 import shutil
 import subprocess
@@ -318,13 +318,13 @@ workspace_root = (
     "/content" if _IS_COLAB
     else ("/root" if (_IS_MODAL or os.path.exists("/root")) else os.path.expanduser("~"))
 )
-repo_dir = os.path.join(workspace_root, "tnhcomfy")
+repo_dir = os.path.join(workspace_root, "tnhfantasy")
 token = GITHUB_TOKEN.strip() if "GITHUB_TOKEN" in locals() else ""
 
 if token:
-    clone_url = f"https://x-access-token:{token}@github.com/TheNaha/TNHComfy.git"
+    clone_url = f"https://x-access-token:{token}@github.com/TheNaha/TNHFantasy.git"
 else:
-    clone_url = "https://github.com/TheNaha/TNHComfy.git"
+    clone_url = "https://github.com/TheNaha/TNHFantasy.git"
 
 git_env = dict(os.environ, GIT_TERMINAL_PROMPT="0")
 
@@ -336,7 +336,7 @@ def run_git(cmd, cwd=None):
     return res.stdout
 
 if not os.path.exists(repo_dir):
-    print(f"📥 Cloning TNHComfy repository to {repo_dir}...")
+    print(f"📥 Cloning TNHFantasy repository to {repo_dir}...")
     run_git(["git", "clone", "--depth", "1", clone_url, repo_dir])
 else:
     print(f"🔄 Updating existing repository at {repo_dir}...")
@@ -353,7 +353,7 @@ else:
         subprocess.run(["rm", "-rf", repo_dir], check=True)
         run_git(["git", "clone", "--depth", "1", clone_url, repo_dir])
 
-print("✅ TNHComfy workspace ready at:", repo_dir)
+print("✅ TNHFantasy workspace ready at:", repo_dir)
 try:
     branch = run_git(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=repo_dir).strip()
     commit = run_git(["git", "log", "-1", "--pretty=format:%h - %s (%ci)"], cwd=repo_dir).strip()
@@ -395,11 +395,11 @@ if is_colab:
             drive.mount("/content/drive")
     except Exception:
         pass
-    gdrive_root = "/content/drive/MyDrive/tnhcomfy"
+    gdrive_root = "/content/drive/MyDrive/tnhfantasy"
 elif is_modal:
-    gdrive_root = "/mnt/data/tnhcomfy"
+    gdrive_root = "/mnt/data/tnhfantasy"
 else:
-    gdrive_root = os.path.join(WORKSPACE_ROOT, "tnhcomfy_storage")
+    gdrive_root = os.path.join(WORKSPACE_ROOT, "tnhfantasy_storage")
 
 os.makedirs(gdrive_root, exist_ok=True)
 gdrive_bin = f"{gdrive_root}/bin"
@@ -664,7 +664,7 @@ else:
     print("✅ Cloudflared installed.")
 
 # 2. ComfyUI Setup & Custom Nodes
-agent_dir = os.path.join(WORKSPACE_ROOT, "tnhcomfy", "remote_agent")
+agent_dir = os.path.join(WORKSPACE_ROOT, "tnhfantasy", "remote_agent")
 collected_reqs = [f"{agent_dir}/requirements.txt"]
 extra_packages = []
 
@@ -680,7 +680,7 @@ if mode_key == "storage":
     ]
     for d in model_dirs:
         os.makedirs(os.path.join(models_base, d), exist_ok=True)
-    llm_dir = GDRIVE_LLM_PATH.strip() if os.path.exists(GDRIVE_LLM_PATH.strip()) else os.path.join(WORKSPACE_ROOT, "tnhcomfy", "llm_models")
+    llm_dir = GDRIVE_LLM_PATH.strip() if os.path.exists(GDRIVE_LLM_PATH.strip()) else os.path.join(WORKSPACE_ROOT, "tnhfantasy", "llm_models")
     os.makedirs(llm_dir, exist_ok=True)
     print(f"✅ Storage directories verified at {models_base} and {llm_dir}")
     extra_packages = ["pysocks", "psutil", "huggingface_hub"]
@@ -769,7 +769,7 @@ elif mode_key in ("model", "hybrid", "tts"):
             collected_reqs.append(req_file)
 
     # Timing profiler node from repo if present
-    profiler_src = os.path.join(WORKSPACE_ROOT, "tnhcomfy", "deployables", "modal", "image", "load_profiler_node")
+    profiler_src = os.path.join(WORKSPACE_ROOT, "tnhfantasy", "deployables", "modal", "image", "load_profiler_node")
     profiler_dst = os.path.join(custom_nodes_dir, "tnh_load_profiler")
     if os.path.exists(profiler_src):
         try:
@@ -1114,7 +1114,7 @@ if mode_key in ("llm", "hybrid"):
     else:
         print("✅ llama-server and CUDA runtime libraries are already active!")
     
-    llm_dir = "/mnt/data/tnhcomfy/llm_models" if is_modal else (GDRIVE_LLM_PATH.strip() or "/content/drive/MyDrive/tnhcomfy/llm_models")
+    llm_dir = "/mnt/data/tnhfantasy/llm_models" if is_modal else (GDRIVE_LLM_PATH.strip() or "/content/drive/MyDrive/tnhfantasy/llm_models")
     os.makedirs(llm_dir, exist_ok=True)
     os.makedirs(os.path.join(WORKSPACE_ROOT, "agent-data", "llm"), exist_ok=True)
     safe_symlink(llm_dir, os.path.join(WORKSPACE_ROOT, "agent-data", "llm", "models"))
@@ -1197,11 +1197,11 @@ if is_colab:
             drive.mount("/content/drive")
     except Exception:
         pass
-    gdrive_root = "/content/drive/MyDrive/tnhcomfy"
+    gdrive_root = "/content/drive/MyDrive/tnhfantasy"
 elif is_modal:
-    gdrive_root = "/mnt/data/tnhcomfy"
+    gdrive_root = "/mnt/data/tnhfantasy"
 else:
-    gdrive_root = os.path.join(WORKSPACE_ROOT, "tnhcomfy_storage")
+    gdrive_root = os.path.join(WORKSPACE_ROOT, "tnhfantasy_storage")
 
 os.makedirs(gdrive_root, exist_ok=True)
 
@@ -1284,7 +1284,7 @@ else:
         f.write(agent_token)
 os.environ["REMOTE_AGENT_TOKEN"] = agent_token
 
-agent_dir = os.path.join(WORKSPACE_ROOT, "tnhcomfy", "remote_agent")
+agent_dir = os.path.join(WORKSPACE_ROOT, "tnhfantasy", "remote_agent")
 scratch_downloads = os.path.join(WORKSPACE_ROOT, "tmp_downloads")
 os.makedirs(scratch_downloads, exist_ok=True)
 log_comfy = os.path.join(WORKSPACE_ROOT, "comfyui.log")
@@ -1623,7 +1623,7 @@ if backend_url_clean:
         print(f"⚠️ Notice: Could not contact backend catalog at {backend_url_clean} after retries. Using local catalog.")
 
 if not catalog:
-    local_cat = os.path.join(WORKSPACE_ROOT, "tnhcomfy", "backend_v2", "modal_llm", "models.json")
+    local_cat = os.path.join(WORKSPACE_ROOT, "tnhfantasy", "backend_v2", "modal_llm", "models.json")
     if os.path.exists(local_cat):
         with open(local_cat, "r") as f:
             catalog = json.load(f)
@@ -1668,7 +1668,7 @@ if isinstance(backend_tokens, dict):
 
 # 4. Check & Auto-Download Active LLM GGUF Weights (Direct RAM Cache, NVMe, or Google Drive)
 storage_strat_key = "direct" if ("STORAGE_STRATEGY" in locals() and "direct" in str(STORAGE_STRATEGY).lower()) else "gdrive"
-llm_gdrive_dir = "/mnt/data/tnhcomfy/llm_models" if is_modal else (GDRIVE_LLM_PATH.strip() or "/content/drive/MyDrive/tnhcomfy/llm_models")
+llm_gdrive_dir = "/mnt/data/tnhfantasy/llm_models" if is_modal else (GDRIVE_LLM_PATH.strip() or "/content/drive/MyDrive/tnhfantasy/llm_models")
 llm_local_dir = os.path.join(WORKSPACE_ROOT, "models", "llm")
 os.makedirs(llm_local_dir, exist_ok=True)
 if storage_strat_key == "gdrive":
@@ -1772,7 +1772,7 @@ for mid in distinct_active_llm:
         resolved_weights[mid] = local_gguf
     else:
         # Fallback candidate scan: only match files corresponding to this model
-        for cdir in [llm_local_dir, llm_gdrive_dir, "/mnt/data/tnhcomfy/llm_models", "/mnt/data/models/llm", os.path.join(WORKSPACE_ROOT, "agent-data", "llm", "models"), os.path.join(WORKSPACE_ROOT, "ComfyUI", "models", "llm"), "/dev/shm/tnh_ram_cache/llm"]:
+        for cdir in [llm_local_dir, llm_gdrive_dir, "/mnt/data/tnhfantasy/llm_models", "/mnt/data/models/llm", os.path.join(WORKSPACE_ROOT, "agent-data", "llm", "models"), os.path.join(WORKSPACE_ROOT, "ComfyUI", "models", "llm"), "/dev/shm/tnh_ram_cache/llm"]:
             if os.path.exists(cdir):
                 for root, _, files in os.walk(cdir):
                     for f in sorted(files):
@@ -1976,7 +1976,7 @@ if not active_ckpt_path and (tier1_dl_url or tier1_civitai_ver):
     try:
         import requests
         from tqdm import tqdm
-        headers = {"User-Agent": "TNHComfy-Colab-Worker/1.0"}
+        headers = {"User-Agent": "TNHFantasy-Colab-Worker/1.0"}
         if civ_token:
             headers["Authorization"] = f"Bearer {civ_token}"
         os.makedirs(os.path.dirname(target_dl_path), exist_ok=True)
@@ -2454,7 +2454,7 @@ def start_remote_agent():
         PROVIDER_ID=PROVIDER_ID.strip() if ("PROVIDER_ID" in locals() and PROVIDER_ID) else "colab_worker",
         CIVITAI_TOKEN=CIVITAI_TOKEN.strip() if ("CIVITAI_TOKEN" in locals() and CIVITAI_TOKEN) else os.environ.get("CIVITAI_TOKEN", ""),
         HF_TOKEN=HF_TOKEN.strip() if ("HF_TOKEN" in locals() and HF_TOKEN) else os.environ.get("HF_TOKEN", ""),
-        LLM_DATA_DIR=GDRIVE_LLM_PATH.strip() if ("GDRIVE_LLM_PATH" in locals() and GDRIVE_LLM_PATH) else "/content/drive/MyDrive/tnhcomfy/llm_models",
+        LLM_DATA_DIR=GDRIVE_LLM_PATH.strip() if ("GDRIVE_LLM_PATH" in locals() and GDRIVE_LLM_PATH) else "/content/drive/MyDrive/tnhfantasy/llm_models",
         LLM_UPSTREAM_BASE=f"http://127.0.0.1:{llm_port}/v1",
         RAM_CACHE_DIR="/dev/shm/tnh_ram_cache",
         RAM_CACHE_BUDGET_GB="40" if enable_ram_cache else "0",
@@ -2946,7 +2946,7 @@ else:
 # A stable id, so a re-run updates rather than duplicates.
 provider_id = (
     PROVIDER_ID.strip() if ("PROVIDER_ID" in locals() and PROVIDER_ID.strip())
-    else str(uuid.uuid5(uuid.NAMESPACE_URL, f"tnhcomfy-remote-{mode_key}-{agent_endpoint}"))
+    else str(uuid.uuid5(uuid.NAMESPACE_URL, f"tnhfantasy-remote-{mode_key}-{agent_endpoint}"))
 )
 
 def _register_provider():
@@ -3046,10 +3046,10 @@ card_header_html = f'''
 </style>
 <div style="color: #f8fafc; font-family: system-ui, -apple-system, sans-serif;">
     <h2 style="margin: 0 0 12px 0; color: #60a5fa; font-size: 20px; display: flex; align-items: center; gap: 8px;">
-        ✨ TNHComfy Colab Worker is Ready! ({provider_category} Mode)
+        ✨ TNHFantasy Colab Worker is Ready! ({provider_category} Mode)
     </h2>
     <p style="margin: 0 0 16px 0; font-size: 14px; color: #94a3b8;">
-        Your worker is online and connected. Copy the credentials below into your TNHComfy Providers page:
+        Your worker is online and connected. Copy the credentials below into your TNHFantasy Providers page:
     </p>
 
     {gpu_topo_badge}
@@ -3253,7 +3253,7 @@ WORKSPACE_ROOT = (
     else ("/root" if (is_modal or os.path.exists("/root")) else os.path.expanduser("~"))
 )
 workspace_root = WORKSPACE_ROOT
-agent_dir = os.path.join(workspace_root, "tnhcomfy", "remote_agent")
+agent_dir = os.path.join(workspace_root, "tnhfantasy", "remote_agent")
 if agent_dir not in sys.path:
     sys.path.insert(0, agent_dir)
 from ram_manager import get_ram_manager
@@ -3262,7 +3262,7 @@ ram_mgr = get_ram_manager()
 comfy_dir = os.path.join(workspace_root, "ComfyUI")
 ckpt_dir = "/mnt/data/models/checkpoints" if (is_modal and os.path.exists("/mnt/data/models/checkpoints")) else f"{comfy_dir}/models/checkpoints"
 lora_dir = "/mnt/data/models/loras" if (is_modal and os.path.exists("/mnt/data/models/loras")) else f"{comfy_dir}/models/loras"
-llm_dir = "/mnt/data/tnhcomfy/llm_models" if is_modal else (GDRIVE_LLM_PATH.strip() if "GDRIVE_LLM_PATH" in locals() and GDRIVE_LLM_PATH.strip() else "/content/drive/MyDrive/tnhcomfy/llm_models")
+llm_dir = "/mnt/data/tnhfantasy/llm_models" if is_modal else (GDRIVE_LLM_PATH.strip() if "GDRIVE_LLM_PATH" in locals() and GDRIVE_LLM_PATH.strip() else "/content/drive/MyDrive/tnhfantasy/llm_models")
 
 if OPERATION == "📊 View Models-in-RAM Dashboard & Status":
     status = ram_mgr.get_status()
@@ -3573,7 +3573,7 @@ def update_notebook(path: Path) -> None:
     # Cell 2: Configuration
     nb["cells"][2]["source"] = build_cell_2_source()
 
-    # Cell 3: Clone / Update TNHComfy
+    # Cell 3: Clone / Update TNHFantasy
     nb["cells"][3]["source"] = build_cell_3_source()
 
     # Cell 4: Dependencies and Environment
@@ -3594,8 +3594,8 @@ def update_notebook(path: Path) -> None:
 
 
 def main():
-    root_nb = REPO_ROOT / "TNHComfy_Colab_Worker.ipynb"
-    agent_nb = REPO_ROOT / "remote_agent" / "TNHComfy_Colab_Worker.ipynb"
+    root_nb = REPO_ROOT / "TNHFantasy_Colab_Worker.ipynb"
+    agent_nb = REPO_ROOT / "remote_agent" / "TNHFantasy_Colab_Worker.ipynb"
     if not root_nb.exists() and agent_nb.exists():
         shutil.copy2(agent_nb, root_nb)
         print("Copied worker notebook to repo root.")

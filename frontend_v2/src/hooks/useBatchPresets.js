@@ -88,7 +88,7 @@ const LIMITS = {
     strength: [-100, 100],
 };
 
-export const PRESET_FILE_KIND = 'tnhcomfy.batch-preset';
+export const PRESET_FILE_KIND = 'tnhfantasy.batch-preset';
 export const PRESET_FILE_VERSION = 1;
 
 function clampNumber(value, [min, max], fallback) {
@@ -314,7 +314,7 @@ export function parsePresetPayload(text) {
         throw new Error('That file is not a batch preset');
     }
     if (payload.kind && payload.kind !== PRESET_FILE_KIND) {
-        throw new Error('That file is not a TNHComfy batch preset');
+        throw new Error('That file is not a TNHFantasy batch preset');
     }
     const raw = payload.preset && typeof payload.preset === 'object' ? payload.preset : payload;
     const name = toText(raw.name) || toText(payload.name);

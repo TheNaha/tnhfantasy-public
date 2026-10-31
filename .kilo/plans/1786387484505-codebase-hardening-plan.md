@@ -1,4 +1,4 @@
-# TNHComfy — Codebase Hardening & Vision Alignment Plan
+# TNHFantasy — Codebase Hardening & Vision Alignment Plan
 
 ## Current State Summary
 

@@ -15,7 +15,7 @@ services:
       dockerfile: remote_agent/Dockerfile
       args:
         CUDA_RUNTIME: ${CUDA_RUNTIME:-runtime-slim}
-    container_name: tnhcomfy-remote-agent
+    container_name: tnhfantasy-remote-agent
     env_file:
       # Only .env.agent.example is tracked. Copy it first:
       #   cp .env.agent.example .env.agent

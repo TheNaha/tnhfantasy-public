@@ -1,4 +1,4 @@
-# TNHComfy — Comprehensive Hardening & Feature-Completeness Plan (2026-08-25)
+# TNHFantasy — Comprehensive Hardening & Feature-Completeness Plan (2026-08-25)
 
 > **Status**: Investigation complete. Awaiting user decisions on prioritization.
 > **Baseline**: Backend 1522 tests pass, Frontend 561 tests pass, both linters clean.
@@ -8,7 +8,7 @@
 
 ## 0. Executive Summary
 
-TNHComfy has evolved from an image generator into a **Comprehensive AI Fantasy Engine** with three pillars:
+TNHFantasy has evolved from an image generator into a **Comprehensive AI Fantasy Engine** with three pillars:
 1. **Image Generation** (ComfyUI + Modal/Beam providers) — mature, production-ready
 2. **Roleplay Chatbots** (SillyTavern-style) — implemented, needs runtime validation
 3. **Story Sandbox** (AI Dungeon-style) — implemented, needs runtime validation

@@ -1,6 +1,6 @@
-# TNHComfy LLM Hosting: Decision Brief
+# TNHFantasy LLM Hosting: Decision Brief
 
-Covers the planning conversation from 2026-10-10 to 2026-10-17. It supersedes the earlier `TNHComfy_LLM_Handoff.md`, whose model picks are outdated.
+Covers the planning conversation from 2026-10-10 to 2026-10-17. It supersedes the earlier `TNHFantasy_LLM_Handoff.md`, whose model picks are outdated.
 
 **How to read the evidence tags**
 - **[fetched]**: read from a web page, repo listing, config file or the user's UGI CSV during the session.
@@ -27,7 +27,7 @@ Nothing here has been deployed or benchmarked by the assistant. A comment in the
 
 ## 2. Project and requirements
 
-- **TNHComfy** is a self-hosted, personal-use-only "Fantasy Engine" web app. It started as a ComfyUI wrapper and now has three pillars on one PostgreSQL + pgvector data layer (the "World Vault"):
+- **TNHFantasy** is a self-hosted, personal-use-only "Fantasy Engine" web app. It started as a ComfyUI wrapper and now has three pillars on one PostgreSQL + pgvector data layer (the "World Vault"):
   - image generation on serverless workers or provider containers (Modal, Beam)
   - SillyTavern-style LLM roleplay with chats, group chats, ST JSONL import/export, agentic tools, autobiographical memory (`memory_extraction` + `rag_pipeline`), idle simulation and per-entity sampler overrides
   - a Story Sandbox with branches, sessions, tags and a world graph and timeline

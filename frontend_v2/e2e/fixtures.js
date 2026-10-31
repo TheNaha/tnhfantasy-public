@@ -463,7 +463,7 @@ async function waitForStreamingToFinish(page) {
 async function dismissOnboarding(page) {
   await page.addInitScript(() => {
     try {
-      localStorage.setItem('tnhcomfy_setup_complete', JSON.stringify(true));
+      localStorage.setItem('tnhfantasy_setup_complete', JSON.stringify(true));
     } catch {
       // Ignore storage errors; the wizard is dismissible anyway.
     }

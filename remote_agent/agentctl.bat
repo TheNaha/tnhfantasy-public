@@ -20,7 +20,7 @@ if /I not "%SUBCOMMAND%"=="start" if /I not "%SUBCOMMAND%"=="run" (
 )
 
 set "SCRIPT_DIR=%~dp0"
-set "EXEC=%SCRIPT_DIR%tnhcomfy-agent.exe"
+set "EXEC=%SCRIPT_DIR%tnhfantasy-agent.exe"
 
 if exist "%SCRIPT_DIR%.env" (
     for /f "usebackq tokens=1,* delims==" %%A in ("%SCRIPT_DIR%.env") do (
@@ -40,7 +40,7 @@ if not defined HOST set "HOST=0.0.0.0"
 
 if not exist "%EXEC%" (
     echo error: agent executable not found at %EXEC%
-    echo Build it on Windows with: pyinstaller --distpath "%SCRIPT_DIR%" --specpath "%SCRIPT_DIR%" tnhcomfy-agent.spec
+    echo Build it on Windows with: pyinstaller --distpath "%SCRIPT_DIR%" --specpath "%SCRIPT_DIR%" tnhfantasy-agent.spec
     exit /b 1
 )
 

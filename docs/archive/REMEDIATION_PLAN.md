@@ -2,7 +2,7 @@
 > stale or superseded when archived and may contradict current code.
 > **Archived. See docs/STATUS.md and docs/archive/README.md.**
 
-# TNHComfy Remediation Plan — Refining the AI Fantasy Engine
+# TNHFantasy Remediation Plan — Refining the AI Fantasy Engine
 
 Investigation date: 2026-08-15. Last updated: 2026-08-16 (all fixes verified, see status column).
 
@@ -85,7 +85,7 @@ Status: **Batch 0–3 complete and verified.** Backend: 1443 passed / 2 skipped.
 
 ## Verification results (2026-08-16, final)
 
-- Backend: `docker exec tnhcomfy-backend python -m pytest -q` → **1466 passed, 2 skipped** (warnings pre-existing/harmless).
+- Backend: `docker exec tnhfantasy-backend python -m pytest -q` → **1466 passed, 2 skipped** (warnings pre-existing/harmless).
 - Frontend: `npx vitest run` → **69 files / 532 passed**; `npm run lint` → **0 errors, 0 warnings**.
 - Provider containers: 24 passed / 6 env-only failures (missing `modal` pkg in throwaway env; CI installs it). Progress-event tests all pass.
 - E2E: chat specs 22/22; world-vault 8/8 (both after fixes). Full suite with `webServer` block now auto-starts the dev server locally.
@@ -111,7 +111,7 @@ Status: **Batch 0–3 complete and verified.** Backend: 1443 passed / 2 skipped.
 
 ## DEMO_GAPS_PLAN progress (2026-08-16)
 
-- **Phase 1 (onboarding/self-config) DONE**: OnboardingWizard (4 steps, `tnhcomfy_setup_complete` localStorage gate, detect-providers + browse-discovery actions, seeded Lyra Vale tip) on FantasyHub; `POST /api/providers/detect` + Detect Containers button in Providers empty state; NoCheckpointCTA banner across all generator pages; FantasyHub quick-action tiles (New Chat `/chat?new=1` — ChatWorkspace honors it —, Write a Story, Pick a Scenario); migration 049 starter pack (demo character + scenario + disabled llm-local template).
+- **Phase 1 (onboarding/self-config) DONE**: OnboardingWizard (4 steps, `tnhfantasy_setup_complete` localStorage gate, detect-providers + browse-discovery actions, seeded Lyra Vale tip) on FantasyHub; `POST /api/providers/detect` + Detect Containers button in Providers empty state; NoCheckpointCTA banner across all generator pages; FantasyHub quick-action tiles (New Chat `/chat?new=1` — ChatWorkspace honors it —, Write a Story, Pick a Scenario); migration 049 starter pack (demo character + scenario + disabled llm-local template).
 - **except:pass silent-swallow sweep DONE** (~40 sites → structured logging; 6 intentional sites stay bare).
 - **Phases 2–4 (starter-pack polish, power-user depth, guardrails)**: pending — see DEMO_GAPS_PLAN.md.
 

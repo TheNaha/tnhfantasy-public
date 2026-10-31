@@ -1234,7 +1234,7 @@ class VRAMManager:
 
         disk_dirs = [
             os.getenv("PERSISTENT_STORAGE_PATH", ""),
-            "/mnt/data/tnhcomfy/llm_models",
+            "/mnt/data/tnhfantasy/llm_models",
             "/mnt/data/models/llm",
             "/mnt/data/llm_models",
             "/mnt/data/models",
@@ -1242,8 +1242,8 @@ class VRAMManager:
             "/vol/models/llm",
             os.getenv("DATA_DIR", "/content/models/llm"),
             "/content/models/llm",
-            os.getenv("GDRIVE_LLM_PATH", "/content/drive/MyDrive/tnhcomfy/llm_models"),
-            "/content/drive/MyDrive/tnhcomfy/llm_models",
+            os.getenv("GDRIVE_LLM_PATH", "/content/drive/MyDrive/tnhfantasy/llm_models"),
+            "/content/drive/MyDrive/tnhfantasy/llm_models",
             "/content/agent-data/llm/models",
             "/content/ComfyUI/models/llm",
         ]

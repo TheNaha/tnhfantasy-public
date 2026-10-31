@@ -20,7 +20,7 @@ So there are two exports, and the difference is stated rather than implied:
 - Raw JSON cards: V1, V2, or V3 objects.
 - CHARX: ZIP-based `card.json` with embedded assets.
 - PNG text chunks: `tEXt`, `zTXt`, and `iTXt`.
-- TNHComfy bundle: a ZIP with a `manifest.json` of `kind: tnhcomfy-bundle`.
+- TNHFantasy bundle: a ZIP with a `manifest.json` of `kind: tnhfantasy-bundle`.
 
 ## The three buckets
 
@@ -66,7 +66,7 @@ them as archive members and references them by path.
 ## Identity, and re-importing
 
 A card exported from this app carries the character's id in
-`data.extensions.tnhcomfy`. SillyTavern preserves unknown extensions, so a
+`data.extensions.tnhfantasy`. SillyTavern preserves unknown extensions, so a
 card that has been through SillyTavern still knows which character it came
 from, and a re-import **updates** that character instead of creating a second
 one with the same name. A card from anywhere else has no such identity and is

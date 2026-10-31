@@ -1,4 +1,4 @@
-# TNHComfy Codebase Hardening & Feature-Completion Plan
+# TNHFantasy Codebase Hardening & Feature-Completion Plan
 
 ## Executive Summary
 

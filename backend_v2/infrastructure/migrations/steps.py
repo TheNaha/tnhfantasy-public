@@ -2908,7 +2908,7 @@ def _migration_049_seed_starter_pack(conn) -> bool:
                         "seeded": True,
                         "discovered": True,
                         "api_base": "http://localhost:11434/v1",
-                        "container_name": "tnhcomfy-llm-local",
+                        "container_name": "tnhfantasy-llm-local",
                     }),
                 },
             )

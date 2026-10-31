@@ -237,7 +237,7 @@ holds it, not just the two that define it.
 | fix | file | failure |
 |---|---|---|
 | preflight passed on a clean checkout | `scripts/preflight.sh` | missing provider env files were a `note`, so `warn` stayed 0 and the script printed "Preflight passed" and exited 0 — on exactly the state it exists to catch, where `docker compose up` then aborts with `env file .env.modal-zetsuke not found` for *every* service. Now a hard failure, and the list is derived from compose's own `env_file:` entries (it was also missing `.env.remote-comfy`) |
-| invisible provider | `docker-compose.yml` | the `direct-url` service was the only one with no `PROVIDER_ID`/`PORT`/`BACKEND_URL`, so the worker fell back to `direct_url-worker` + `localhost:8000` and posted discovery to its own loopback every 60 s forever, while the backend built `http://tnhcomfy-direct_url-worker:8000` — a name that does not exist. The healthcheck passed anyway, so `docker compose ps` reported it healthy |
+| invisible provider | `docker-compose.yml` | the `direct-url` service was the only one with no `PROVIDER_ID`/`PORT`/`BACKEND_URL`, so the worker fell back to `direct_url-worker` + `localhost:8000` and posted discovery to its own loopback every 60 s forever, while the backend built `http://tnhfantasy-direct_url-worker:8000` — a name that does not exist. The healthcheck passed anyway, so `docker compose ps` reported it healthy |
 | red CI on every provider commit | `.github/workflows/build-agent-binaries.yml` | the verification step ran the binary with no environment, and `remote_agent/server.py` raises at **import time** without `REMOTE_AGENT_TOKEN`. The process exited before the healthcheck. Both matrix legs failed on every push touching `remote_agent/**` or `provider_core/**` — including the two most recent commits |
 | quick-start always failed | `remote_agent/agentctl.sh` | PyInstaller writes to `./dist`, but the script looked for the binary one directory above. `README.md:23` and the CI both use `--distpath ./dist` |
 | partial downloads never deleted | `modal_app`, `beam_app`, `remote_agent` | `_unique_temp_path` renamed the temp file to `<path>.<pid>.<hex>.downloading`, but all three delete paths still probed the old fixed `.downloading` name, so a crashed download left a multi-GB partial on the volume forever. New `pending_download_paths()` globs it |
@@ -304,7 +304,7 @@ exact `md5(string_agg(...))` content hash computed in Postgres, so `all` goes
 - **Gating `/info` nearly broke the Diagnostics tab, and the near-miss is the
   lesson.** `/info` *does* have a consumer (`GET /providers/{id}/live-metrics`,
   polled every 5 s). The providers all answer to their container-id hostname, and
-  `COMFY_WORKER_HOSTS` is empty, so the `tnhcomfy-` prefix heuristic matched
+  `COMFY_WORKER_HOSTS` is empty, so the `tnhfantasy-` prefix heuristic matched
   nothing and the token was never attached — the gate turned an invisible omission
   into a visible outage. Fixed at the root: the host set is now resolved from the
   database, so no self-discovered provider can be missed again.

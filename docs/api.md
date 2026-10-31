@@ -1,6 +1,6 @@
 # API Reference
 
-TNHComfy exposes REST and WebSocket APIs for job lifecycle, model management, providers, and runtime state.
+TNHFantasy exposes REST and WebSocket APIs for job lifecycle, model management, providers, and runtime state.
 
 > **This document is partial, and the OpenAPI schema is the source of truth.**
 > It documents 247 of the **249** live paths on the **329**-operation main router (99.2%), chosen for
@@ -37,14 +37,14 @@ Reach it one of these ways:
 |---|---|
 | browser, through the frontend | `/api` on the frontend's own origin (`http://localhost:5174`, or `https://comfy.lan.thenaha.my.id`) — the Vite/Nginx frontend proxies `/api` to the backend in-process |
 | a shell on the host | `http://127.0.0.1:8002`, or `http://${COMFY_BACKEND_BIND}:8002` |
-| a shell inside the container | `http://localhost:8002` from `docker compose exec backend_v2`, or from any container on the `tnhcomfy` network |
+| a shell inside the container | `http://localhost:8002` from `docker compose exec backend_v2`, or from any container on the `tnhfantasy` network |
 | a dedicated API hostname | `https://comfy-backend.lan.thenaha.my.id` (Traefik router `comfyui-api`, on the external `proxy` Docker network) |
 
 Which of those is reachable from where is governed by the NetBird ACL on the
 reverse proxy. `docs/deployment.md` has the router table.
 
 ## Authentication
-TNHComfy is designed for trusted/self-hosted environments. If exposed publicly, enforce authentication at the reverse-proxy layer.
+TNHFantasy is designed for trusted/self-hosted environments. If exposed publicly, enforce authentication at the reverse-proxy layer.
 
 That mitigation is in effect for the shipped compose file, in the sense that
 nothing is published: the backend has no host port and is reached by Traefik on
@@ -129,7 +129,7 @@ GET|POST /api/v2/models/versions/{version_id}/files  (does not exist)
 
 ## World Vault v2 (`/api/v2`)
 
-The World Vault is the single PostgreSQL + pgvector index for TNHComfy's three fantasy pillars — **Image Generation** (assets), **Roleplay Chat** (chats), and **Story Sandbox** (stories) — plus characters, lorebooks, and scenarios. All endpoints return JSON. Read filters (`workspace`, `character_id`, `story_id`) let the three pillars stay visually/logically separate while sharing one index.
+The World Vault is the single PostgreSQL + pgvector index for TNHFantasy's three fantasy pillars — **Image Generation** (assets), **Roleplay Chat** (chats), and **Story Sandbox** (stories) — plus characters, lorebooks, and scenarios. All endpoints return JSON. Read filters (`workspace`, `character_id`, `story_id`) let the three pillars stay visually/logically separate while sharing one index.
 
 ### Assets (`/api/v2/assets`)
 
@@ -208,7 +208,7 @@ pgvector-backed semantic knowledge entries (`LorebookEntry.embedding` is `Vector
 
 - `GET /api/v2/characters` — List characters.
 - `POST /api/v2/characters` — Create a character (character-card JSON).
-- `POST /api/v2/characters/import` — Import a character card (PNG, JSON, CHARX) or a TNHComy bundle. Re-importing a card this app exported UPDATES that character — the card carries the character's id in `data.extensions.tnhcomfy`, which SillyTavern preserves — instead of creating a second one.
+- `POST /api/v2/characters/import` — Import a character card (PNG, JSON, CHARX) or a TNHComy bundle. Re-importing a card this app exported UPDATES that character — the card carries the character's id in `data.extensions.tnhfantasy`, which SillyTavern preserves — instead of creating a second one.
 - `POST /api/v2/characters/import/analyze` — What importing this card would do: the fields it holds, whether it matches a character that already exists, and the scopes on offer. **Writes nothing.**
 - `POST /api/v2/characters/import/commit` — Import, with the scope and the match already chosen. Form: `scope` (`character` or `world`), `match_action` (`auto`, `update` or `create`).
 - `GET /api/v2/characters/{character_id}` — Fetch a character.

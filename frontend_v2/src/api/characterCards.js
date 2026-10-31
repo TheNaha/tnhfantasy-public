@@ -60,7 +60,7 @@ export const CARD_EXPORT_FORMATS = [
     },
     {
         id: 'bundle',
-        label: 'TNHComfy bundle',
+        label: 'TNHFantasy bundle',
         extension: 'tnhzip',
         description:
             'The whole character: expressions, voice, world, lorebooks and chats, with the card inside.',

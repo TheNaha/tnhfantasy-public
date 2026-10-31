@@ -1,6 +1,6 @@
 # Architecture Overview
 
-TNHComfy is an **AI fantasy engine** with three pillars sharing one data layer:
+TNHFantasy is an **AI fantasy engine** with three pillars sharing one data layer:
 
 1. **Image generation** — ComfyUI workflows dispatched to serverless workers (Modal, Beam) or a remote ComfyUI sidecar.
 2. **Roleplay chat** — SillyTavern-style character chats with an agentic, multi-turn pipeline (triage → act → audit → update → illustrate → chain).
@@ -51,7 +51,7 @@ Key conventions:
 - **Config precedence:** `COMFY_*` env vars > `config.json` (runtime-editable via the Settings UI, written atomically) > `DEFAULT_CONFIG` in `config.py`.
 - **No Alembic.** Migrations are appended as `MigrationStep(version=..., apply_fn=...)` in `infrastructure/migrations/steps.py`, run once at startup and recorded in `schema_migrations`.
 - **Python models use `metadata_`**, aliased to `metadata` on the wire.
-- **Multi-worker is supported.** `--workers N` (or `COMFY_UVICORN_WORKERS`/`WEB_CONCURRENCY`) no longer refuses to boot; the backend logs a warning instead. Job dispatch is safe under `FOR UPDATE SKIP LOCKED`, and WebSocket events cross processes via the Postgres NOTIFY bus (`tnhcomfy_job_events`), so each worker re-broadcasts to its local Socket.IO clients. Boot-time side effects (migrations, scheduler, recovery) run N times but are advisory-locked/idempotent. Single worker remains the documented default and the safest choice on small hosts.
+- **Multi-worker is supported.** `--workers N` (or `COMFY_UVICORN_WORKERS`/`WEB_CONCURRENCY`) no longer refuses to boot; the backend logs a warning instead. Job dispatch is safe under `FOR UPDATE SKIP LOCKED`, and WebSocket events cross processes via the Postgres NOTIFY bus (`tnhfantasy_job_events`), so each worker re-broadcasts to its local Socket.IO clients. Boot-time side effects (migrations, scheduler, recovery) run N times but are advisory-locked/idempotent. Single worker remains the documented default and the safest choice on small hosts.
 
 ### Startup sequence (`api/main.py` lifespan → `api/lifecycle.py` `startup_application`)
 
@@ -176,6 +176,6 @@ Assets (output images) live on the filesystem under `data/output/{user_id}/{work
 
 **Commands:**
 - Backend lint: `cd backend_v2 && ruff check .`
-- Backend tests: `docker exec tnhcomfy-backend python -m pytest -q <file>`
+- Backend tests: `docker exec tnhfantasy-backend python -m pytest -q <file>`
 - Frontend: `cd frontend_v2 && bun run lint && bun run test && bun run build` (== `bun run verify`)
 - Backend outside Docker: `cd backend_v2 && .venv/bin/uvicorn api.main:app --host 127.0.0.1 --port 8002 --reload`

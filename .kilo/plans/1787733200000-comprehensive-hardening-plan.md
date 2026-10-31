@@ -1,4 +1,4 @@
-# TNHComfy Comprehensive Hardening & Feature Completeness Plan
+# TNHFantasy Comprehensive Hardening & Feature Completeness Plan
 
 > Created: 2026-08-27
 > Supersedes: All prior plans (PLAN.md, ROADMAP.md, REMEDIATION_PLAN*.md, existing .kilo/plans/*)

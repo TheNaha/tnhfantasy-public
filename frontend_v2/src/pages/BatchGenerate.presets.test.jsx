@@ -335,7 +335,7 @@ describe('BatchGenerate presets and control parity', () => {
         it('imports a preset file, keeping the per-LoRA weight', async () => {
             renderPage();
             const payload = {
-                kind: 'tnhcomfy.batch-preset',
+                kind: 'tnhfantasy.batch-preset',
                 version: 1,
                 name: 'Imported',
                 preset: { steps: 15, loras: [{ filename: 'style.safetensors', strength: -0.5 }] },

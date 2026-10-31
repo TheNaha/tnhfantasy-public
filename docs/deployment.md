@@ -1,6 +1,6 @@
 # Deployment Guide
 
-Deploying TNHComfy uses Docker Compose for the frontend, backend, and PostgreSQL. Inference runs **in-process**: each provider is served by an engine in `backend_v2/services/engines/` (Modal, Beam, hosted LLM, Direct/ComfyUI, TTS), not by a sidecar container. Remote ComfyUI hosts attach through the optional `remote_agent/` stack.
+Deploying TNHFantasy uses Docker Compose for the frontend, backend, and PostgreSQL. Inference runs **in-process**: each provider is served by an engine in `backend_v2/services/engines/` (Modal, Beam, hosted LLM, Direct/ComfyUI, TTS), not by a sidecar container. Remote ComfyUI hosts attach through the optional `remote_agent/` stack.
 
 ## Prerequisites
 

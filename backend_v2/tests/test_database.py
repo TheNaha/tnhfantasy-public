@@ -486,7 +486,7 @@ class TestMigration089FoldContainerConfig:
             self._providers_table(conn)
             conn.execute(text("""
                 INSERT INTO providers (id, config, container_config) VALUES
-                    ('p1', '{}', '{"container_name": "tnhcomfy-p1", "port": 8000}'),
+                    ('p1', '{}', '{"container_name": "tnhfantasy-p1", "port": 8000}'),
                     ('p2', '{"container_name": "custom", "api_base": "http://x"}', '{"container_name": "stale", "port": 8000}'),
                     ('p3', '{"api_base": "http://y"}', NULL)
             """))
@@ -496,7 +496,7 @@ class TestMigration089FoldContainerConfig:
             rows = {r[0]: (r[1]) for r in conn.execute(text("SELECT id, config FROM providers")).all()}
 
         p1 = json.loads(rows["p1"])
-        assert p1 == {"container_name": "tnhcomfy-p1", "port": 8000}
+        assert p1 == {"container_name": "tnhfantasy-p1", "port": 8000}
         # config wins on conflict; absent legacy keys still fold in.
         p2 = json.loads(rows["p2"])
         assert p2 == {"container_name": "custom", "api_base": "http://x", "port": 8000}

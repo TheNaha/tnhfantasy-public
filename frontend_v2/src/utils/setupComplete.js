@@ -1,4 +1,4 @@
-export const SETUP_COMPLETE_KEY = 'tnhcomfy_setup_complete';
+export const SETUP_COMPLETE_KEY = 'tnhfantasy_setup_complete';
 
 export function isSetupComplete() {
     try {

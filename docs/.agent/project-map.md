@@ -1,4 +1,4 @@
-# TNHComfy — Project Map
+# TNHFantasy — Project Map
 
 **Recorded commit:** `77e1426c0cc963fbfc0e37927d90fc08b174bf67`
 **Commit date:** 2026-10-30 13:53:07 +0700
@@ -10,7 +10,7 @@ This map is dense and scannable, not a code dump. File/module paths are absolute
 
 ## 1. What this is and who uses it
 
-TNHComfy is an AI fantasy engine with three pillars sharing one data layer (the **World Vault**): image generation, roleplay chat, and a story sandbox. The end user opens the Web UI on port **5174** and, within a single app, generates images, chats with characters (autonomous agentic turns that can narrate scenes or generate images), and edits AI Dungeon–style story chapters with comic/webtoon export. Everything is backed by PostgreSQL 16 + pgvector. There is **no authentication** — the backend binds loopback/named addresses only (`COMFY_BACKEND_BIND`, never `0.0.0.0`).
+TNHFantasy is an AI fantasy engine with three pillars sharing one data layer (the **World Vault**): image generation, roleplay chat, and a story sandbox. The end user opens the Web UI on port **5174** and, within a single app, generates images, chats with characters (autonomous agentic turns that can narrate scenes or generate images), and edits AI Dungeon–style story chapters with comic/webtoon export. Everything is backed by PostgreSQL 16 + pgvector. There is **no authentication** — the backend binds loopback/named addresses only (`COMFY_BACKEND_BIND`, never `0.0.0.0`).
 
 Three pillars over one World Vault:
 1. **Image generation** — original core. Jobs dispatched by load balancer to provider workers (Modal, Beam, direct ComfyUI, remote agent).
@@ -78,7 +78,7 @@ Any change must keep working across all three pillars (a stated design rule).
 
 **Global command palette** — `components/GlobalCommandPalette.jsx`; keyboard shortcuts via `useKeyboardShortcuts.js`.
 
-**Jobs / queue** — `components/QueueVisualization.jsx`; realtime via `useJobsRealtime.jsx`, `useJobStatus.js`, `useJobRecovery.js`. Job events over Socket.IO `tnhcomfy_job_events` channel.
+**Jobs / queue** — `components/QueueVisualization.jsx`; realtime via `useJobsRealtime.jsx`, `useJobStatus.js`, `useJobRecovery.js`. Job events over Socket.IO `tnhfantasy_job_events` channel.
 
 ---
 
@@ -89,7 +89,7 @@ Any change must keep working across all three pillars (a stated design rule).
 2. `api/jobs.js` `POST /api/jobs` `{workflow, metadata, task_type:"image"}` + idempotency key. `frontend_v2/src/api/websocket.js` `cancelJob`, Socket.IO to `/ws`, subscribes to `job.*` events.
 3. Backend `api/routes/jobs.py` `create_job` → `JobService.create_job` → validation → DB insert (initial status) → `job_queue.enqueue`.
 4. Worker pool claims job → `_process_job` → `_call_provider`: `load_balancer` picks provider (gates on `status=="healthy"`), `engine_factory` builds engine (reads config before fallback; registry `default` seeds `ProviderModal`), engine calls provider worker over network (Modal/Beam HTTP/WebSocket, direct URL, or remote agent). Retries via tenacity (base 1s, max 60s); 400 bypasses retries; `COMFY_JOB_TIMEOUT` (default 3600s) client stream timeout.
-5. Images returned → `asset_reconciler` → `/api/files` (thumbnails + blurhash) → `job.status = COMPLETED` → WebSocket event (`emit_job_event`, `CROSS_PROCESS_EVENT_CHANNEL = tnhcomfy_job_events`) → frontend gallery refresh.
+5. Images returned → `asset_reconciler` → `/api/files` (thumbnails + blurhash) → `job.status = COMPLETED` → WebSocket event (`emit_job_event`, `CROSS_PROCESS_EVENT_CHANNEL = tnhfantasy_job_events`) → frontend gallery refresh.
 6. Error paths: retryable vs non-retryable; job failure states. `enabled:false` on a provider means paused on purpose — never treated as broken.
 
 ### B. Roleplay chat turn (send message → state update → image)
@@ -112,7 +112,7 @@ Any change must keep working across all three pillars (a stated design rule).
 Register/update via `services/provider_service.py` `ProviderService` (`create_provider`, `update_provider`; whitelisted fields; `null` clears). `enabled` defaults True. `enabled:false` = paused on purpose. Setup via `provider_lifecycle_service.py` `setup_provider` (requires in-process engine; 30s `wait_for` `engine.setup_models()`). Health: `check_health` config-only; `load_balancer` gates `status=="healthy"`. Telemetry continuous polling; telemetry status engine; warm-window lifecycle; boot times; VRAM chart. Deploy only via `scripts/deploy.sh` {image,tts,llm,beam,all} [--dry-run] from repo root; no deploy route.
 
 ### E. WebSocket / realtime
-`api/routes/websocket.py` `ws_manager`; Socket.IO app `socket_app` on `/socket.io`; cross-process NOTIFY channel `tnhcomfy_job_events`; each worker's `WebSocketManager` LISTENs and re-broadcasts to local Socket.IO clients. Frontend `api/websocket.js` `cancelJob` + `job.*` subscriptions.
+`api/routes/websocket.py` `ws_manager`; Socket.IO app `socket_app` on `/socket.io`; cross-process NOTIFY channel `tnhfantasy_job_events`; each worker's `WebSocketManager` LISTENs and re-broadcasts to local Socket.IO clients. Frontend `api/websocket.js` `cancelJob` + `job.*` subscriptions.
 
 ---
 
@@ -183,12 +183,12 @@ Register/update via `services/provider_service.py` `ProviderService` (`create_pr
 ```
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build -V -d
 ```
-(`-V` matters in dev; frontend `node_modules` anonymous volume.) Containers: `tnhcomfy-backend`, `tnhcomfy-frontend`, `tnhcomfy-db`. Dev override mounts `./backend_v2:/app` and repo at `/comfyui`; without it code edits don't reach the running backend. Frontend on port **5174**. Backend bound to loopback/named address via `COMFY_BACKEND_BIND`.
+(`-V` matters in dev; frontend `node_modules` anonymous volume.) Containers: `tnhfantasy-backend`, `tnhfantasy-frontend`, `tnhfantasy-db`. Dev override mounts `./backend_v2:/app` and repo at `/comfyui`; without it code edits don't reach the running backend. Frontend on port **5174**. Backend bound to loopback/named address via `COMFY_BACKEND_BIND`.
 
 **Backend tests (in container):**
 ```
-docker exec tnhcomfy-backend python -m pytest -q tests/test_job_service.py
-docker exec tnhcomfy-backend python -m pytest -q tests/test_job_service.py::test_create_job
+docker exec tnhfantasy-backend python -m pytest -q tests/test_job_service.py
+docker exec tnhfantasy-backend python -m pytest -q tests/test_job_service.py::test_create_job
 ```
 Full suite ~370s / 3900 tests; host OOMs at 18GB — run targeted files, never vitest concurrent with docker pytest. `test_vram*` needs `/comfyui` on PYTHONPATH. `pytest.ini` `addopts = -n auto` (xdist). Postgres/pgvector tests only when `PGVECTOR_TEST_URL` set.
 

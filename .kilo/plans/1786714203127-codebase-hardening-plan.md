@@ -1,7 +1,7 @@
-# TNHComfy Codebase Hardening & Feature Completion Plan
+# TNHFantasy Codebase Hardening & Feature Completion Plan
 
 ## Context
-TNHComfy is evolving from an image-generation wrapper into a Comprehensive AI Fantasy Engine (Image Gen + Roleplay Chat + Story Sandbox). The new pillars are implemented but feel "demo-like" — functional skeletons missing production-grade features, test coverage, and integration polish. This plan addresses bugs, gaps, duplication, and missing features to make the app usable for casual and power users.
+TNHFantasy is evolving from an image-generation wrapper into a Comprehensive AI Fantasy Engine (Image Gen + Roleplay Chat + Story Sandbox). The new pillars are implemented but feel "demo-like" — functional skeletons missing production-grade features, test coverage, and integration polish. This plan addresses bugs, gaps, duplication, and missing features to make the app usable for casual and power users.
 
 ---
 

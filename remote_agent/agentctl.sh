@@ -35,13 +35,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # PyInstaller writes to ./dist (see build-agent-binaries.yml and the README), so
 # the binary is one directory below this script. Looking in SCRIPT_DIR meant the
 # documented "build then ./agentctl.sh" always failed with "executable not found".
-if [ -x "$SCRIPT_DIR/tnhcomfy-agent" ]; then
-  EXEC="$SCRIPT_DIR/tnhcomfy-agent"
-elif [ -x "$SCRIPT_DIR/dist/tnhcomfy-agent" ]; then
-  EXEC="$SCRIPT_DIR/dist/tnhcomfy-agent"
+if [ -x "$SCRIPT_DIR/tnhfantasy-agent" ]; then
+  EXEC="$SCRIPT_DIR/tnhfantasy-agent"
+elif [ -x "$SCRIPT_DIR/dist/tnhfantasy-agent" ]; then
+  EXEC="$SCRIPT_DIR/dist/tnhfantasy-agent"
 else
-  echo "error: agent executable not found at $SCRIPT_DIR/tnhcomfy-agent or $SCRIPT_DIR/dist/tnhcomfy-agent" >&2
-  echo "hint: build it with  cd remote_agent && pyinstaller --noconfirm --distpath ./dist tnhcomfy-agent.spec" >&2
+  echo "error: agent executable not found at $SCRIPT_DIR/tnhfantasy-agent or $SCRIPT_DIR/dist/tnhfantasy-agent" >&2
+  echo "hint: build it with  cd remote_agent && pyinstaller --noconfirm --distpath ./dist tnhfantasy-agent.spec" >&2
   exit 1
 fi
 
@@ -85,7 +85,7 @@ fi
 
 if [ ! -x "$EXEC" ]; then
     printf 'error: agent executable not found at %s\n' "$EXEC" >&2
-    printf 'Build it with: pyinstaller --distpath %s --workpath %s/build %s/tnhcomfy-agent.spec\n' "$SCRIPT_DIR" "$SCRIPT_DIR" "$SCRIPT_DIR" >&2
+    printf 'Build it with: pyinstaller --distpath %s --workpath %s/build %s/tnhfantasy-agent.spec\n' "$SCRIPT_DIR" "$SCRIPT_DIR" "$SCRIPT_DIR" >&2
     exit 1
 fi
 

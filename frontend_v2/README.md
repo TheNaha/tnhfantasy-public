@@ -1,6 +1,6 @@
-# Frontend (TNHComfy)
+# Frontend (TNHFantasy)
 
-React + Vite frontend for the TNHComfy serverless ComfyUI stack.
+React + Vite frontend for the TNHFantasy serverless ComfyUI stack.
 
 ## Tech Stack
 

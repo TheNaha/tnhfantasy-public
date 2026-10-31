@@ -4,11 +4,11 @@
 
 > **SUPERSEDED** by `ROADMAP.md` (2026-08-22 audit). Many line items here are stale/false-positive — read `ROADMAP.md` Appendix A before acting on this file.
 
-# TNHComfy Master Plan — Remediation + 8 Major Features
+# TNHFantasy Master Plan — Remediation + 8 Major Features
 
 ## Executive Summary
 
-TNHComfy is architecturally solid with a massive implementation sprint already completed. This plan organizes the **remaining remediation work** alongside **8 major new features** into a coherent, dependency-aware roadmap. Work proceeds in phases; each phase produces a test-passed, reviewable increment.
+TNHFantasy is architecturally solid with a massive implementation sprint already completed. This plan organizes the **remaining remediation work** alongside **8 major new features** into a coherent, dependency-aware roadmap. Work proceeds in phases; each phase produces a test-passed, reviewable increment.
 
 ---
 

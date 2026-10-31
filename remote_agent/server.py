@@ -32,7 +32,7 @@ from provider_core.logging import get_logger
 
 logger = get_logger("server")
 
-app = FastAPI(title="TNHComfy Remote Agent")
+app = FastAPI(title="TNHFantasy Remote Agent")
 
 
 @app.middleware("http")
@@ -1669,7 +1669,7 @@ def _evaluate_laya_sync(model_id: str, context_text: str, questions: Any) -> Dic
         disk_candidates = [
             os.path.join(DATA_ROOT, "decisions", model_id),
             os.path.join(persistent_path, "decisions", model_id) if persistent_path else "",
-            f"/mnt/data/tnhcomfy/decisions/{model_id}",
+            f"/mnt/data/tnhfantasy/decisions/{model_id}",
             f"/content/agent-data/decisions/{model_id}",
             f"{os.path.expanduser('~')}/agent-data/decisions/{model_id}",
             f"/content/models/decisions/{model_id}",

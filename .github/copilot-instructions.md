@@ -1,4 +1,4 @@
-# TNHComfy Workspace Instructions
+# TNHFantasy Workspace Instructions
 
 ## Project Guidelines
 
@@ -13,7 +13,7 @@
 
 ## Architecture
 
-TNHComfy is a serverless ComfyUI wrapper with three parts:
+TNHFantasy is a serverless ComfyUI wrapper with three parts:
 
 - `backend_v2/`: FastAPI + PostgreSQL/pgvector (SQLite-compatible tests) + async job queue
 - `frontend_v2/`: React + Vite + Tailwind

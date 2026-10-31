@@ -1,6 +1,6 @@
 # Backend Documentation
 
-The backend of TNHComfy (`tnhcomfy-backend`) is built with **FastAPI** (Python 3.13), serving as the core engine for job queuing, orchestration, and communication between the frontend and inference providers.
+The backend of TNHFantasy (`tnhfantasy-backend`) is built with **FastAPI** (Python 3.13), serving as the core engine for job queuing, orchestration, and communication between the frontend and inference providers.
 
 ## Key technologies
 

@@ -347,7 +347,7 @@ def _residual_card_metadata(root: dict, data: dict, data_wrapper: bool) -> dict:
     residual_data: dict[str, Any] = {}
     for key, value in data.items():
         if key == "extensions" and isinstance(value, dict):
-            # The app's own extension (`tnhcomfy`) is PRESERVED here on
+            # The app's own extension (`tnhfantasy`) is PRESERVED here on
             # purpose: it is the character's identity, and SillyTavern
             # preserves unknown extensions, so a card that has been through
             # SillyTavern still knows which character it came from. The

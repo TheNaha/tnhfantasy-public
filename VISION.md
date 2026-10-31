@@ -1,6 +1,6 @@
-# TNHComfy Vision Document
+# TNHFantasy Vision Document
 
-TNHComfy has evolved from a simple ComfyUI image generator wrapper into a **Comprehensive AI Fantasy Engine**. It integrates three core pillars:
+TNHFantasy has evolved from a simple ComfyUI image generator wrapper into a **Comprehensive AI Fantasy Engine**. It integrates three core pillars:
 1. **Image Generation**: Using serverless providers (Modal, Beam) wrapped around ComfyUI.
 2. **Roleplay Chatbots**: Stateful, SillyTavern-style character chats with autonomous agentic workflows.
 3. **Story Sandbox**: An AI Dungeon-style interactive document editor for crafting stories.

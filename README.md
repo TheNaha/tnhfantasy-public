@@ -1,4 +1,4 @@
-# TNHComfy
+# TNHFantasy
 
 An AI fantasy engine with three pillars sharing one data layer (the World Vault): image generation, roleplay chat, and a story sandbox. See [docs/architecture.md](docs/architecture.md).
 
@@ -17,9 +17,9 @@ An AI fantasy engine with three pillars sharing one data layer (the World Vault)
 
 ## Stack
 
-- **tnhcomfy-db** — PostgreSQL 16 + pgvector
-- **tnhcomfy-frontend** — React 19 + Vite (port 5174, bun only)
-- **tnhcomfy-backend** — FastAPI on port 8002 (loopback/named addresses only; no auth)
+- **tnhfantasy-db** — PostgreSQL 16 + pgvector
+- **tnhfantasy-frontend** — React 19 + Vite (port 5174, bun only)
+- **tnhfantasy-backend** — FastAPI on port 8002 (loopback/named addresses only; no auth)
 - **Compute** — in-process engines in `backend_v2/services/engines/` talking to Modal, Beam, Direct ComfyUI, and remote agents over the network. There are no provider sidecar containers in this stack.
 
 ## Quick start

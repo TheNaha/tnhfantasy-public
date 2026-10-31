@@ -238,7 +238,7 @@ describe('export / import', () => {
     it('rejects a file that is not a preset, with a readable reason', () => {
         expect(() => parsePresetPayload('nope')).toThrow('not valid JSON');
         expect(() => parsePresetPayload(JSON.stringify({ kind: 'something-else' })))
-            .toThrow('not a TNHComfy batch preset');
+            .toThrow('not a TNHFantasy batch preset');
         expect(() => parsePresetPayload(JSON.stringify({ steps: 4 }))).toThrow('no name');
     });
 

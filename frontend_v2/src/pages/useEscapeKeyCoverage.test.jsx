@@ -40,7 +40,7 @@ function wrap(node) {
 beforeEach(() => {
     vi.clearAllMocks();
     apiMock.get.mockResolvedValue([]);
-    localStorage.setItem('tnhcomfy_setup_complete', 'true');
+    localStorage.setItem('tnhfantasy_setup_complete', 'true');
 });
 
 describe('Escape closes the overlays that were converted', () => {

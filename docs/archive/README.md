@@ -12,7 +12,7 @@ and everything in it was verified against the code on 2026-09-26.
 | File | Retired because |
 |---|---|
 | `PLAN.md` | Superseded by `ROADMAP.md` (2026-08-22), which was itself superseded. Its 8-feature roadmap was implemented. |
-| `ROADMAP.md` | Superseded by `.kilo/plans/1787583794283-tnhcomfy-hardening-plan.md`. Still listed the audit's "open" batches long after they were done. |
+| `ROADMAP.md` | Superseded by `.kilo/plans/1787583794283-tnhfantasy-hardening-plan.md`. Still listed the audit's "open" batches long after they were done. |
 | `REMEDIATION_PLAN.md` | Batches 0–3 and 5 marked ✅ were in fact done, but Batch 4 and the "pending" Batch 5 items had also been implemented without this file being updated. Nothing referenced it. |
 | `REMEDIATION_PLAN_v2.md` | Superseded by `ROADMAP.md`. |
 | `DEMO_GAPS_PLAN.md` | Superseded by the 2026-08-24 plan. Its "demo feel" diagnosis was accurate; its phasing is done. One decision from it survives and is cited in `docs/STATUS.md`: auth is intentionally out of scope for a local single-user studio. |
@@ -21,7 +21,7 @@ and everything in it was verified against the code on 2026-09-26.
 ## The two genuine cross-references that leave this directory
 
 - The plan `ROADMAP.md` and `DEMO_GAPS_PLAN.md` point at
-  (`.kilo/plans/1787583794283-tnhcomfy-hardening-plan.md`) still exists and is
+  (`.kilo/plans/1787583794283-tnhfantasy-hardening-plan.md`) still exists and is
   the 2026-08-24 audit those documents defer to.
 - `.kilo/plans/` also holds several other session plans, including two named
   `comprehensive-hardening-plan`. Those are per-session working notes, not

@@ -60,7 +60,7 @@ describe('CharacterCardExportMenu', () => {
             expect.stringContaining('V3 PNG'),
             expect.stringContaining('JSON'),
             expect.stringContaining('CHARX'),
-            expect.stringContaining('TNHComfy bundle'),
+            expect.stringContaining('TNHFantasy bundle'),
         ]);
         expect(items[0].textContent).toContain('default');
     });
@@ -95,7 +95,7 @@ describe('CharacterCardExportMenu', () => {
         const { onExport, trigger } = renderMenu();
 
         fireEvent.click(trigger);
-        fireEvent.click(screen.getByRole('menuitem', { name: /TNHComfy bundle/ }));
+        fireEvent.click(screen.getByRole('menuitem', { name: /TNHFantasy bundle/ }));
         expect(onExport).toHaveBeenCalledWith(
             character,
             'bundle',

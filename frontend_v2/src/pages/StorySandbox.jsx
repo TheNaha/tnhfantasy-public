@@ -1145,7 +1145,7 @@ export default function StorySandbox() {
 
     const handleBatchVariations = useCallback(() => {
         if (!lastIllustrationPrompt) return;
-        sessionStorage.setItem('tnhcomfy_batch_prompt', lastIllustrationPrompt);
+        sessionStorage.setItem('tnhfantasy_batch_prompt', lastIllustrationPrompt);
         navigate('/batch-generate');
     }, [lastIllustrationPrompt, navigate]);
 

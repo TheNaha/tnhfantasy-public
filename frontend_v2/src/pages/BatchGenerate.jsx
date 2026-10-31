@@ -189,9 +189,9 @@ export default function BatchGenerate() {
     const [prompts, setPrompts] = useState(() => [...PRESETS.character_sheet.prompts]);
     const [basePrompt, setBasePrompt] = useState(() => {
         if (typeof window !== 'undefined') {
-            const stored = sessionStorage.getItem('tnhcomfy_batch_prompt');
+            const stored = sessionStorage.getItem('tnhfantasy_batch_prompt');
             if (stored) {
-                sessionStorage.removeItem('tnhcomfy_batch_prompt');
+                sessionStorage.removeItem('tnhfantasy_batch_prompt');
             }
             return stored || '';
         }

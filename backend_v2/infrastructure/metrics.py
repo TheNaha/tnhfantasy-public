@@ -214,7 +214,7 @@ APP_INFO = Info(
     "Application information",
     registry=REGISTRY,
 )
-APP_INFO.info({"name": "tnhcomfy", "version": "2.0.0"})
+APP_INFO.info({"name": "tnhfantasy", "version": "2.0.0"})
 
 
 # ============================================================================

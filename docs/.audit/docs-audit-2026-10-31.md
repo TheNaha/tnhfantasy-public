@@ -38,7 +38,7 @@ Scope: whole repo. Baseline: maintenance pass 2026-10-31 (commit 6af8e33d), back
 
 ## Missing Coverage
 
-9. **Multi-process / cross-process dispatch not documented as supported.** `backend_v2/infrastructure/worker_registry.py` `start_cross_process_dispatch_listener`; PG NOTIFY bus `tnhcomfy_job_events`. Docs still imply single-process only. Action: note in architecture/backend.
+9. **Multi-process / cross-process dispatch not documented as supported.** `backend_v2/infrastructure/worker_registry.py` `start_cross_process_dispatch_listener`; PG NOTIFY bus `tnhfantasy_job_events`. Docs still imply single-process only. Action: note in architecture/backend.
 10. **Asset migration background task** (`_run_asset_migration`) and **provider host refresh timer** are undocumented startup side effects. Action: add to startup sequence.
 11. **`docs/.env.example` drift guard** exists (`tests/test_env_contracts.py`) and passes; no doc gap, but worth a one-line pointer in backend.md. (optional)
 

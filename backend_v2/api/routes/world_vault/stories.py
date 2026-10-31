@@ -481,7 +481,7 @@ def export_story(story_id: str, format: str = "json", session: Session = Depends
   <metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">
     <dc:identifier id="bookid">{epub_id}</dc:identifier>
     <dc:title>{html_lib.escape(title)}</dc:title>
-    <dc:creator>Auto-exported by TNHComfy</dc:creator>
+    <dc:creator>Auto-exported by TNHFantasy</dc:creator>
     <dc:language>en</dc:language>
   </metadata>
   <manifest>

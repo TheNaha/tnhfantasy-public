@@ -4,11 +4,11 @@
 
 > **SUPERSEDED** by `ROADMAP.md` (2026-08-22 audit). The "Unstaged Changes — 68 files" section is stale (tree was clean at audit) and several P0 items are false positives — see `ROADMAP.md` Appendix A.
 
-# TNHComfy Remediation & Feature-Completeness Plan
+# TNHFantasy Remediation & Feature-Completeness Plan
 
 ## Executive Summary
 
-TNHComfy has a solid architectural foundation but rapid feature additions have introduced **5 P0 production bugs**, **significant performance issues**, **integration gaps**, and **incomplete implementations** that make the new workspaces feel "demo-like." This plan prioritizes fixes and feature-completeness work to make the site usable out-of-box for casual users while adding depth for power users.
+TNHFantasy has a solid architectural foundation but rapid feature additions have introduced **5 P0 production bugs**, **significant performance issues**, **integration gaps**, and **incomplete implementations** that make the new workspaces feel "demo-like." This plan prioritizes fixes and feature-completeness work to make the site usable out-of-box for casual users while adding depth for power users.
 
 **Current state:**
 - Backend: 1466 tests passing, 2 skipped

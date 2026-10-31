@@ -364,6 +364,6 @@ async def test_resync_falls_back_to_civitai_red_on_404(session, monkeypatch):
     ]
     # Verify Authorization header was passed
     assert client.headers_passed[0] == {
-        "User-Agent": "TNHComfy/1.0",
+        "User-Agent": "TNHFantasy/1.0",
         "Authorization": "Bearer test-secret-token",
     }
