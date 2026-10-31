@@ -94,3 +94,9 @@ test.sh
 ss.png
 Tavern-Cards/
 ss2.png
+
+# AI-generated artifacts (kept on 'internal' branch only)
+/SECURITY_AUDIT_PUBLIC_RELEASE.md
+/TNHComfy_LLM_Decision_Brief.md
+/maintenance/
+docs/audit-*.md
