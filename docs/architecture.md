@@ -51,16 +51,21 @@ Key conventions:
 - **Config precedence:** `COMFY_*` env vars > `config.json` (runtime-editable via the Settings UI, written atomically) > `DEFAULT_CONFIG` in `config.py`.
 - **No Alembic.** Migrations are appended as `MigrationStep(version=..., apply_fn=...)` in `infrastructure/migrations/steps.py`, run once at startup and recorded in `schema_migrations`.
 - **Python models use `metadata_`**, aliased to `metadata` on the wire.
-- **Single uvicorn worker only.** `--workers N` is refused at boot because the websocket broadcast, scheduler, and job recovery are all in-process per-process.
+- **Multi-worker is supported.** `--workers N` (or `COMFY_UVICORN_WORKERS`/`WEB_CONCURRENCY`) no longer refuses to boot; the backend logs a warning instead. Job dispatch is safe under `FOR UPDATE SKIP LOCKED`, and WebSocket events cross processes via the Postgres NOTIFY bus (`tnhcomfy_job_events`), so each worker re-broadcasts to its local Socket.IO clients. Boot-time side effects (migrations, scheduler, recovery) run N times but are advisory-locked/idempotent. Single worker remains the documented default and the safest choice on small hosts.
 
-### Startup sequence (`api/main.py` lifespan)
+### Startup sequence (`api/main.py` lifespan → `api/lifecycle.py` `startup_application`)
 
-1. Initialize the database and run schema migrations.
-2. Load load-balancer state from the DB.
-3. Start the async job queue (worker pool).
-4. Recover PENDING/RUNNING jobs (handles restarts — order matters; post-processing jobs are finalised before the sweep re-enqueues active ones).
-5. Start the background scheduler (vacuum, reconciliation, preview prefetch, data cleanup, job reaper, idle simulation, CivitAI resync).
-6. Mount the Socket.IO ASGI app on `/socket.io`.
+1. Initialize the database and run schema migrations; clean up provider-state artifacts.
+2. Configure the async job queue (worker pool) and reset interrupted reconciliations.
+3. Prime the known-provider-host set (used for outbound token attachment) and start a 60s refresh timer.
+4. Start the job queue and the provider-monitor background task.
+5. Start provider telemetry polling.
+6. Recover PENDING/RUNNING jobs (handles restarts — ordering is load-bearing; post-processing jobs are finalised before the sweep re-enqueues active ones).
+7. Start the scheduler: provider-host refresh, vacuum, preview prefetch, data cleanup, job reaper, idle simulation (opt-in), CivitAI resync, in-process reconciliation.
+8. Start the Socket.IO broadcast task and the cross-process dispatch listener (Postgres LISTEN).
+9. Start world integration and the asset-migration background task.
+
+The full phase list (with `startup_init` phase markers) is the source of truth in `api/lifecycle.py`; `backend.md` keeps the expanded version.
 
 ---
 
@@ -72,7 +77,7 @@ Key conventions:
 
 Retries use tenacity with exponential backoff. 4xx is permanent (no retry); 5xx/429/408 are transient.
 
-Provider engines are selected by provider type in `engine_factory.py`. Provider *selection* (which healthy provider gets a job) is the load balancer's job, filtered by capability (`provider.serves(task_type)`), not by worker type. Worker types are `image`, `llm`, `tts`, and `direct`.
+Provider engines are selected by provider type in `engine_factory.py`. Provider *selection* (which healthy provider gets a job) is the load balancer's job, filtered by capability (`provider.serves(task_type)`), not by category. Provider categories are `image`, `llm`, `tts`, and `hybrid` (a `hybrid` provider can serve several); execution shape is a separate axis (`transport`: in-process vs. direct HTTP).
 
 The backend never runs ComfyUI itself. Inference always goes to a worker. Cloud workers are deployed only from the host CLI (`bash scripts/deploy.sh {image,tts,llm,beam,all}`) — there is deliberately no deploy HTTP route.
 
@@ -85,7 +90,7 @@ The chat pipeline is **manifest-driven**, not hardcoded:
 - `services/pipeline_stages.py` — the actual stage executors.
 - `core/pipeline_limits.py` — every limit read by the code itself, so the LLM Studio manifest (`GET /api/v2/llm/pipeline`) cannot quote a number the pipeline doesn't enforce.
 
-Limits: `MAX_AUTONOMOUS_TURNS=4`, `MAX_CONTINUATION_ATTEMPTS=4`, `MAX_AGENTIC_IMAGES=2`, `UPDATER_GATE_THRESHOLD=0.55`, `IMAGE_TRIGGER_THRESHOLD=0.65`, `DIRECTOR_TIMEOUT_SECONDS=15.0`.
+Limits (from `core/pipeline_limits.py`): `MAX_AUTONOMOUS_TURNS=4`, `MAX_CONTINUATION_ATTEMPTS=4`, `MAX_AGENTIC_IMAGES=2`, `UPDATER_GATE_THRESHOLD=0.55`, `IMAGE_TRIGGER_THRESHOLD=0.65`, `DIRECTOR_TIMEOUT_SECONDS=15.0`, `DEFAULT_SCENE_GRAPH_BUDGET=4.0`.
 
 Flow for one user message:
 

@@ -103,7 +103,7 @@ The application is accessible at **port 5174** (frontend).
 A new provider is a row in the DB, not a compose service. Either:
 
 - create it in the UI: **Providers → + Add Provider**, pick an engine type, and fill its credential fields; or
-- `POST /api/v2/providers` with `{ "type": "modal"|"beam"|"openai_compat"|..., "worker_type": "image"|"llm"|"tts"|"direct", "enabled": true, ...credentials }`.
+- `POST /api/v2/providers` with `{ "type": "modal"|"beam"|"openai_compat"|..., "worker_type": "image"|"llm"|"tts"|"hybrid", "enabled": true, ...credentials }`. (`"direct"` is a transport, not a category — see `services/engines/registry.py`.)
 
 The schema for each type is served by `GET /api/v2/providers/schemas` (`ProviderModal.jsx` is fully schema-driven — type options, credential fields, and config are all rendered from it; save payload is schema-only). An added provider with a live credential resolves on next reconcile to an `InProcessEngine` and can receive jobs immediately; with no credential it is marked `connected:false` until one is supplied. No compose change, no `--profile`, no per-worker env file.
 

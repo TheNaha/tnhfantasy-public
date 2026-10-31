@@ -41,14 +41,16 @@ Migrations run **automatically at backend startup** via the ordered steps runner
 
 ## Background tasks and lifecycle
 
-The lifespan (`api/main.py`) runs:
+The lifespan (`api/main.py` → `api/lifecycle.py` `startup_application`) runs:
 
-1. Database init + schema migrations.
-2. Load-balancer state load from DB.
-3. Async job queue (worker pool) start.
-4. PENDING/RUNNING job recovery (post-processing jobs are finalised before the sweep re-enqueues active ones — ordering is load-bearing).
-5. Background scheduler: vacuum, reconciliation, preview prefetch, data cleanup, job reaper, idle simulation, CivitAI resync.
-6. Socket.IO broadcast on `/socket.io`.
+1. Database init + schema migrations; provider-state artifact cleanup.
+2. Job-queue configuration (worker pool) and interrupted-reconciliation reset.
+3. Known-provider-host priming + 60s refresh timer.
+4. Job queue start; provider monitor + telemetry polling.
+5. PENDING/RUNNING job recovery (post-processing jobs are finalised before the sweep re-enqueues active ones — ordering is load-bearing).
+6. Scheduler: provider-host refresh, vacuum, preview prefetch, data cleanup, job reaper, idle simulation (opt-in), CivitAI resync, in-process reconciliation.
+7. Socket.IO broadcast + cross-process dispatch listener (Postgres LISTEN).
+8. World integration start and the asset-migration background task.
 
 Image jobs complete in the background: thumbnail generation, blurhash, and `assets` row upsert via `asset_reconciler.reconcile_asset` happen before the job transitions to `COMPLETED`, so the gallery is always consistent.
 
@@ -74,7 +76,7 @@ The venv is **`.venv`** (not `venv`). `setup_jules.sh` creates `backend_v2/.venv
    pip install -r requirements.txt
    ```
 3. Copy `.env.example` to `.env` **at the repository root** and fill in the necessary tokens (`HF_TOKEN`, `CIVITAI_TOKEN`, provider credentials). `config.py` resolves `<repo-root>/.env`. A `backend_v2/.env` is gitignored and read by nothing.
-4. Note that this path uses **SQLite**, not the Compose stack's PostgreSQL. `setup_jules.sh` and `cd backend_v2 && uvicorn` both resolve to `sqlite:///./data/comfy.db`, while Compose runs `postgresql://…@db/comfy`. They are different databases, so a character you create in one is invisible in the other.
+4. Note that this path uses **SQLite**, not the Compose stack's PostgreSQL. `setup_jules.sh` and `cd backend_v2 && uvicorn` both resolve to `sqlite:///./data/db/comfy.db` (the `config.py` default), while Compose runs `postgresql://…@db/comfy`. They are different databases, so a character you create in one is invisible in the other. (One maintenance script, `scripts/backfill_download_urls.py`, still defaults to the older `sqlite:///./data/comfy.db` path — a latent inconsistency, not fixed here.)
 5. Run the server (loopback only):
    ```bash
    .venv/bin/uvicorn api.main:app --host 127.0.0.1 --port 8002 --reload
@@ -88,7 +90,7 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build -V -d
 
 ## Testing
 
-- `pytest.ini` sets `addopts = -n auto` (xdist). The full suite (~3,900 tests) has OOM'd this host — run targeted files, and never run vitest at the same time as backend pytest.
+- `pytest.ini` sets `addopts = -n auto` (xdist). The full suite (~4,200 tests) has OOM'd this host — run targeted files, and never run vitest at the same time as backend pytest.
 - Postgres/pgvector tests run only when `PGVECTOR_TEST_URL` is set (as it is in CI).
 - Tests that create DB sessions must override both `api.deps.get_session` and `infrastructure.database.get_session` — use the `session` fixture and never open your own session.
 - `docs/api.md` is generated; after changing any router, run `scripts/generate_api_docs.py` or `test_api_docs_contract.py` fails.
@@ -115,4 +117,4 @@ Separate stack with its own compose file, `agentctl.sh`/`agentctl.bat`, and bina
 
 ### Background scheduler jobs (started in `api/lifecycle.py`)
 
-Provider host refresh, DB vacuum, model-preview prefetch, data cleanup, job reaper, idle simulation (opt-in), CivitAI resync, in-process reconciliation, provider telemetry polling, WebSocket broadcast. Job IDs and intervals are registered at startup; `GET /api/settings/scheduler` (or similar) exposes status.
+Registered at startup (see `startup_application`): provider-host refresh (60s), DB vacuum (24h), model-preview prefetch, data cleanup (1h), job reaper (5min), idle simulation (opt-in, default 10min), CivitAI resync (24h), in-process reconciliation, provider telemetry polling, provider monitor, WebSocket broadcast, asset migration (one-shot background thread), cross-process dispatch listener, world integration. `GET /api/settings/scheduler` exposes status and run history.

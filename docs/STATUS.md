@@ -55,8 +55,8 @@ consolidation sweep recorded in `docs/audit-2026-10-21.md`:
 
 | Suite | Count | Command |
 |---|---|---|
-| Backend | **3911 passed, 5 skipped** (~6 min) | `cd backend_v2 && .venv/bin/python -m pytest` |
-| Frontend | **1978 passed across 218 files** (~4 min) | `cd frontend_v2 && bun run test -- --run` |
+| Backend | **4217 passed, 5 skipped** (~6 min) | `cd backend_v2 && .venv/bin/python -m pytest` |
+| Frontend | **2059 passed across 232 files** (~4 min) | `cd frontend_v2 && bun run test -- --run` |
 | remote_agent | exports clean (no tests of its own) | covered by `tests/test_in_process_engines.py` contract tests |
 
 `bun run lint` is **0 errors / 3 warnings** and `ruff check .` is clean.
@@ -477,7 +477,7 @@ of printing credentials for a human to paste, and its dead API path
 (`/api/v2/world-vault/llm-config/catalog`, which has never been a route on
 any version) is fixed.
 
-Backend suite: 3911 passed, 5 skipped, 0 failed.
+Backend suite: 4217 passed, 5 skipped, 0 failed.
 
 ### The 2026-10-20 chat-workflow pass — making Laya's decision reach the model
 

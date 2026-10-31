@@ -40,7 +40,7 @@ bun run test:e2e                                 # Playwright; starts its own de
 
 ## Testing gotchas
 
-- `pytest.ini` sets `addopts = -n auto` (xdist, one worker per core). The full suite (~3,900 tests, ~6 min) has OOM'd this host. Run targeted files, and never run vitest at the same time as backend pytest.
+- `pytest.ini` sets `addopts = -n auto` (xdist, one worker per core). The full suite (~4,200 tests, ~6 min) has OOM'd this host. Run targeted files, and never run vitest at the same time as backend pytest.
 - Unit tests use in-memory SQLite. Postgres/pgvector tests (`test_migration_indexes_exist.py`, `test_pgvector_integration.py`, …) run only when `PGVECTOR_TEST_URL` is set, as it is in CI.
 - Tests that create DB sessions must override **both** `api.deps.get_session` and `infrastructure.database.get_session` (see `tests/conftest.py`). An autouse fixture redirects `get_session_sync()` and rebinds it in every module that already imported it. Use the `session` fixture and never open your own session, or the test hits the real DB.
 - Tests that read files outside `backend_v2` (`docs/`, `frontend_v2/e2e/`, `remote_agent/`) locate the repo root through `tests/repo_paths.py`: ancestors, then `TNH_REPO_ROOT`, then `/comfyui`.
