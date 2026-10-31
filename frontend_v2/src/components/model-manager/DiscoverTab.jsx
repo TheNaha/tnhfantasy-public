@@ -180,23 +180,27 @@ export default function DiscoverTab() {
         }
 
         let cancelled = false;
+        const abortController = new AbortController();
 
         api.post('/api/v2/models/check-installed/batch', {
             civitai_model_ids: civitaiModelIds,
+        }, {
+            signal: abortController.signal,
         })
             .then((data) => {
                 if (!cancelled) {
                     setInstalledInfoByModelId(data.models || {});
                 }
             })
-            .catch(() => {
-                if (!cancelled) {
+            .catch((error) => {
+                if (!cancelled && error.name !== 'AbortError') {
                     setInstalledInfoByModelId({});
                 }
             });
 
         return () => {
             cancelled = true;
+            abortController.abort();
         };
     }, [results, source]);
 

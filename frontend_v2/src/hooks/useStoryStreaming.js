@@ -192,6 +192,8 @@ export function useStoryStreaming({
                             setEditorContent(freshChapter.content);
                             streamingBaseRef.current = freshChapter.content;
                         }
+                    }).catch((error) => {
+                        console.error("Failed to invalidate chapters query:", error);
                     });
                     if (job.id) clearStreamingJob(queryClient, job.id);
                 }

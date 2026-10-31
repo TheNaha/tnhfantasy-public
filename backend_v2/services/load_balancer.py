@@ -18,38 +18,23 @@ from core.entities import (
     LoadBalancerState,
     Provider,
 )
+from core.config_utils import parse_positive_float, parse_positive_int
 from core.provider_capabilities import (
     provider_supports_sampler,
     provider_supports_scheduler,
 )
 from infrastructure.background_tasks import start_background_task
 from infrastructure.logging import get_logger
-from infrastructure.repositories import ProviderRepository
-
+from infrastructure.repositories.provider_repo import ProviderRepository
 logger = get_logger("load_balancer")
 
 
-def _parse_positive_float(raw_value: str | None, default: float) -> float:
-    try:
-        parsed = float(raw_value) if raw_value is not None else default
-    except (TypeError, ValueError):
-        parsed = default
-    return parsed if parsed > 0 else default
 
-
-def _parse_positive_int(raw_value: str | None, default: int) -> int:
-    try:
-        parsed = int(raw_value) if raw_value is not None else default
-    except (TypeError, ValueError):
-        parsed = default
-    return parsed if parsed > 0 else default
-
-
-MODEL_AVAILABILITY_CACHE_TTL_SECONDS = _parse_positive_float(
+MODEL_AVAILABILITY_CACHE_TTL_SECONDS = parse_positive_float(
     os.getenv("COMFY_MODEL_AVAILABILITY_CACHE_TTL_SECONDS"),
     3.0,
 )
-MODEL_AVAILABILITY_CACHE_MAX_ENTRIES = _parse_positive_int(
+MODEL_AVAILABILITY_CACHE_MAX_ENTRIES = parse_positive_int(
     os.getenv("COMFY_MODEL_AVAILABILITY_CACHE_MAX_ENTRIES"),
     256,
 )
@@ -70,10 +55,10 @@ _provider_health_cache = TTLCache(
 # A TTLCache (not a bare dict) so entries age out even when a provider row is
 # deleted without going through `engine_factory.invalidate_engine`, and the
 # size is bounded by configuration rather than provider churn.
-_CAPABILITY_CACHE_TTL_SECONDS = _parse_positive_float(
+_CAPABILITY_CACHE_TTL_SECONDS = parse_positive_float(
     os.getenv("COMFY_PROVIDER_CAPABILITY_CACHE_TTL_SECONDS"), 60.0
 )
-_CAPABILITY_CACHE_MAX_ENTRIES = _parse_positive_int(
+_CAPABILITY_CACHE_MAX_ENTRIES = parse_positive_int(
     os.getenv("COMFY_PROVIDER_CAPABILITY_CACHE_MAX_ENTRIES"), 128
 )
 _capability_cache: TTLCache[str, tuple[float, dict[str, Any] | None]] = TTLCache(
@@ -84,7 +69,7 @@ _capability_cache: TTLCache[str, tuple[float, dict[str, Any] | None]] = TTLCache
 
 # Circuit-breaker: after N consecutive failures a provider is skipped until
 # its failure streak is reset by a successful job.
-_FAILURE_STREAK_THRESHOLD = _parse_positive_int(
+_FAILURE_STREAK_THRESHOLD = parse_positive_int(
     os.getenv("COMFY_FAILURE_STREAK_THRESHOLD"),
     3,
 )
@@ -94,7 +79,7 @@ _FAILURE_STREAK_THRESHOLD = _parse_positive_int(
 # path in the image branch does not apply to them. We still skip providers that
 # are in a failure streak before honouring the configured strategy, mirroring the
 # failure-aware selection used by the preferred/warm-cold routing paths.
-LLM_FAILURE_STREAK_THRESHOLD = _parse_positive_int(
+LLM_FAILURE_STREAK_THRESHOLD = parse_positive_int(
     os.getenv("COMFY_LLM_FAILURE_STREAK_THRESHOLD"),
     3,
 )
@@ -115,7 +100,7 @@ def streak_threshold_for(task_type: str) -> int:
 
 # Bound for the in-process engine health probe in `_check_provider_health`.
 # The 15s health cache means this only applies to the first caller to miss.
-_ENGINE_HEALTH_PROBE_TIMEOUT_SECONDS = _parse_positive_float(
+_ENGINE_HEALTH_PROBE_TIMEOUT_SECONDS = parse_positive_float(
     os.getenv("COMFY_LB_ENGINE_HEALTH_TIMEOUT_SECONDS"),
     5.0,
 )

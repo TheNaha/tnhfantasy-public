@@ -18,6 +18,9 @@ from sqlmodel import Session, select
 
 from core.asset_sql import CHECKPOINT_KEY, RESOLVED_TS
 from core.entities import Asset, AssetKind, ModelFile, ModelV2, ModelVersion, is_unet_only_model
+from infrastructure.logging import get_logger
+
+logger = get_logger("checkpoint_recommendations")
 
 
 def _resolve_checkpoint_metadata(session: Session, filename: str) -> dict[str, Any]:
@@ -66,8 +69,8 @@ def _resolve_checkpoint_metadata(session: Session, filename: str) -> dict[str, A
     if m:
         try:
             civitai_ver = int(m.group(1))
-        except Exception:
-            pass
+        except (ValueError, TypeError) as exc:
+            logger.debug("checkpoint_civitai_ver_parse_failed", filename=basename, error=str(exc))
 
     is_flux = "flux" in basename.lower()
     dl_url = f"https://civitai.com/api/download/models/{civitai_ver}" if civitai_ver else None

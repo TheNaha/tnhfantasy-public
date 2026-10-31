@@ -2,7 +2,7 @@
 # Consolidates all periodic tasks (reconciliation, cleanup, etc.)
 
 from collections.abc import Callable
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import hashlib
 import time
 from typing import Any
@@ -153,7 +153,7 @@ def _guarded(func: Callable, job_id: str) -> Callable:
                         }
                     return None
                 start_time = time.monotonic()
-                run_at = datetime.now().isoformat()
+                run_at = datetime.now(timezone.utc).isoformat()
                 try:
                     res = await func(*args, **kwargs)
                     duration = round(time.monotonic() - start_time, 3)
@@ -190,7 +190,7 @@ def _guarded(func: Callable, job_id: str) -> Callable:
                     }
                 return None
             start_time = time.monotonic()
-            run_at = datetime.now().isoformat()
+            run_at = datetime.now(timezone.utc).isoformat()
             try:
                 res = func(*args, **kwargs)
                 duration = round(time.monotonic() - start_time, 3)
@@ -273,7 +273,7 @@ def add_interval_job(
     
     trigger = IntervalTrigger(seconds=interval_seconds)
 
-    next_run = datetime.now() if start_immediately else datetime.now() + timedelta(seconds=interval_seconds)
+    next_run = datetime.now(timezone.utc) if start_immediately else datetime.now(timezone.utc) + timedelta(seconds=interval_seconds)
 
     scheduler.add_job(
         _guarded(func, job_id),

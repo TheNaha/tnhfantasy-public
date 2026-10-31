@@ -1165,7 +1165,7 @@ class JobService:
         Returns:
             Dict with 'by_status', 'total', 'avg_durations' keys
         """
-        cutoff = datetime.utcnow() - timedelta(days=days)
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
         
         rows = self.session.exec(
             select(Job.status, Job.started_at, Job.completed_at)

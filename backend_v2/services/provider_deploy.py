@@ -557,7 +557,7 @@ async def stream_deploy(
     queue_out: asyncio.Queue[str | None] = asyncio.Queue()
     active.subscribers.add(queue_out)
 
-    asyncio.create_task(
+    task = asyncio.create_task(
         _run_deploy_process(
             active,
             spec,
@@ -568,6 +568,18 @@ async def stream_deploy(
             provider_id,
         )
     )
+    
+    def _handle_deploy_task_done(t):
+        """Ensure any uncaught exceptions in deploy process are logged."""
+        try:
+            exc = t.exception()
+            if exc:
+                logger.error("provider_deploy_task_failed", error=str(exc))
+                active.fail(f"Deploy process crashed: {str(exc)}")
+        except asyncio.CancelledError:
+            pass
+    
+    task.add_done_callback(_handle_deploy_task_done)
 
     try:
         while True:

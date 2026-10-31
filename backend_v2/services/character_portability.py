@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from sqlmodel import Session, select
 
+from infrastructure.logging import get_logger
 from core.entities import (
     Character,
     CharacterMemory,
@@ -30,6 +31,7 @@ from core.entities import (
     World,
 )
 
+logger = get_logger("character_portability")
 
 def not_portable_features(session: Session, character: Character) -> list[dict[str, str]]:
     """The features of `character` that a SillyTavern card cannot express.
@@ -85,7 +87,8 @@ def not_portable_features(session: Session, character: Character) -> list[dict[s
                     select(Location).where(Location.world_id == character.world_id)
                 ).all()
             )
-        except Exception:
+        except Exception as exc:
+            logger.warning("character_portability_query_failed", field="locations", error=str(exc))
             location_count = 0
         detail = "belongs to a world in this vault"
         if world is not None and getattr(world, "name", None):
@@ -115,7 +118,8 @@ def not_portable_features(session: Session, character: Character) -> list[dict[s
                 select(Collection).where(Collection.character_id == character.id)
             ).all()
         )
-    except Exception:
+    except Exception as exc:
+        logger.warning("character_portability_query_failed", field="gallery", error=str(exc))
         gallery_count = 0
     if gallery_count:
         out.append(
@@ -130,7 +134,8 @@ def not_portable_features(session: Session, character: Character) -> list[dict[s
         chat_count = len(
             session.exec(select(Chat).where(Chat.character_id == character.id)).all()
         )
-    except Exception:
+    except Exception as exc:
+        logger.warning("character_portability_query_failed", field="chats", error=str(exc))
         chat_count = 0
     if chat_count:
         out.append(
@@ -147,7 +152,8 @@ def not_portable_features(session: Session, character: Character) -> list[dict[s
                 select(CharacterMemory).where(CharacterMemory.character_id == character.id)
             ).all()
         )
-    except Exception:
+    except Exception as exc:
+        logger.warning("character_portability_query_failed", field="memories", error=str(exc))
         memory_count = 0
     if memory_count:
         out.append(

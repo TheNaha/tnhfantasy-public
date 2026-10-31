@@ -135,6 +135,7 @@ export function useJobsRealtime() {
             queryClient.setQueryData(['jobs', job.id], (old) => old ? { ...old, ...job } : job);
 
             queryClient.setQueryData(['jobs', 'active'], (old = []) => {
+                if (!Array.isArray(old)) return [job];
                 return old.map(j => j.id === job.id ? { ...j, ...job } : j);
             });
         };
@@ -158,6 +159,7 @@ export function useJobsRealtime() {
             }
 
             queryClient.setQueryData(['jobs', 'active'], (old = []) => {
+                if (!Array.isArray(old)) return [];
                 const remaining = old.filter(j => j.id !== job.id);
                 if (isImageJob && old.length > 0 && remaining.length === 0) {
                     toast.success('All jobs completed! Queue is empty.', { icon: '🎉' });

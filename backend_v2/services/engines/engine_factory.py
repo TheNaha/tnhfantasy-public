@@ -14,6 +14,7 @@ from typing import Any, Dict, Optional
 from cachetools import TTLCache
 
 from infrastructure.logging import get_logger
+from core.config_utils import parse_positive_float
 from services.engines.base import InProcessEngine
 from services.engines.beam_engine import BeamEngine
 from services.engines.direct_comfy_engine import DirectComfyEngine, DirectTTSEngine
@@ -48,13 +49,6 @@ DEFAULT_MODAL_LLM_APP_NAME = "tnh-llm"
 DEFAULT_MODAL_LLM_CLS_NAME = "ChatLLM"
 
 
-def _parse_positive_float(raw: str | None, default: float) -> float:
-    try:
-        value = float(raw) if raw else default
-    except (TypeError, ValueError):
-        return default
-    return value if value > 0 else default
-
 
 # Engine instances cache credentials and resolved config, so entries expire:
 # an out-of-band credential rotation (env-file edit without a process
@@ -63,7 +57,7 @@ def _parse_positive_float(raw: str | None, default: float) -> float:
 # (TTLCache takes ttl once): changing COMFY_ENGINE_CACHE_TTL_SECONDS
 # requires a process restart. Env-only like the other COMFY_* operational
 # knobs.
-ENGINE_CACHE_TTL_SECONDS = _parse_positive_float(
+ENGINE_CACHE_TTL_SECONDS = parse_positive_float(
     os.getenv("COMFY_ENGINE_CACHE_TTL_SECONDS"), 1800.0
 )
 _ENGINE_CACHE: TTLCache = TTLCache(maxsize=128, ttl=ENGINE_CACHE_TTL_SECONDS)
@@ -962,15 +956,15 @@ def _close_engine(engine) -> None:
     except RuntimeError:
         try:
             asyncio.run(close())
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("engine_close_failed_sync", error=str(exc))
         return
     try:
         task = loop.create_task(close())
         _closing_tasks.add(task)
         task.add_done_callback(_closing_tasks.discard)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("engine_close_task_failed", error=str(exc))
 
 
 def close_engine_when_idle(engine) -> None:
