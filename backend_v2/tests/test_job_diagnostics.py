@@ -73,7 +73,7 @@ class TestDiagnostics:
 
     def test_duration_handles_naive_timestamps_from_database(self):
         """Columns are naive, so mixed naive/aware arithmetic must not raise."""
-        start = datetime(2026, 1, 1, 12, 0, 0)
+        start = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
         job = Job(
             status=JobStatus.FAILED,
             started_at=start,
@@ -249,7 +249,7 @@ class TestStaleRecovery:
     async def test_handles_naive_started_at_from_database(self, session):
         """Naive timestamps must not raise TypeError during recovery."""
         service = JobService(session)
-        naive_started = (datetime.now(timezone.utc) - timedelta(seconds=900)).replace(tzinfo=None)
+        naive_started = datetime.now(timezone.utc) - timedelta(seconds=900)
         job = make_job(session, status=JobStatus.SENT_TO_PROVIDER, started_at=naive_started)
 
         failed = await service.fail_stale_running_jobs(timeout_seconds=300)

@@ -14,7 +14,7 @@ query per asset is still correct, and still unusable at 16k.
 from __future__ import annotations
 
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy import event as sa_event
@@ -25,7 +25,7 @@ from core.entities import Asset, SessionAsset
 from core.entities import Session as GenerationSession
 from services.session_detector import MAX_DETECT_ASSETS, detect_sessions
 
-BASE = datetime(2026, 9, 27, 14, 0, 0)
+BASE = datetime(2026, 9, 27, 14, 0, 0, tzinfo=timezone.utc)
 
 
 def _asset(
@@ -81,7 +81,7 @@ def _members(session: SQLModelSession, session_id: str) -> set[str]:
 
 def _iso(moment: datetime) -> str:
     """API payloads carry datetimes as ISO strings, not as `datetime` objects."""
-    return moment.isoformat()
+    return moment.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 class TestSignals:

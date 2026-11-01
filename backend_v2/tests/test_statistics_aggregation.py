@@ -647,7 +647,7 @@ class TestDayBucket:
     def test_both_branches_produce_the_same_day_keys(self, session, engine, monkeypatch):
         """A dialect branch that changes the answer is a bug, not an optimisation.
         Seeded across three UTC days, then compared key for key."""
-        base = NOW.replace(tzinfo=None)
+        base = NOW
         for offset, count in ((0, 2), (1, 1), (40, 3)):
             for index in range(count):
                 session.add(
@@ -684,8 +684,8 @@ class TestUnfilteredHistogramCache:
                 filename=filename,
                 relative_path=f"default_user/main/x/{filename}",
                 workspace="main",
-                created_at=NOW.replace(tzinfo=None),
-                generated_at=NOW.replace(tzinfo=None),
+                created_at=NOW,
+                generated_at=NOW,
                 metadata_={"prompt": "p"},
             )
         )

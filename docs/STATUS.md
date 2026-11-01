@@ -50,16 +50,16 @@ error handling via the `ComfyError` hierarchy, `metadata_` in Python and
 
 ## Verified state
 
-All three suites green as of **2026-10-21**, re-measured after the
-consolidation sweep recorded in `docs/audit-2026-10-21.md`:
+All three suites green as of **2026-11-01**, re-measured after the
+maintenance sweep recorded in `docs/audit-2026-11-01.md`:
 
 | Suite | Count | Command |
 |---|---|---|
-| Backend | **4217 passed, 5 skipped** (~6 min) | `cd backend_v2 && .venv/bin/python -m pytest` |
+| Backend | **4200 passed, 5 skipped** (~6 min) | `cd backend_v2 && .venv/bin/python -m pytest` |
 | Frontend | **2059 passed across 232 files** (~4 min) | `cd frontend_v2 && bun run test -- --run` |
 | remote_agent | exports clean (no tests of its own) | covered by `tests/test_in_process_engines.py` contract tests |
 
-`bun run lint` is **0 errors / 3 warnings** and `ruff check .` is clean.
+`bun run lint` is **0 errors / 3 warnings** and `ruff check .` is clean from `backend_v2/`.
 
 Stack verified live after the changes: `localhost:5174` → 200,
 `/api/live` and `/api/ready` → 200, and the negative-`limit` probes that used to

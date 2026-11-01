@@ -323,14 +323,14 @@ class TestModelRepositoryV2ProviderStatus:
             status="downloading"
         )
 
-        modal_status.queued_at = datetime(2020, 1, 1)
-        beam_status.queued_at = datetime(2020, 1, 1)
+        modal_status.queued_at = datetime(2020, 1, 1, tzinfo=timezone.utc)
+        beam_status.queued_at = datetime(2020, 1, 1, tzinfo=timezone.utc)
         repo.session.add(modal_status)
         repo.session.add(beam_status)
         repo.session.commit()
 
         reset_count = repo.reset_stale_downloading_statuses(
-            stale_before=datetime(2021, 1, 1),
+            stale_before=datetime(2021, 1, 1, tzinfo=timezone.utc),
             provider_names=["modal-primary"],
         )
 
