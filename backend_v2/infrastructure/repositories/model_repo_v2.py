@@ -1,5 +1,6 @@
 # Model Repository V2 - Version-aware data access layer
 import json
+import os
 import re
 import unicodedata
 from datetime import datetime, timezone
@@ -746,15 +747,23 @@ class ModelRepositoryV2:
     
     def get_file_by_storage_path(self, directory: str, filename: str) -> ModelFile | None:
         """Get a file by its storage path components."""
-        norm_nfc = unicodedata.normalize("NFC", filename)
-        norm_nfd = unicodedata.normalize("NFD", filename)
-        candidates = list(dict.fromkeys([filename, norm_nfc, norm_nfd]))
+        clean_filename = filename.replace("\\", "/")
+        basename = os.path.basename(clean_filename)
+        candidate_strings = [filename, clean_filename, basename]
+        candidates = []
+        for c in candidate_strings:
+            if c:
+                candidates.extend([c, unicodedata.normalize("NFC", c), unicodedata.normalize("NFD", c)])
+        candidates = list(dict.fromkeys(candidates))
         stmt = select(ModelFile).join(
             ModelVersion, ModelFile.version_id == ModelVersion.id
         ).join(
             ModelV2, ModelVersion.model_id == ModelV2.id
         ).where(
-            ModelFile.storage_filename.in_(candidates),
+            or_(
+                ModelFile.storage_filename.in_(candidates),
+                ModelFile.original_filename.in_(candidates),
+            ),
             ModelV2.directory == directory
         )
         return self.session.exec(stmt).first()
@@ -1672,7 +1681,7 @@ class ModelRepositoryV2:
         return self.session.exec(stmt).all()
 
     def _iter_file_model_paths(self, paths: list[str] | None = None):
-        """Yield (file, version, model) tuples for files joined with their model info."""
+        """Yield (file, version, model, storage_path) tuples for files joined with their model info."""
         stmt = select(ModelFile, ModelVersion, ModelV2).join(
             ModelVersion, ModelFile.version_id == ModelVersion.id
         ).join(
@@ -1681,20 +1690,61 @@ class ModelRepositoryV2:
         if paths:
             filenames = []
             for p in paths:
-                fname = p.split('/')[-1]
+                fname = p.replace('\\', '/').split('/')[-1]
                 filenames.extend([fname, unicodedata.normalize("NFC", fname), unicodedata.normalize("NFD", fname)])
             filenames = list(dict.fromkeys(filenames))
-            stmt = stmt.where(ModelFile.storage_filename.in_(filenames))
+            stmt = stmt.where(
+                or_(
+                    ModelFile.storage_filename.in_(filenames),
+                    ModelFile.original_filename.in_(filenames),
+                )
+            )
 
         norm_paths = {unicodedata.normalize("NFC", p): p for p in paths} if paths else None
 
         for file, version, model in self.session.exec(stmt).all():
             storage_path = f"models/{model.directory}/{file.storage_filename}"
             norm_storage_path = unicodedata.normalize("NFC", storage_path)
-            if norm_paths is not None and norm_storage_path not in norm_paths and storage_path not in norm_paths:
-                continue
-            yield file, version, model, storage_path
 
+            if norm_paths is None:
+                yield file, version, model, storage_path
+                continue
+
+            matched = False
+            # 1. Exact match on canonical storage_path
+            if norm_storage_path in norm_paths or storage_path in norm_paths:
+                matched_p = norm_paths.get(norm_storage_path) or storage_path
+                yield file, version, model, matched_p
+                matched = True
+
+            # 2. Check if any requested path matches this file via subfolder or original_filename
+            file_names_nfc = {
+                unicodedata.normalize("NFC", n)
+                for n in (file.storage_filename, file.original_filename)
+                if n
+            }
+            for norm_p, orig_p in norm_paths.items():
+                if norm_p == norm_storage_path or orig_p == storage_path:
+                    continue
+                rel_p = norm_p.replace("models/", "", 1) if norm_p.startswith("models/") else norm_p
+                rel_p = rel_p.lstrip("/")
+                if rel_p.startswith(f"{model.directory}/"):
+                    p_base = rel_p.split("/")[-1]
+                    if p_base in file_names_nfc:
+                        yield file, version, model, orig_p
+                        matched = True
+
+            # 3. If ProviderVersionStatus has an exact storage_path recorded for this file
+            if not matched:
+                status_stmt = select(ProviderVersionStatus.storage_path).where(
+                    ProviderVersionStatus.file_id == file.id
+                )
+                for status_path in self.session.exec(status_stmt).all():
+                    if status_path:
+                        norm_sp = unicodedata.normalize("NFC", status_path)
+                        if norm_sp in norm_paths or status_path in norm_paths:
+                            yield file, version, model, norm_paths.get(norm_sp, status_path)
+                            matched = True
     def get_all_storage_paths(self) -> list[str]:
         return [unicodedata.normalize("NFC", p) for _, _, _, p in self._iter_file_model_paths()]
 

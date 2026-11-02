@@ -141,6 +141,8 @@ async def select_next_provider(
     provider = await load_balancer.get_next_provider(
         preferred_provider_id=preferred_provider_id,
         required_models=required_models,
+        sampler_name=sampler_name,
+        scheduler_name=scheduler_name,
         exclude_provider_ids=exhausted_providers,
         task_type=task_type,
     )

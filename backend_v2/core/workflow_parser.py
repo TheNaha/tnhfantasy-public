@@ -31,7 +31,7 @@ MODEL_LOADER_NODES: dict[str, tuple[str, str]] = {
     
     # CLIP loaders
     "CLIPLoader": ("clip_name", "clip"),
-    
+    "CLIPVisionLoader": ("clip_name", "clip_vision"),
     # Hypernetwork
     "HypernetworkLoader": ("hypernetwork_name", "hypernetworks"),
     
@@ -50,8 +50,10 @@ MODEL_LOADER_NODES: dict[str, tuple[str, str]] = {
     
     # AnimateDiff motion modules
     "ADE_AnimateDiffLoaderWithContext": ("model_name", "motion_modules"),
-}
 
+    # Detection / ADetailer
+    "UltralyticsDetectorProvider": ("model_name", "ultralytics/bbox"),
+}
 # KSampler-like node classes that carry sampler_name and scheduler combo inputs.
 # The single source of truth for "which node classes are KSampler-like".
 # workflow_metadata (graph→gallery metadata), provider_capabilities (hard

@@ -2,7 +2,7 @@
 
 import asyncio
 import os
-
+import unicodedata
 from fastapi import APIRouter, BackgroundTasks, Depends
 from pydantic import BaseModel
 from sqlmodel import Session, delete, select
@@ -650,9 +650,17 @@ async def backfill_provider_statuses(
             file = version.get("file")
             if not file:
                 continue
-            storage_path = f"models/{model['directory']}/{file['filename']}"
+            fname = file.get("filename") or file.get("storage_filename")
+            if not fname:
+                continue
+            storage_path = f"models/{model['directory']}/{fname}"
             all_files_by_path[storage_path] = file["id"]
-    
+            all_files_by_path[unicodedata.normalize("NFC", storage_path)] = file["id"]
+            orig_fname = file.get("original_filename")
+            if orig_fname:
+                orig_sp = f"models/{model['directory']}/{orig_fname}"
+                all_files_by_path[orig_sp] = file["id"]
+                all_files_by_path[unicodedata.normalize("NFC", orig_sp)] = file["id"]
     results = {
         "providers_checked": 0,
         "models_updated": 0,
@@ -683,11 +691,20 @@ async def backfill_provider_statuses(
                     continue
                 storage_path = f"{directory}/{name}"
 
-            file_id = all_files_by_path.get(storage_path)
+            norm_path = unicodedata.normalize("NFC", storage_path)
+            basename = os.path.basename(norm_path.replace("\\", "/"))
+            canon_dir = directory.replace("models/", "", 1) if directory.startswith("models/") else directory
+            canon_sp = f"models/{canon_dir}/{basename}"
+
+            file_id = (
+                all_files_by_path.get(storage_path)
+                or all_files_by_path.get(norm_path)
+                or all_files_by_path.get(canon_sp)
+                or all_files_by_path.get(f"{directory}/{basename}")
+            )
             if file_id:
                 updates.append((provider_id, file_id))
         return updates
-
     async def check_directory_engine(provider_id, directory, engine):
         try:
             files = await engine.list_models(directory)

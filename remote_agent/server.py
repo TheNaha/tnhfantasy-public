@@ -1004,7 +1004,7 @@ async def list_models(req: ListModelsRequest):
         if os.path.exists(target_dir):
             for root, _, filenames in os.walk(target_dir, followlinks=True):
                 for filename in filenames:
-                    if filename.startswith(".") or _is_sidecar(filename):
+                    if filename.startswith(".") or _is_sidecar(filename) or is_transient_artifact(filename):
                         continue
                     full_path = os.path.join(root, filename)
                     rel_path = os.path.relpath(full_path, DATA_ROOT).replace("\\", "/")

@@ -16,6 +16,7 @@
 # Optional idempotency:
 #   - POST /api/generate and POST /api/generate/batch accept `Idempotency-Key`
 #     to deduplicate duplicate submissions within a short server-side window.
+import asyncio
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, Header
@@ -93,7 +94,10 @@ async def _target_capabilities(
         from api.routes.nodes import _fetch_provider_object_info
         from core.provider_capabilities import derive_capabilities
 
-        digest, _graph = await _fetch_provider_object_info(provider_id, session)
+        digest, _graph = await asyncio.wait_for(
+            _fetch_provider_object_info(provider_id, session),
+            timeout=8.0,
+        )
         return derive_capabilities(digest, provider_id=provider_id)
     except Exception as exc:
         logger.warning(

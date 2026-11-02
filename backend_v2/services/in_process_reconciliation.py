@@ -337,7 +337,7 @@ async def _run_reconciliation(
         await push_state("reconciling", phase="starting", message=f"In-process {sync_mode} started")
 
         try:
-            if not quick_sync:
+            if not quick_sync and not discovery_only:
                 await push_state("reconciling", phase="validating", message="Checking for invalid or partial downloads...")
                 try:
                     # Prefer the single-call probe (mirrors the container's

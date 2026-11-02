@@ -513,6 +513,21 @@ class LoadBalancer:
         if cached and (now - cached[0]) < _CAPABILITY_CACHE_TTL_SECONDS:
             return cached[1]
 
+        # Fast path: check if nodes._object_info_cache already has this provider's digest
+        try:
+            from api.routes.nodes import _object_info_cache as nodes_oi_cache
+            from core.provider_capabilities import derive_capabilities
+
+            oi_cached = nodes_oi_cache.get(provider.id)
+            if oi_cached and isinstance(oi_cached, tuple) and len(oi_cached) >= 2:
+                digest, ts = oi_cached[0], oi_cached[1]
+                if (time.time() - ts) < 600.0 and isinstance(digest, dict) and digest:
+                    caps = derive_capabilities(digest, provider.id)
+                    _capability_cache[provider.id] = (now, caps)
+                    return caps
+        except Exception:
+            pass
+
         try:
             from services.engines.engine_factory import get_engine
 
@@ -526,7 +541,7 @@ class LoadBalancer:
                 _capability_cache[provider.id] = (now, None)
                 return None
 
-            graph = await get_object_info()
+            graph = await asyncio.wait_for(get_object_info(), timeout=10.0)
         except Exception:
             _capability_cache[provider.id] = (now, None)
             return None

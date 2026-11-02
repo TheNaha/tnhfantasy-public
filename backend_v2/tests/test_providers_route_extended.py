@@ -473,14 +473,35 @@ class TestProviderSchemasAndTestBench:
 
     def test_discovered_models_endpoint(self, client):
         client.post("/api/v2/providers", json={"id": "test-direct-disc", "type": "direct_url", "credentials": {}, "config": {"comfy_url": "http://127.0.0.1:8188"}})
-        with patch("services.engines.direct_comfy_engine.DirectComfyEngine.list_models", new=AsyncMock(return_value=[{"name": "v1-5-pruned.safetensors", "id": "v1-5-pruned.safetensors"}])):
+        async def fake_list(directory):
+            return [{"name": f"{directory}_model.safetensors", "id": f"{directory}_model"}]
+
+        with patch("services.engines.direct_comfy_engine.DirectComfyEngine.list_models", side_effect=fake_list):
+            # Default queries checkpoints
             response = client.get("/api/v2/providers/test-direct-disc/models/discovered")
             assert response.status_code == 200
             data = response.json()
             assert data["provider_id"] == "test-direct-disc"
             assert data["count"] == 1
-            assert data["models"][0]["name"] == "v1-5-pruned.safetensors"
+            assert data["models"][0]["directory"] == "checkpoints"
+            assert data["models"][0]["name"] == "checkpoints_model.safetensors"
 
+            # Explicit directory query
+            response_loras = client.get("/api/v2/providers/test-direct-disc/models/discovered?directory=loras")
+            assert response_loras.status_code == 200
+            data_loras = response_loras.json()
+            assert data_loras["count"] == 1
+            assert data_loras["models"][0]["directory"] == "loras"
+            assert data_loras["models"][0]["name"] == "loras_model.safetensors"
+
+            # 'all' directory query
+            response_all = client.get("/api/v2/providers/test-direct-disc/models/discovered?directory=all")
+            assert response_all.status_code == 200
+            data_all = response_all.json()
+            assert data_all["count"] == 7
+            directories = {m["directory"] for m in data_all["models"]}
+            assert "checkpoints" in directories
+            assert "loras" in directories
     def test_diagnostics_endpoint(self, client):
         client.post("/api/v2/providers", json={"id": "test-direct-diag", "type": "direct_url", "credentials": {}, "config": {"comfy_url": "http://127.0.0.1:8188"}})
         with patch("services.engines.direct_comfy_engine.DirectComfyEngine.check_health", new=AsyncMock(return_value={"status": "healthy", "ready": True, "latency_ms": 15.0})):

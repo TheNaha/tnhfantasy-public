@@ -450,6 +450,7 @@ async def test_existing_provider(provider_id: str, session: Session = Depends(ge
 @router.get("/{provider_id}/models/discovered")
 async def get_provider_discovered_models(
     provider_id: str,
+    directory: str | None = None,
     session: Session = Depends(get_session)
 ):
     """Query live upstream models/voices exposed directly by the provider engine."""
@@ -467,14 +468,8 @@ async def get_provider_discovered_models(
 
     try:
         models = []
-        # Route on the provider's CATEGORY, not on a list of type names. A list
-        # of type names is how `remote_tts` / `beam_tts` / `direct_tts` would fall
-        # through to the image branch and return a checkpoint listing as a voice
-        # catalogue. `modal_llm` was in the LLM list below until it stopped being
-        # a type at all; category has no such duplicate.
         category = provider.category
         if category == CATEGORY_TTS:
-            # Qwen3-TTS built-in presets (static catalogue for TTS engines).
             default_voices = [
                 {"name": "friendly", "id": "friendly", "type": "preset", "gender": "neutral", "description": "Warm, approachable tone"},
                 {"name": "professional", "id": "professional", "type": "preset", "gender": "neutral", "description": "Clear, authoritative delivery"},
@@ -490,9 +485,31 @@ async def get_provider_discovered_models(
         elif category == CATEGORY_LLM:
             models = await asyncio.wait_for(engine.list_models(), timeout=12.0)
         else:
-            checkpoints = await asyncio.wait_for(engine.list_models("checkpoints"), timeout=15.0)
-            models = checkpoints
+            target_dir = directory or "checkpoints"
+            if target_dir == "all":
+                scan_dirs = ("checkpoints", "loras", "vae", "controlnet", "unet", "upscale_models", "embeddings")
+                sem = asyncio.Semaphore(4)
 
+                async def _fetch_dir(d: str):
+                    async with sem:
+                        try:
+                            dir_files = await engine.list_models(d)
+                            return [
+                                {**m, "directory": m.get("directory") or d} if isinstance(m, dict) else m
+                                for m in (dir_files or [])
+                            ]
+                        except Exception:
+                            return []
+
+                results = await asyncio.gather(*[_fetch_dir(d) for d in scan_dirs])
+                for sublist in results:
+                    models.extend(sublist)
+            else:
+                dir_models = await asyncio.wait_for(engine.list_models(target_dir), timeout=15.0)
+                models = [
+                    {**m, "directory": m.get("directory") or target_dir} if isinstance(m, dict) else m
+                    for m in (dir_models or [])
+                ]
         return {
             "provider_id": provider_id,
             "type": provider.type,

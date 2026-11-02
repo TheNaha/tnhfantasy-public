@@ -3810,4 +3810,98 @@ class TestDirectComfyModelChoiceReconciliation:
             assert "input" in spec
             mock_client.get.assert_awaited_once_with("/object_info/LoraLoader", timeout=10.0)
 
+    @pytest.mark.asyncio
+    async def test_fetch_node_info_uses_warm_object_info_cache_without_network(self):
+        from unittest.mock import MagicMock
+        from services.engines.direct_comfy_engine import DirectComfyEngine
+        import time
+
+        engine = DirectComfyEngine("direct-cached", comfy_url="http://localhost:8188")
+        cached_spec = {"input": {"required": {"ckpt_name": [["v1-5.safetensors"]]}}}
+        engine._object_info_cache = (time.monotonic(), {"CheckpointLoaderSimple": cached_spec})
+
+        mock_client = MagicMock()
+        with patch.object(engine, "get_http_client", return_value=mock_client):
+            spec = await engine._fetch_node_info("CheckpointLoaderSimple")
+            assert spec == cached_spec
+            assert not mock_client.get.called
+
+    @pytest.mark.asyncio
+    async def test_missing_model_demotes_db_status_and_marks_failure_retryable(self, session, monkeypatch):
+        from unittest.mock import AsyncMock, MagicMock
+        from core.entities import ModelFile, ModelV2, ModelVersion, ProviderVersionStatus
+        from services.engines.direct_comfy_engine import DirectComfyEngine
+
+        engine = DirectComfyEngine("direct-prov-missing", comfy_url="http://localhost:8188")
+        # DirectComfyEngine defaults to manages_model_files=False when no agent
+        assert not engine.manages_model_files
+
+        model = ModelV2(name="Missing Model", directory="checkpoints", type="Checkpoint", source="custom")
+        session.add(model)
+        session.flush()
+
+        ver = ModelVersion(model_id=model.id, name="v1.0", is_default=True)
+        session.add(ver)
+        session.flush()
+
+        file = ModelFile(
+            version_id=ver.id,
+            storage_filename="missing_on_comfy.safetensors",
+            original_filename="missing_on_comfy.safetensors",
+            type="Checkpoint",
+        )
+        session.add(file)
+        session.flush()
+
+        status = ProviderVersionStatus(
+            file_id=file.id,
+            provider_id="direct-prov-missing",
+            status="ready",
+            storage_path="models/checkpoints/missing_on_comfy.safetensors",
+        )
+        session.add(status)
+        session.commit()
+        target_file_id = file.id
+        monkeypatch.setattr("api.deps.get_session_sync", lambda: session)
+
+        mock_client = MagicMock()
+        resp_400 = MagicMock()
+        resp_400.status_code = 400
+        resp_400.text = "Value not in list: missing_on_comfy.safetensors"
+        mock_client.post = AsyncMock(return_value=resp_400)
+
+        # Node spec on ComfyUI has a completely different model installed
+        node_spec = {
+            "input": {
+                "required": {
+                    "ckpt_name": [["different_model.safetensors"]],
+                }
+            }
+        }
+        with (
+            patch.object(engine, "get_http_client", return_value=mock_client),
+            patch.object(engine, "_fetch_node_info", new=AsyncMock(return_value=node_spec)),
+            patch(
+                "services.engines.direct_comfy_engine.websockets.connect",
+                return_value=_FakeWS([]),
+            ),
+        ):
+            workflow = {
+                "1": {
+                    "class_type": "CheckpointLoaderSimple",
+                    "inputs": {"ckpt_name": "missing_on_comfy.safetensors"},
+                }
+            }
+            events = [ev async for ev in engine.inference(workflow=workflow, job_id="job-failover")]
+            assert events[0]["event"] == "started"
+            assert events[-1]["event"] == "failed"
+            assert events[-1]["retryable"] is True
+
+            # Check DB status was demoted from "ready"
+            session.expire_all()
+            updated_status = session.query(ProviderVersionStatus).filter_by(
+                file_id=target_file_id, provider_id="direct-prov-missing"
+            ).first()
+            assert updated_status.status == "failed"
+            assert "not found in ComfyUI" in updated_status.error_message
 

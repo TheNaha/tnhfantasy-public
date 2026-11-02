@@ -6,7 +6,7 @@ from sqlmodel import Session
 
 from core.entities import ModelFile, ModelV2, ModelVersion
 from infrastructure.repositories.model_repo_v2 import ModelRepositoryV2
-
+from services.engines.base import MODEL_DIRECTORIES
 _DIRECTORY_TO_MODEL_TYPE = {
     "checkpoints": "Checkpoint",
     "loras": "LORA",
@@ -34,6 +34,45 @@ _DIRECTORY_TO_MODEL_TYPE = {
     # installed: the directory was not in the reconciled list at all.
     "ipadapter": "IPAdapter",
 }
+
+_CANONICAL_MODEL_DIRS = tuple(
+    sorted(
+        [d.replace("models/", "", 1) if d.startswith("models/") else d for d in MODEL_DIRECTORIES],
+        key=len,
+        reverse=True,
+    )
+)
+
+
+def split_canonical_storage_path(storage_path: str) -> tuple[str, str, str] | None:
+    """Split a storage path into (canonical_directory, relative_filename, basename).
+
+    Handles shallow paths ('models/checkpoints/model.safetensors'),
+    deep subfolder paths ('models/checkpoints/sdxl/v1/model.safetensors'),
+    and 2-segment canonical directories like 'models/ultralytics/bbox/face.pt'.
+
+    Returns:
+        (canonical_directory, relative_filename, basename) or None if path is invalid.
+    """
+    clean_path = storage_path.replace("\\", "/").strip()
+    if not clean_path:
+        return None
+    rel_path = clean_path.replace("models/", "", 1) if clean_path.startswith("models/") else clean_path
+    rel_path = rel_path.lstrip("/")
+
+    for canon_dir in _CANONICAL_MODEL_DIRS:
+        prefix = f"{canon_dir}/"
+        if rel_path.startswith(prefix):
+            rel_filename = rel_path[len(prefix):]
+            if not rel_filename:
+                return None
+            basename = rel_filename.split("/")[-1]
+            return (canon_dir, rel_filename, basename)
+
+    parts = rel_path.split("/")
+    if len(parts) >= 2:
+        return ("/".join(parts[:-1]), parts[-1], parts[-1])
+    return None
 
 
 def _clean_filename_for_display(filename: str) -> str:
@@ -125,18 +164,21 @@ class ModelReconciliationService:
                 results.append({"path": storage_path, "file_id": None, "status": "deleted", "reason": "Tombstoned"})
                 continue
 
-            rel_path = storage_path.replace("models/", "", 1) if storage_path.startswith("models/") else storage_path
-            parts = rel_path.split("/")
-            if len(parts) < 2:
+            split_res = split_canonical_storage_path(storage_path)
+            if not split_res:
                 errors += 1
                 results.append({"path": storage_path, "file_id": None, "status": "error", "reason": "invalid path format"})
                 continue
 
-            directory = "/".join(parts[:-1])
-            filename = unicodedata.normalize("NFC", parts[-1])
+            directory, rel_filename, basename = split_res
+            rel_filename = unicodedata.normalize("NFC", rel_filename)
+            basename = unicodedata.normalize("NFC", basename)
 
             try:
-                existing_file = self.repo.get_file_by_storage_path(directory, filename)
+                existing_file = (
+                    self.repo.get_file_by_storage_path(directory, rel_filename)
+                    or self.repo.get_file_by_storage_path(directory, basename)
+                )
                 if existing_file:
                     self._write_provider_status(
                         file_id=existing_file.id,
@@ -149,7 +191,7 @@ class ModelReconciliationService:
                     results.append({"path": storage_path, "file_id": existing_file.id, "status": "skipped"})
                 else:
                     # Generate a clean display name from filename
-                    raw_name = filename.rsplit(".", 1)[0] if "." in filename else filename
+                    raw_name = basename.rsplit(".", 1)[0] if "." in basename else basename
                     display_name = _clean_filename_for_display(raw_name)
                     resolved_type = _DIRECTORY_TO_MODEL_TYPE.get(directory, "Other")
 
@@ -179,13 +221,13 @@ class ModelReconciliationService:
 
                     file = ModelFile(
                         version_id=version.id,
-                        original_filename=filename,
-                        storage_filename=filename,
-                        size_kb=(size_bytes or 0) / 1024.0,
-                        format=filename.split(".")[-1] if "." in filename else "Unknown",
+                        original_filename=rel_filename,
+                        storage_filename=basename,
+                        size_bytes=size_bytes,
+                        type=resolved_type,
                         is_primary=True,
                         file_type="Model",
-                        hash_sha256=file_info.get("sha256")
+                        hash_sha256=file_info.get("sha256"),
                     )
                     self.session.add(file)
                     self.session.flush()

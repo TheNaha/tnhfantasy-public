@@ -109,3 +109,30 @@ async def test_select_next_provider_returns_provider_when_available():
     assert result is provider
     assert job_service.calls == []
     assert load_balancer.calls == [("provider-1", None, exhausted)]
+
+
+@pytest.mark.asyncio
+async def test_select_next_provider_forwards_sampler_and_scheduler():
+    class RecordingLoadBalancer:
+        def __init__(self):
+            self.last_kwargs = {}
+
+        async def get_next_provider(self, **kwargs):
+            self.last_kwargs = kwargs
+            return SimpleNamespace(id="prov-1")
+
+    lb = RecordingLoadBalancer()
+    provider = await select_next_provider(
+        load_balancer=lb,
+        job_service=StubJobService(),
+        job_id="job-sampler-sched",
+        exhausted_providers={"prov-0"},
+        preferred_provider_id="prov-1",
+        sampler_name="euler_ancestral",
+        scheduler_name="karras",
+        task_type="image",
+    )
+    assert provider.id == "prov-1"
+    assert lb.last_kwargs["sampler_name"] == "euler_ancestral"
+    assert lb.last_kwargs["scheduler_name"] == "karras"
+    assert lb.last_kwargs["exclude_provider_ids"] == {"prov-0"}

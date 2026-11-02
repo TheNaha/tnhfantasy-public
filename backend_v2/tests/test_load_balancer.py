@@ -508,3 +508,46 @@ class TestModalityIsolation:
         selected = await image_lb.get_next_provider(task_type="image")
         assert selected is not None
         assert selected.id == "hybrid-node-1"
+
+
+@pytest.mark.asyncio
+async def test_get_provider_capabilities_uses_nodes_cache_fast_path(session: Session, monkeypatch):
+    import time
+    from api.routes.nodes import _object_info_cache
+    from core.entities import Provider
+    from services.load_balancer import LoadBalancer, _capability_cache
+
+    provider = Provider(
+        id="prov-cap-cached",
+        type="direct_url",
+        enabled=True,
+        priority=1,
+        credentials={},
+        config={"comfy_url": "http://127.0.0.1:8188"},
+    )
+    session.add(provider)
+    session.commit()
+
+    # Seed nodes._object_info_cache
+    fake_digest = {
+        "KSampler": {
+            "input": {
+                "required": {
+                    "sampler_name": [["euler", "euler_ancestral"]],
+                    "scheduler": [["normal", "karras"]],
+                }
+            }
+        }
+    }
+    _object_info_cache[provider.id] = (fake_digest, time.time())
+    _capability_cache.pop(provider.id, None)
+
+    lb = LoadBalancer(session)
+    caps = await lb._get_provider_capabilities(provider)
+    assert caps is not None
+    assert "euler_ancestral" in caps.get("samplers", [])
+    assert "karras" in caps.get("schedulers", [])
+
+    # Clean up caches
+    _object_info_cache.pop(provider.id, None)
+    _capability_cache.pop(provider.id, None)

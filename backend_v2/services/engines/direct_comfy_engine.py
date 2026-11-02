@@ -78,8 +78,7 @@ def _object_info_cache_ttl() -> float:
                 return parsed
         except (TypeError, ValueError):
             pass
-    return 30.0
-
+    return 600.0
 # Timeout for agent /get-file streams. The old remote_comfy client allowed
 # 600s (_GET_FILE_TIMEOUT_SECONDS): checkpoint reads stall longer than the
 # 60s agent-client default.
@@ -92,17 +91,22 @@ _WS_CONNECT_RETRIES = 5
 NODE_TO_DIRECTORY = {
     "CheckpointLoaderSimple": "checkpoints",
     "CheckpointLoader": "checkpoints",
+    "unCLIPCheckpointLoader": "checkpoints",
     "UNETLoader": "unet",
     "LoraLoader": "loras",
     "LoraLoaderModelOnly": "loras",
     "VAELoader": "vae",
     "ControlNetLoader": "controlnet",
+    "DiffControlNetLoader": "controlnet",
     "UpscaleModelLoader": "upscale_models",
     "CLIPLoader": "clip",
+    "DualCLIPLoader": "clip",
     "CLIPVisionLoader": "clip_vision",
     "HypernetworkLoader": "hypernetworks",
-    "unCLIPCheckpointLoader": "checkpoints",
     "EmbeddingLoader": "embeddings",
+    "IPAdapterModelLoader": "ipadapter",
+    "ADE_AnimateDiffLoaderWithContext": "motion_modules",
+    "UltralyticsDetectorProvider": "ultralytics/bbox",
 }
 
 MODEL_INPUT_NAMES = {
@@ -470,6 +474,12 @@ class DirectComfyEngine(InProcessEngine):
 
     async def _fetch_node_info(self, node_class: str) -> Dict[str, Any] | None:
         """Fetch targeted /object_info/{node_class} for a specific node (<5 KB vs full 30MB catalog)."""
+        now = time.monotonic()
+        if self._object_info_cache and now - self._object_info_cache[0] < self._object_info_ttl:
+            cached_full = self._object_info_cache[1]
+            if isinstance(cached_full, dict) and node_class in cached_full:
+                return cached_full[node_class]
+
         client = self.get_http_client()
         try:
             resp = await client.get(f"/object_info/{node_class}", timeout=10.0)
@@ -481,7 +491,6 @@ class DirectComfyEngine(InProcessEngine):
         except Exception as exc:
             logger.debug("direct_comfy_fetch_node_info_failed", provider_id=self.provider_id, node_class=node_class, error=str(exc))
         return None
-
     async def _fetch_object_info(self) -> Dict[str, Any]:
         """Fetch and cache ComfyUI /object_info document with single-flight locking."""
         now = time.monotonic()
@@ -728,6 +737,68 @@ class DirectComfyEngine(InProcessEngine):
         except Exception as exc:
             logger.debug("direct_comfy_record_model_status_failed", provider_id=self.provider_id, error=str(exc))
 
+
+    def _record_missing_model_in_db(self, directory: str, filename: str) -> bool:
+        """Demote ProviderVersionStatus when a model is verified absent from ComfyUI /object_info."""
+        try:
+            from api.deps import get_session_sync
+            from core.entities import ModelFile, ModelV2, ModelVersion, ProviderVersionStatus
+            from sqlmodel import select, or_
+            from services.load_balancer import LoadBalancer
+
+            dir_key = _normalize_directory(directory)
+            p_ids = [self.provider_id]
+            if "_" in self.provider_id:
+                p_ids.append(self.provider_id.rsplit("_", 1)[0])
+
+            base_fn = os.path.basename(filename.replace("\\", "/"))
+            candidates = {filename, base_fn, unicodedata.normalize("NFC", filename), unicodedata.normalize("NFD", filename)}
+
+            demoted = False
+            with get_session_sync() as session:
+                stmt = (
+                    select(ModelFile)
+                    .join(ModelVersion, ModelFile.version_id == ModelVersion.id)
+                    .join(ModelV2, ModelVersion.model_id == ModelV2.id)
+                    .where(
+                        ModelV2.directory.in_([dir_key, f"models/{dir_key}"]),
+                        or_(
+                            ModelFile.storage_filename.in_(candidates),
+                            ModelFile.original_filename.in_(candidates),
+                        ),
+                    )
+                )
+                file = session.exec(stmt).first()
+                if not file:
+                    return False
+
+                for pid in p_ids:
+                    status_rec = session.exec(
+                        select(ProviderVersionStatus).where(
+                            ProviderVersionStatus.file_id == file.id,
+                            ProviderVersionStatus.provider_id == pid,
+                        )
+                    ).first()
+                    if status_rec and status_rec.status == "ready":
+                        new_status = "pending" if self.manages_model_files else "failed"
+                        status_rec.status = new_status
+                        if not self.manages_model_files:
+                            status_rec.error_message = "Model not found in ComfyUI /object_info"
+                        demoted = True
+
+                if demoted:
+                    session.commit()
+                    LoadBalancer.invalidate_model_availability_cache(provider_id=self.provider_id)
+                    logger.warning(
+                        "direct_comfy_missing_model_status_demoted",
+                        provider_id=self.provider_id,
+                        directory=dir_key,
+                        filename=filename,
+                    )
+            return demoted
+        except Exception as exc:
+            logger.debug("direct_comfy_record_missing_model_failed", provider_id=self.provider_id, error=str(exc))
+            return False
 
     def _reconcile_graph_models_with_object_info(
         self,
@@ -1296,38 +1367,75 @@ class DirectComfyEngine(InProcessEngine):
 
                 # 3. Targeted Fallback: if ComfyUI rejects with 400 validation error (e.g. "Value not in list"),
                 # fetch ONLY the affected node schema via /object_info/{node_class} (<5 KB) and retry once!
+                missing_model_on_provider = False
                 if prompt_resp.status_code == 400 and ("Value not in list" in prompt_resp.text or "not in list" in prompt_resp.text):
                     logger.warning("direct_comfy_prompt_val_error_reconciling", provider_id=self.provider_id, error=prompt_resp.text[:300])
                     reconciled_after_failure = False
-                    # Find model loader nodes in the graph
-                    for _nid, nd in graph.items():
-                        if not isinstance(nd, dict):
-                            continue
-                        ctype = nd.get("class_type")
-                        if ctype in NODE_TO_DIRECTORY:
-                            node_spec = await self._fetch_node_info(ctype)
-                            if node_spec:
-                                graph = self._reconcile_graph_models_with_object_info(graph, {ctype: node_spec})
-                                # If a model was matched and reconciled, persist status in DB
-                                for input_k in MODEL_INPUT_NAMES:
-                                    if input_k in nd.get("inputs", {}):
-                                        matched_val = nd["inputs"][input_k]
-                                        self._record_discovered_model_ready_in_db(NODE_TO_DIRECTORY[ctype], matched_val)
-                                reconciled_after_failure = True
-                    if reconciled_after_failure:
-                        prompt_resp = await client.post(
-                            "/prompt",
-                            json={"prompt": graph, "client_id": client_id},
-                            timeout=30.0,
-                        )
+
+                    # Deduplicate needed node classes across the prompt graph
+                    needed_ctypes = {
+                        nd.get("class_type")
+                        for nd in graph.values()
+                        if isinstance(nd, dict) and nd.get("class_type") in NODE_TO_DIRECTORY
+                    }
+                    fetched_specs: Dict[str, Dict[str, Any]] = {}
+                    for ctype in needed_ctypes:
+                        node_spec = await self._fetch_node_info(ctype)
+                        if node_spec:
+                            fetched_specs[ctype] = node_spec
+
+                    if fetched_specs:
+                        reconciled_graph = self._reconcile_graph_models_with_object_info(graph, fetched_specs)
+                        for _nid, nd in graph.items():
+                            if not isinstance(nd, dict):
+                                continue
+                            ctype = nd.get("class_type")
+                            if ctype not in fetched_specs or ctype not in NODE_TO_DIRECTORY:
+                                continue
+
+                            dir_name = NODE_TO_DIRECTORY[ctype]
+                            raw_choices = self._iter_object_info_model_paths({ctype: fetched_specs[ctype]}, dir_name)
+                            prefix = f"models/{dir_name}/"
+                            choices = [p[len(prefix):] if p.startswith(prefix) else p for p in raw_choices]
+                            choices_basenames = {os.path.basename(c) for c in choices}
+
+                            orig_inputs = nd.get("inputs", {})
+                            rec_inputs = reconciled_graph.get(_nid, {}).get("inputs", {}) if isinstance(reconciled_graph.get(_nid), dict) else {}
+
+                            for input_k in MODEL_INPUT_NAMES:
+                                if input_k in orig_inputs:
+                                    orig_val = orig_inputs[input_k]
+                                    new_val = rec_inputs.get(input_k, orig_val)
+
+                                    val_in_choices = (
+                                        new_val in choices
+                                        or os.path.basename(str(new_val)) in choices_basenames
+                                        or _match_comfy_model_choice(str(new_val), choices) is not None
+                                    )
+                                    if val_in_choices:
+                                        self._record_discovered_model_ready_in_db(dir_name, new_val)
+                                        if new_val != orig_val:
+                                            reconciled_after_failure = True
+                                    else:
+                                        self._record_missing_model_in_db(dir_name, str(orig_val))
+                                        missing_model_on_provider = True
+
+                        if reconciled_after_failure:
+                            graph = reconciled_graph
+                            prompt_resp = await client.post(
+                                "/prompt",
+                                json={"prompt": graph, "client_id": client_id},
+                                timeout=30.0,
+                            )
                 if prompt_resp.status_code != 200:
                     err_msg = f"ComfyUI prompt rejected: {prompt_resp.text}"
                     logger.error("direct_comfy_prompt_rejected", provider_id=self.provider_id, error=err_msg)
+                    retryable = True if missing_model_on_provider else retryable_for_status(prompt_resp.status_code)
                     yield {
                         "event": "failed",
                         "job_id": job_id,
                         "message": err_msg,
-                        "retryable": retryable_for_status(prompt_resp.status_code),
+                        "retryable": retryable,
                     }
                     return
                 data = prompt_resp.json()
