@@ -468,6 +468,20 @@ class DirectComfyEngine(InProcessEngine):
             logger.warning("direct_comfy_free_vram_failed", provider_id=self.provider_id, error=str(exc))
             return False
 
+    async def _fetch_node_info(self, node_class: str) -> Dict[str, Any] | None:
+        """Fetch targeted /object_info/{node_class} for a specific node (<5 KB vs full 30MB catalog)."""
+        client = self.get_http_client()
+        try:
+            resp = await client.get(f"/object_info/{node_class}", timeout=10.0)
+            if resp.status_code == 200:
+                data = resp.json()
+                # ComfyUI answers either {node_class: {...}} or directly {...}
+                if isinstance(data, dict):
+                    return data.get(node_class, data)
+        except Exception as exc:
+            logger.debug("direct_comfy_fetch_node_info_failed", provider_id=self.provider_id, node_class=node_class, error=str(exc))
+        return None
+
     async def _fetch_object_info(self) -> Dict[str, Any]:
         """Fetch and cache ComfyUI /object_info document with single-flight locking."""
         now = time.monotonic()
@@ -541,6 +555,180 @@ class DirectComfyEngine(InProcessEngine):
                             # damage one level up.
                             paths.append(f"models/{target_dir}/{model_name}")
         return sorted(set(paths))
+    def _get_provider_ready_models_from_db(self) -> Dict[str, List[str]]:
+        """Query local DB ProviderVersionStatus for models installed/ready on this provider.
+
+        Returns a dict mapping target directory (e.g. 'checkpoints', 'loras') to a list of
+        relative filenames/paths known to be ready on this provider.
+        Runs in <1ms without any network I/O.
+        """
+        try:
+            from api.deps import get_session_sync
+            from sqlmodel import select
+            from core.entities import ModelFile, ModelV2, ModelVersion, ProviderVersionStatus
+
+            # Clean provider_id to match base provider id if suffixed (e.g. 'colab-one_image' -> 'colab-one')
+            p_ids = [self.provider_id]
+            if "_" in self.provider_id:
+                p_ids.append(self.provider_id.rsplit("_", 1)[0])
+
+            result: Dict[str, List[str]] = {}
+            with get_session_sync() as session:
+                stmt = (
+                    select(
+                        ModelFile.storage_filename,
+                        ModelFile.original_filename,
+                        ModelVersion.name,
+                        ProviderVersionStatus.storage_path,
+                        ModelV2.directory,
+                    )
+                    .join(ModelVersion, ModelFile.version_id == ModelVersion.id)
+                    .join(ModelV2, ModelVersion.model_id == ModelV2.id)
+                    .join(ProviderVersionStatus, ProviderVersionStatus.file_id == ModelFile.id)
+                    .where(
+                        ProviderVersionStatus.provider_id.in_(p_ids),
+                        ProviderVersionStatus.status == "ready",
+                    )
+                )
+                rows = session.exec(stmt).all()
+                for storage_filename, original_filename, version_name, storage_path, directory in rows:
+                    dir_key = _normalize_directory(directory)
+                    # Determine canonical remote path preferred by ComfyUI
+                    remote_choice = storage_filename
+                    if storage_path:
+                        norm_sp = storage_path.replace("\\", "/").strip("/")
+                        if norm_sp.startswith(f"models/{dir_key}/"):
+                            remote_choice = norm_sp[len(f"models/{dir_key}/"):]
+                        elif norm_sp.startswith(f"{dir_key}/"):
+                            remote_choice = norm_sp[len(f"{dir_key}/"):]
+                        else:
+                            remote_choice = norm_sp
+
+                    aliases = [remote_choice]
+                    if storage_filename:
+                        aliases.append(storage_filename)
+                    if original_filename:
+                        aliases.append(original_filename)
+                    if version_name:
+                        aliases.append(version_name)
+
+                    # Map each alias to the resolved remote choice
+                    alias_map = result.setdefault(dir_key, {})
+                    for alias in aliases:
+                        if alias:
+                            alias_map[alias] = remote_choice
+            return result
+        except Exception as exc:
+            logger.debug("direct_comfy_db_ready_models_failed", provider_id=self.provider_id, error=str(exc))
+            return {}
+
+    def _reconcile_graph_models_from_db(self, graph: Dict[str, Any]) -> Dict[str, Any]:
+        """Reconcile model inputs in prompt graph using local DB ProviderVersionStatus.
+
+        Avoids network round-trips to remote ComfyUI entirely.
+        """
+        if not isinstance(graph, dict):
+            return graph
+
+        ready_models_by_dir = self._get_provider_ready_models_from_db()
+        if not ready_models_by_dir:
+            return graph
+
+        reconciled = copy.deepcopy(graph)
+        for _node_id, node_data in reconciled.items():
+            if not isinstance(node_data, dict):
+                continue
+            class_type = node_data.get("class_type")
+            inputs = node_data.get("inputs")
+            if not class_type or not isinstance(inputs, dict):
+                continue
+            target_dir = NODE_TO_DIRECTORY.get(class_type)
+            if not target_dir:
+                continue
+            alias_map = ready_models_by_dir.get(target_dir, {})
+            if not alias_map:
+                continue
+            choices = list(alias_map.values())
+
+            for input_key, input_val in list(inputs.items()):
+                if input_key not in MODEL_INPUT_NAMES or not isinstance(input_val, str) or not input_val:
+                    continue
+                # 1. Exact alias match from DB (e.g. original_filename or alias -> remote relative path)
+                matched = alias_map.get(input_val)
+                # 2. Fuzzy CJK / subfolder / stem match
+                if not matched:
+                    matched = _match_comfy_model_choice(input_val, choices)
+                if matched and matched != input_val:
+                    inputs[input_key] = matched
+                    logger.info(
+                        "direct_comfy_model_name_reconciled_db",
+                        provider_id=self.provider_id,
+                        node_type=class_type,
+                        input_key=input_key,
+                        requested=input_val,
+                        resolved=matched,
+                    )
+
+        return reconciled
+    def _record_discovered_model_ready_in_db(self, directory: str, filename: str) -> None:
+        """Update ProviderVersionStatus to ready when a model is verified loadable on ComfyUI."""
+        try:
+            from api.deps import get_session_sync
+            from core.entities import ModelFile, ModelV2, ModelVersion, ProviderVersionStatus
+            from sqlmodel import select, or_
+            from services.load_balancer import LoadBalancer
+
+            dir_key = _normalize_directory(directory)
+            p_ids = [self.provider_id]
+            if "_" in self.provider_id:
+                p_ids.append(self.provider_id.rsplit("_", 1)[0])
+
+            base_fn = os.path.basename(filename.replace("\\", "/"))
+            candidates = {filename, base_fn, unicodedata.normalize("NFC", filename), unicodedata.normalize("NFD", filename)}
+
+            with get_session_sync() as session:
+                stmt = (
+                    select(ModelFile)
+                    .join(ModelVersion, ModelFile.version_id == ModelVersion.id)
+                    .join(ModelV2, ModelVersion.model_id == ModelV2.id)
+                    .where(
+                        ModelV2.directory.in_([dir_key, f"models/{dir_key}"]),
+                        or_(
+                            ModelFile.storage_filename.in_(candidates),
+                            ModelFile.original_filename.in_(candidates),
+                        ),
+                    )
+                )
+                file = session.exec(stmt).first()
+                if not file:
+                    return
+
+                for pid in p_ids:
+                    status_rec = session.exec(
+                        select(ProviderVersionStatus).where(
+                            ProviderVersionStatus.file_id == file.id,
+                            ProviderVersionStatus.provider_id == pid,
+                        )
+                    ).first()
+                    if status_rec:
+                        status_rec.status = "ready"
+                        status_rec.storage_path = f"models/{dir_key}/{filename}"
+                    else:
+                        session.add(
+                            ProviderVersionStatus(
+                                file_id=file.id,
+                                provider_id=pid,
+                                status="ready",
+                                storage_path=f"models/{dir_key}/{filename}",
+                            )
+                        )
+                session.commit()
+                LoadBalancer.invalidate_model_availability_cache(provider_id=self.provider_id)
+                logger.info("direct_comfy_discovered_model_status_recorded", provider_id=self.provider_id, directory=dir_key, filename=filename)
+        except Exception as exc:
+            logger.debug("direct_comfy_record_model_status_failed", provider_id=self.provider_id, error=str(exc))
+
+
     def _reconcile_graph_models_with_object_info(
         self,
         graph: Dict[str, Any],
@@ -549,8 +737,7 @@ class DirectComfyEngine(InProcessEngine):
         """Reconcile model inputs in the prompt graph against /object_info choices.
 
         Resolves Unicode normalization mismatches (NFC/NFD), subfolder prefixes
-        (e.g. 'anime/model.safetensors'), and CJK punctuation differences before
-        ComfyUI validates and rejects the prompt.
+        (e.g. 'anime/model.safetensors'), and CJK punctuation differences.
         """
         if not isinstance(graph, dict) or not isinstance(object_info, dict):
             return graph
@@ -601,7 +788,6 @@ class DirectComfyEngine(InProcessEngine):
                     )
 
         return reconciled
-
 
     async def list_models(self, directory: str) -> List[Dict[str, Any]]:
         """List models, preferring the agent sidecar when configured.
@@ -1088,22 +1274,52 @@ class DirectComfyEngine(InProcessEngine):
                 # (`modal/tts/app.py`: `workflow_json.get("prompt",
                 # workflow_json)`); this engine never did.
                 graph = workflow.get("prompt") if isinstance(workflow.get("prompt"), dict) else workflow
+                # 1. Fast path: reconcile with local DB ProviderVersionStatus (0ms network)
                 try:
-                    obj_info = (
-                        self._object_info_cache[1]
-                        if self._object_info_cache and (time.monotonic() - self._object_info_cache[0] < self._object_info_ttl)
-                        else await self._fetch_object_info()
-                    )
-                    if obj_info:
-                        graph = self._reconcile_graph_models_with_object_info(graph, obj_info)
+                    graph = self._reconcile_graph_models_from_db(graph)
                 except Exception as exc:
-                    logger.debug("direct_comfy_reconcile_skip", provider_id=self.provider_id, error=str(exc))
+                    logger.debug("direct_comfy_db_reconcile_skip", provider_id=self.provider_id, error=str(exc))
+
+                # 2. Check if cache already warm; only apply in-memory object_info if already available without network call
+                if self._object_info_cache and (time.monotonic() - self._object_info_cache[0] < self._object_info_ttl):
+                    try:
+                        graph = self._reconcile_graph_models_with_object_info(graph, self._object_info_cache[1])
+                    except Exception:
+                        pass
+
                 t_prompt_start = time.monotonic()
                 prompt_resp = await client.post(
                     "/prompt",
                     json={"prompt": graph, "client_id": client_id},
                     timeout=30.0,
                 )
+
+                # 3. Targeted Fallback: if ComfyUI rejects with 400 validation error (e.g. "Value not in list"),
+                # fetch ONLY the affected node schema via /object_info/{node_class} (<5 KB) and retry once!
+                if prompt_resp.status_code == 400 and ("Value not in list" in prompt_resp.text or "not in list" in prompt_resp.text):
+                    logger.warning("direct_comfy_prompt_val_error_reconciling", provider_id=self.provider_id, error=prompt_resp.text[:300])
+                    reconciled_after_failure = False
+                    # Find model loader nodes in the graph
+                    for _nid, nd in graph.items():
+                        if not isinstance(nd, dict):
+                            continue
+                        ctype = nd.get("class_type")
+                        if ctype in NODE_TO_DIRECTORY:
+                            node_spec = await self._fetch_node_info(ctype)
+                            if node_spec:
+                                graph = self._reconcile_graph_models_with_object_info(graph, {ctype: node_spec})
+                                # If a model was matched and reconciled, persist status in DB
+                                for input_k in MODEL_INPUT_NAMES:
+                                    if input_k in nd.get("inputs", {}):
+                                        matched_val = nd["inputs"][input_k]
+                                        self._record_discovered_model_ready_in_db(NODE_TO_DIRECTORY[ctype], matched_val)
+                                reconciled_after_failure = True
+                    if reconciled_after_failure:
+                        prompt_resp = await client.post(
+                            "/prompt",
+                            json={"prompt": graph, "client_id": client_id},
+                            timeout=30.0,
+                        )
                 if prompt_resp.status_code != 200:
                     err_msg = f"ComfyUI prompt rejected: {prompt_resp.text}"
                     logger.error("direct_comfy_prompt_rejected", provider_id=self.provider_id, error=err_msg)
@@ -1114,7 +1330,6 @@ class DirectComfyEngine(InProcessEngine):
                         "retryable": retryable_for_status(prompt_resp.status_code),
                     }
                     return
-
                 data = prompt_resp.json()
                 # A 200 carrying node_errors means the graph was rejected
                 # for a node, not accepted: fail permanent, like the old

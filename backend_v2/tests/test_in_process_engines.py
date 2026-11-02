@@ -3736,3 +3736,78 @@ class TestDirectComfyModelChoiceReconciliation:
         reconciled = engine._reconcile_graph_models_with_object_info(graph, object_info)
         assert reconciled["1"]["inputs"]["ckpt_name"] == "checkpoints/动漫模型_final.safetensors"
 
+    def test_reconcile_graph_models_from_db_without_network(self, session, monkeypatch):
+        from core.entities import ModelFile, ModelV2, ModelVersion, ProviderVersionStatus
+        from services.engines.direct_comfy_engine import DirectComfyEngine
+
+        engine = DirectComfyEngine("test-prov-db", comfy_url="http://localhost:8188")
+
+        # Insert a model with ready status on this provider
+        model = ModelV2(id="m-recon-1", name="Recon Model", type="checkpoint", directory="checkpoints")
+        session.add(model)
+        session.flush()
+
+        version = ModelVersion(id="v-recon-1", model_id=model.id, name="v1.0", is_enabled=True)
+        session.add(version)
+        session.flush()
+
+        file = ModelFile(
+            id=8888,
+            version_id=version.id,
+            storage_filename="db_resolved_model.safetensors",
+            original_filename="Original_Model.safetensors",
+            size_bytes=1024,
+        )
+        session.add(file)
+        session.flush()
+
+        status = ProviderVersionStatus(
+            provider_id="test-prov-db",
+            file_id=file.id,
+            status="ready",
+            storage_path="models/checkpoints/subfolder/db_resolved_model.safetensors",
+        )
+        session.add(status)
+        session.commit()
+
+        monkeypatch.setattr("api.deps.get_session_sync", lambda: session)
+
+        # Graph requesting Original_Model.safetensors
+        graph = {
+            "1": {
+                "class_type": "CheckpointLoaderSimple",
+                "inputs": {"ckpt_name": "Original_Model.safetensors"},
+            }
+        }
+
+        reconciled = engine._reconcile_graph_models_from_db(graph)
+        assert reconciled["1"]["inputs"]["ckpt_name"] == "subfolder/db_resolved_model.safetensors"
+
+    @pytest.mark.asyncio
+    async def test_targeted_fetch_node_info_on_validation_failure(self):
+        from unittest.mock import AsyncMock, MagicMock
+        from services.engines.direct_comfy_engine import DirectComfyEngine
+
+        engine = DirectComfyEngine("direct-targeted", comfy_url="http://localhost:8188")
+        mock_client = MagicMock()
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "LoraLoader": {
+                "input": {
+                    "required": {
+                        "lora_name": [["sub/anime_lora.safetensors"]],
+                    }
+                }
+            }
+        }
+        mock_client.get = AsyncMock(return_value=mock_resp)
+
+        with patch.object(engine, "get_http_client", return_value=mock_client):
+            spec = await engine._fetch_node_info("LoraLoader")
+            assert spec is not None
+            assert "input" in spec
+            mock_client.get.assert_awaited_once_with("/object_info/LoraLoader", timeout=10.0)
+
+
