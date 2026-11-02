@@ -241,6 +241,33 @@ class JobService:
     def __init__(self, session: Session):
         self.session = session
         self.repo = JobRepository(session)
+
+    def _create_isolated_session(self) -> Session | None:
+        """Create a dedicated Session for offloaded pool work when using a multi-connection pool.
+
+        In production with QueuePool (PostgreSQL), each thread in the offload pool must have
+        its own session to prevent cross-thread access on a shared session.
+        In tests / single-connection environments (SQLite StaticPool), creating a
+        second session causes transaction conflicts on the shared connection, and
+        `run_db` already runs inline on the main thread.
+        """
+        try:
+            from infrastructure.db_executor import _pool_is_single_connection
+            if _pool_is_single_connection():
+                return None
+        except Exception:
+            pass
+
+        bind = getattr(self.session, "bind", None) or getattr(self.repo.session, "bind", None)
+        if bind is None:
+            try:
+                from infrastructure.database import engine as default_engine
+                bind = default_engine
+            except Exception:
+                bind = None
+        if bind is not None:
+            return Session(bind)
+        return None
     
     def _create_job_sync(
         self, workflow: dict[str, Any], metadata: dict[str, Any], task_type: str
@@ -330,6 +357,16 @@ class JobService:
         see `infrastructure/db_executor.py`.
         """
         def _read() -> Job:
+            work_session = self._create_isolated_session()
+            if work_session is not None:
+                with work_session:
+                    work_repo = JobRepository(work_session)
+                    job = work_repo.get(job_id)
+                    if not job:
+                        logger.warning("job_not_found", job_id=job_id)
+                        raise NotFoundError("Job", job_id)
+                    return job
+
             job = self.repo.get(job_id)
             if not job:
                 logger.warning("job_not_found", job_id=job_id)
@@ -338,16 +375,9 @@ class JobService:
                 self.session.refresh(job)
             except Exception as e:
                 logger.debug("job_refresh_failed", job_id=job_id, error=str(e))
-                # The re-read is the real check. It was written as
-                # `try: self.session.get(Job, job_id) except Exception: raise
-                # NotFoundError(...)`, which never fired: `Session.get` returns
-                # `None` for a missing row, it does not raise. So the result was
-                # discarded, the `NotFoundError` was unreachable, and a caller got
-                # back a possibly-stale detached object believing it was fresh.
                 if self.session.get(Job, job_id) is None:
                     raise NotFoundError("Job", job_id) from e
             return job
-
         return await run_db(_read)
     
     async def list_jobs(
@@ -487,49 +517,64 @@ class JobService:
         """
 
         def _work() -> Job | None:
-            job = self.repo.get(job_id)
-            if not job:
-                return None
+            work_session = self._create_isolated_session()
+            active_session = work_session if work_session is not None else self.session
+            active_repo = JobRepository(active_session) if work_session is not None else self.repo
 
-            try:
-                metadata = dict(job.metadata_) if isinstance(job.metadata_, dict) else {}
-                diagnostics = dict(metadata.get(JOB_DIAGNOSTICS_KEY) or {})
-                attempts = [
-                    entry for entry in (diagnostics.get("attempts") or []) if isinstance(entry, dict)
-                ]
-                attempts.append(
-                    {
-                        "provider_id": provider_id,
-                        "attempt": attempt,
-                        "outcome": outcome,
-                        "error": (error[:MAX_ERROR_DETAIL_LENGTH] if error else None),
-                        "duration_seconds": duration_seconds,
-                        "at": datetime.now(timezone.utc).isoformat(),
-                    }
-                )
-                diagnostics["attempts"] = attempts[-MAX_TRACKED_ATTEMPTS:]
-                diagnostics["attempt_count"] = int(diagnostics.get("attempt_count") or 0) + 1
-                diagnostics["last_provider_id"] = provider_id
-                diagnostics["last_outcome"] = outcome
-                if error:
-                    diagnostics["failure_kind"] = FAILURE_PROVIDER_ERROR
-                    diagnostics["failed_at"] = datetime.now(timezone.utc).isoformat()
+            def _execute(session: Session, repo: JobRepository) -> Job | None:
+                job = repo.get(job_id)
+                if not job:
+                    return None
 
-                metadata[JOB_DIAGNOSTICS_KEY] = diagnostics
-                job.metadata_ = metadata
-                self.session.add(job)
-                self.session.commit()
-                self.session.refresh(job)
-                return job
-            except Exception as exc:  # diagnostics must never break execution
                 try:
-                    self.session.rollback()
-                except Exception:
-                    pass
-                logger.warning("job_attempt_record_failed", job_id=job_id, error=str(exc))
-                return None
+                    metadata = dict(job.metadata_) if isinstance(job.metadata_, dict) else {}
+                    diagnostics = dict(metadata.get(JOB_DIAGNOSTICS_KEY) or {})
+                    attempts = [
+                        entry for entry in (diagnostics.get("attempts") or []) if isinstance(entry, dict)
+                    ]
+                    attempts.append(
+                        {
+                            "provider_id": provider_id,
+                            "attempt": attempt,
+                            "outcome": outcome,
+                            "error": (error[:MAX_ERROR_DETAIL_LENGTH] if error else None),
+                            "duration_seconds": duration_seconds,
+                            "at": datetime.now(timezone.utc).isoformat(),
+                        }
+                    )
+                    diagnostics["attempts"] = attempts[-MAX_TRACKED_ATTEMPTS:]
+                    diagnostics["attempt_count"] = int(diagnostics.get("attempt_count") or 0) + 1
+                    diagnostics["last_provider_id"] = provider_id
+                    diagnostics["last_outcome"] = outcome
+                    if error:
+                        diagnostics["failure_kind"] = FAILURE_PROVIDER_ERROR
+                        diagnostics["failed_at"] = datetime.now(timezone.utc).isoformat()
 
-        return await run_db(_work)
+                    metadata[JOB_DIAGNOSTICS_KEY] = diagnostics
+                    job.metadata_ = metadata
+                    session.add(job)
+                    session.commit()
+                    session.refresh(job)
+                    return job
+                except Exception as exc:  # diagnostics must never break execution
+                    try:
+                        session.rollback()
+                    except Exception:
+                        pass
+                    logger.warning("job_attempt_record_failed", job_id=job_id, error=str(exc))
+                    return None
+
+            if work_session is not None:
+                with work_session:
+                    return _execute(work_session, active_repo)
+            return _execute(active_session, active_repo)
+
+        result = await run_db(_work)
+        try:
+            self.session.expire_all()
+        except Exception:
+            pass
+        return result
 
     async def mark_failed(
         self,
@@ -847,135 +892,114 @@ class JobService:
         # Event emission stays OUTSIDE the closure: `emit_job_event` is async
         # and non-blocking, and pulling it onto a worker thread would be
         # work being done in a thread for no reason.
-        def _db_work() -> Job:
-    # Track timing based on status changes
-            job = self.repo.get(job_id)
-            if not job:
-                logger.warning("job_update_not_found", job_id=job_id)
-                raise NotFoundError("Job", job_id)
-            
-            # Set started_at for first active state
-            # The shared tuple, not a transcription of it. This copy omitted
-            # `RETRYING`, so `started_at` was never stamped for a job entering retry
-            # backoff.
-            active_states = ACTIVE_JOB_STATUSES
-            status = updates.get("status")
-            requested_status = status
+        def _db_work() -> tuple[Job | None, JobStatus | None, dict[str, Any]]:
+            work_session = self._create_isolated_session()
+            active_session = work_session if work_session is not None else self.session
+            active_repo = JobRepository(active_session) if work_session is not None else self.repo
 
-            # Enforce Finite State Machine transitions
-            #
-            # The check below is only half the guard, and the half that used to be
-            # missing is the half that mattered. `repo.get` is `session.get`, so it
-            # answers from the identity map with no SELECT — for a long-lived
-            # Session `job.status` is whatever that Session last loaded, which for a
-            # request-scoped one can be arbitrarily old. SENT_TO_PROVIDER's allowed
-            # set contains FAILED, so a CANCELLED committed by another Session in
-            # between was authorised away and then overwritten, taking the user's
-            # cancellation and its reason with it. `expected_status` carries the
-            # status this decision was made against into the write itself, so the
-            # write re-checks it atomically.
-            expected_status: JobStatus | None = None
-            if status and status != job.status:
-                expected_status = job.status
-                allowed = JOB_STATUS_TRANSITIONS.get(job.status, set())
-                if status not in allowed:
-                    logger.warning(
-                        "invalid_fsm_transition", 
-                        job_id=job_id, 
-                        from_status=job.status, 
-                        to_status=status
-                    )
-                    # Ignore invalid transitions (e.g. updating a cancelled job to completed)
-                    updates.pop("status")
-                    status = None
-                    expected_status = None
+            def _execute(session: Session, repo: JobRepository):
+                job = repo.get(job_id)
+                if not job:
+                    logger.warning("job_update_not_found", job_id=job_id)
+                    raise NotFoundError("Job", job_id)
 
-            # Fields this method derives from `status`. They are undone if the
-            # transition is rejected below, so a rejected write does not leave a
-            # `completed_at` on a job that never completed.
-            derived_keys: set[str] = set()
+                # Set started_at for first active state
+                active_states = ACTIVE_JOB_STATUSES
+                status = updates.get("status")
+                requested_status = status
 
-            if status in active_states and not job.started_at:
-                updates["started_at"] = datetime.now(timezone.utc)
-                derived_keys.add("started_at")
-            elif status in (JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED):
-                updates["completed_at"] = datetime.now(timezone.utc)
-                derived_keys.add("completed_at")
-
-            timings = updates.pop("timings", None)
-            if timings is not None and "metadata_" not in updates:
-                metadata = dict(job.metadata_) if isinstance(job.metadata_, dict) else {}
-                diagnostics = dict(metadata.get(JOB_DIAGNOSTICS_KEY) or {})
-                diagnostics["timings"] = timings
-                metadata[JOB_DIAGNOSTICS_KEY] = diagnostics
-                updates["metadata_"] = metadata
-                derived_keys.add("metadata_")
-
-            # Annotate failures with a machine-readable cause so the diagnostics
-            # view can group them without parsing free-text errors. Callers that
-            # know the exact cause use `mark_failed`; everything else is classified
-            # from the message. Skipped when the caller supplied its own metadata so
-            # an explicit block is never overwritten.
-            if status == JobStatus.FAILED and "metadata_" not in updates:
-                failure_kind = classify_job_error(updates.get("error") or job.error)
-                if failure_kind:
-                    metadata = dict(job.metadata_) if isinstance(job.metadata_, dict) else {}
-                    diagnostics = dict(metadata.get(JOB_DIAGNOSTICS_KEY) or {})
-                    if not diagnostics.get("failure_kind"):
-                        diagnostics["failure_kind"] = failure_kind
-                        diagnostics.setdefault("failed_at", datetime.now(timezone.utc).isoformat())
-                        metadata[JOB_DIAGNOSTICS_KEY] = diagnostics
-                    updates["metadata_"] = metadata
-                    derived_keys.add("metadata_")
-
-            if expected_status is not None:
-                job = self.repo.update_where_status(job_id, expected_status, **updates)
-                if job is None:
-                    # 0 rows: the row was no longer in the state this guard read, so
-                    # some other writer got there first. Same verdict, same
-                    # consequence, one source: drop the transition and everything
-                    # derived from it, and let the remaining fields through exactly
-                    # as the rejected-transition path above does.
-                    for key in derived_keys:
-                        updates.pop(key, None)
-                    updates.pop("status", None)
-                    status = None
-                    job = self.repo.update(job_id, **updates)
-                    if job is not None:
+                # Enforce Finite State Machine transitions
+                expected_status: JobStatus | None = None
+                if status and status != job.status:
+                    expected_status = job.status
+                    allowed = JOB_STATUS_TRANSITIONS.get(job.status, set())
+                    if status not in allowed:
                         logger.warning(
                             "invalid_fsm_transition",
                             job_id=job_id,
-                            from_status=expected_status,
-                            to_status=requested_status,
-                            actual_status=job.status,
-                            reason="concurrent_status_change",
+                            from_status=job.status,
+                            to_status=status
                         )
-            else:
-                job = self.repo.update(job_id, **updates)
+                        # Ignore invalid transitions (e.g. updating a cancelled job to completed)
+                        updates.pop("status")
+                        status = None
+                        expected_status = None
 
-            if job is None:
-                # Deleted by the writer that beat us to it. Reporting the update and
-                # emitting an event for a row that no longer exists would put a
-                # terminal event on the wire for a job nobody can fetch.
-                logger.warning("job_update_deleted_concurrently", job_id=job_id)
-                return job
-        
-            if status:
-                status_value = status.value if hasattr(status, "value") else str(status)
-                logger.info("job_status_changed", job_id=job_id, status=status_value)
-                if status in (JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED):
-                    duration = None
-                    if job.started_at and job.completed_at:
-                        duration = max((job.completed_at - job.started_at).total_seconds(), 0.0)
-                    metrics.track_job_completed(status_value, duration)
-            # `status` and `updates` are mutated in place by the FSM guard
-            # above (a rejected transition pops them), so the event emission
-            # below has to read the POST-WRITE values rather than recomputing
-            # from the caller's arguments. Handing them back is what keeps the
-            # emission on the loop while the write stays on the pool.
-            return job, status, updates
+                # Fields this method derives from `status`.
+                derived_keys: set[str] = set()
+
+                if status in active_states and not job.started_at:
+                    updates["started_at"] = datetime.now(timezone.utc)
+                    derived_keys.add("started_at")
+                elif status in (JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED):
+                    updates["completed_at"] = datetime.now(timezone.utc)
+                    derived_keys.add("completed_at")
+
+                timings = updates.pop("timings", None)
+                if timings is not None and "metadata_" not in updates:
+                    metadata = dict(job.metadata_) if isinstance(job.metadata_, dict) else {}
+                    diagnostics = dict(metadata.get(JOB_DIAGNOSTICS_KEY) or {})
+                    diagnostics["timings"] = timings
+                    metadata[JOB_DIAGNOSTICS_KEY] = diagnostics
+                    updates["metadata_"] = metadata
+                    derived_keys.add("metadata_")
+
+                if status == JobStatus.FAILED and "metadata_" not in updates:
+                    failure_kind = classify_job_error(updates.get("error") or job.error)
+                    if failure_kind:
+                        metadata = dict(job.metadata_) if isinstance(job.metadata_, dict) else {}
+                        diagnostics = dict(metadata.get(JOB_DIAGNOSTICS_KEY) or {})
+                        if not diagnostics.get("failure_kind"):
+                            diagnostics["failure_kind"] = failure_kind
+                            diagnostics.setdefault("failed_at", datetime.now(timezone.utc).isoformat())
+                            metadata[JOB_DIAGNOSTICS_KEY] = diagnostics
+                        updates["metadata_"] = metadata
+                        derived_keys.add("metadata_")
+
+                if expected_status is not None:
+                    job = repo.update_where_status(job_id, expected_status, **updates)
+                    if job is None:
+                        for key in derived_keys:
+                            updates.pop(key, None)
+                        updates.pop("status", None)
+                        status = None
+                        job = repo.update(job_id, **updates)
+                        if job is not None:
+                            logger.warning(
+                                "invalid_fsm_transition",
+                                job_id=job_id,
+                                from_status=expected_status,
+                                to_status=requested_status,
+                                actual_status=job.status,
+                                reason="concurrent_status_change",
+                            )
+                else:
+                    job = repo.update(job_id, **updates)
+
+                if job is None:
+                    logger.warning("job_update_deleted_concurrently", job_id=job_id)
+                    return None, status, updates
+
+                if status:
+                    status_value = status.value if hasattr(status, "value") else str(status)
+                    logger.info("job_status_changed", job_id=job_id, status=status_value)
+                    if status in (JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED):
+                        duration = None
+                        if job.started_at and job.completed_at:
+                            duration = max((job.completed_at - job.started_at).total_seconds(), 0.0)
+                        metrics.track_job_completed(status_value, duration)
+                return job, status, updates
+
+            if work_session is not None:
+                with work_session:
+                    return _execute(work_session, active_repo)
+            return _execute(active_session, active_repo)
 
         job, status, updates = await run_db(_db_work)
+        try:
+            self.session.expire_all()
+        except Exception:
+            pass
         
         # Determine event type based on status
         if event_type is not None:

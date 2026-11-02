@@ -28,8 +28,20 @@ def _make_job(boot_seconds_meta=None, started_offset=3.0):
 
 
 class TestStampBootSeconds:
-    async def test_stamps_once_on_first_call(self):
+    async def test_stamps_once_on_first_call(self, monkeypatch):
+        fixed_now = datetime(2026, 11, 2, 12, 0, 10, tzinfo=timezone.utc)
+        started_at = fixed_now - timedelta(seconds=3.0)
         job = _make_job()
+        job.started_at = started_at
+
+        # Freeze datetime.now in job_boot_metrics to eliminate wall-clock drift under load
+        class _FrozenDatetime:
+            @classmethod
+            def now(cls, tz=None):
+                return fixed_now
+
+        monkeypatch.setattr(jbm, "datetime", _FrozenDatetime)
+
         job_service = MagicMock()
         job_service.get_job = AsyncMock(return_value=job)
         job_service.update_job = AsyncMock(return_value=job)
@@ -38,11 +50,10 @@ class TestStampBootSeconds:
 
         args = job_service.update_job.await_args
         metadata = args.kwargs["metadata_"]
-        assert metadata["boot_seconds"] == pytest.approx(3.0, abs=0.5)
+        assert metadata["boot_seconds"] == 3.0
         # MutableList gotcha: the ORIGINAL dict must never be mutated in place.
         assert "boot_seconds" not in job.metadata_
         assert metadata["checkpoint"] == {"name": "x.safetensors"}
-
     async def test_second_call_is_a_noop(self):
         """The guard prevents a second DB write on later frames."""
         job = _make_job()
