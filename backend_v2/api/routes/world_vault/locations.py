@@ -180,11 +180,16 @@ async def upload_location_image(location_id: str, file: UploadFile = File(...), 
     _, _, ext = inspect_image(content, field="file", label="Location image")
 
     base_dir = app_config.settings.location_image_dir
-    os.makedirs(f"{base_dir}/{location_id}", exist_ok=True)
     image_path = f"{base_dir}/{location_id}/image{ext}"
 
-    with open(image_path, "wb") as buffer:
-        buffer.write(content)
+    def _write_image(base_dir: str, location_id: str, image_path: str, content: bytes) -> str:
+        # Blocking filesystem work off the event loop.
+        os.makedirs(f"{base_dir}/{location_id}", exist_ok=True)
+        with open(image_path, "wb") as buffer:
+            buffer.write(content)
+        return image_path
+
+    await asyncio.to_thread(_write_image, base_dir, location_id, image_path, content)
 
     await asyncio.to_thread(_save_location_image, session, location_repo, location_id, image_path)
     return {"message": "Image uploaded", "image_path": image_path}

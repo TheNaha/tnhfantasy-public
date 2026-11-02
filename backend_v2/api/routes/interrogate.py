@@ -5,6 +5,7 @@ Prioritizes embedded PNG chunk metadata (ComfyUI / A1111 / Civitai), falling
 back to heuristics or vision model interrogation when available.
 """
 
+import asyncio
 import base64
 import io
 import json
@@ -124,10 +125,15 @@ async def interrogate_image(
             raise ValidationError(f"Invalid base64 image data: {exc}")
     elif (request and request.image_path) or image_path:
         path = (request.image_path if request else None) or image_path
-        if not os.path.exists(path):
-            raise ValidationError(f"Image file not found: {path}")
-        with open(path, "rb") as f:
-            img_bytes = f.read()
+
+        def _read_image(path: str) -> bytes:
+            # Blocking filesystem work off the event loop.
+            if not os.path.exists(path):
+                raise ValidationError(f"Image file not found: {path}")
+            with open(path, "rb") as f:
+                return f.read()
+
+        img_bytes = await asyncio.to_thread(_read_image, path)
 
     if not img_bytes:
         raise ValidationError("No image provided. Provide a file upload, image_path, or image_data.")

@@ -421,8 +421,8 @@ class ProviderTelemetryService:
             from services.provider_probe import forget_probe
 
             forget_probe(provider_id)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("forget_probe_failed", provider_id=provider_id, error=str(exc))
 
     # ------------------------------------------------------------------
     # Serverless warm-window lifecycle (modal/beam)
