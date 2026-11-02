@@ -223,7 +223,10 @@ class ModelServiceV2:
 
     async def set_default_version(self, model_id: int, version_id: int) -> bool:
         """Set a version as the default for generation."""
-        return self.repo.set_default_version(model_id, version_id)
+        updated = self.repo.set_default_version(model_id, version_id)
+        if updated:
+            self.invalidate_availability_caches()
+        return updated
 
     async def toggle_version_enabled(self, version_id: int) -> dict[str, Any] | None:
         """Toggle whether a version is enabled."""

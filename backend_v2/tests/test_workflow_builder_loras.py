@@ -59,3 +59,40 @@ def test_workflow_builder_extracts_loras_from_prompt(monkeypatch):
     ]
     for text in text_encodes:
         assert "<lora:" not in text
+
+
+def test_workflow_builder_resolves_cjk_checkpoint_and_loras(monkeypatch):
+    import unicodedata
+    nfd_ckpt = unicodedata.normalize("NFD", "한국어_체크포인트.safetensors")
+    nfc_ckpt = unicodedata.normalize("NFC", "한국어_체크포인트.safetensors")
+
+    monkeypatch.setattr(
+        "core.workflow_builder.resolve_checkpoint_name",
+        lambda name: nfd_ckpt if unicodedata.normalize("NFC", name) == nfc_ckpt else name,
+    )
+    monkeypatch.setattr(
+        "core.workflow_builder.resolve_lora_name",
+        lambda name: "anime_lora.safetensors" if "anime" in name else name,
+    )
+    monkeypatch.setattr(
+        "core.workflow_postprocess.embedding_file_exists",
+        lambda name: True,
+    )
+
+    builder = WorkflowBuilder()
+    options = GeneratorOptions(
+        prompt="1girl",
+        negativePrompt="bad quality",
+        checkpoint=nfc_ckpt,
+        loras=[LoraOption(name="anime", strength=0.8)],
+    )
+    graph = builder.build(options)
+    # Find CheckpointLoaderSimple node
+    ckpt_nodes = [n for n in graph.values() if n.get("class_type") == "CheckpointLoaderSimple"]
+    assert len(ckpt_nodes) == 1
+    assert ckpt_nodes[0]["inputs"]["ckpt_name"] == nfd_ckpt
+
+    lora_nodes = [n for n in graph.values() if n.get("class_type") == "LoraLoader"]
+    assert len(lora_nodes) == 1
+    assert lora_nodes[0]["inputs"]["lora_name"] == "anime_lora.safetensors"
+

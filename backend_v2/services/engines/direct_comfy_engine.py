@@ -7,9 +7,12 @@ without intermediate container proxies.
 
 import asyncio
 import base64
+import copy
 import json
 import os
+import re
 import time
+import unicodedata
 import urllib.parse
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator, Dict, List, Optional
@@ -105,8 +108,69 @@ NODE_TO_DIRECTORY = {
 MODEL_INPUT_NAMES = {
     "ckpt_name", "model_name", "lora_name", "vae_name", "control_net_name",
     "model_name1", "clip_name", "upscaler_name", "hypernetwork_name",
-    "embedding_name",
+    "embedding_name", "unet_name", "clip_name1", "clip_name2", "ipadapter_file",
 }
+
+
+def _match_comfy_model_choice(requested: str, choices: list[str]) -> str | None:
+    """Match a requested model filename against ComfyUI /object_info choice strings.
+
+    Handles:
+    1. Exact match and Unicode normalization (NFC, NFD, NFKC).
+    2. Basename matching for choices with relative subfolders (e.g. 'anime/model.safetensors').
+    3. Case-insensitive stem matching and CJK punctuation/bracket stripping.
+    """
+    if not requested or not choices:
+        return None
+    if requested in choices:
+        return requested
+
+    req_variants = {
+        requested,
+        unicodedata.normalize("NFC", requested),
+        unicodedata.normalize("NFD", requested),
+        unicodedata.normalize("NFKC", requested),
+    }
+    req_basenames = {os.path.basename(v.replace("\\", "/")) for v in req_variants}
+    req_stems = {os.path.splitext(b)[0].lower() for b in req_basenames}
+
+    def _clean_cjk_stem(s: str) -> str:
+        return re.sub(r"[^\w]", "", unicodedata.normalize("NFKC", s)).lower()
+
+    req_clean = {_clean_cjk_stem(s) for s in req_stems if _clean_cjk_stem(s)}
+
+    # Pass 1: exact match against Unicode variants
+    for c in choices:
+        if (
+            c in req_variants
+            or unicodedata.normalize("NFC", c) in req_variants
+            or unicodedata.normalize("NFD", c) in req_variants
+            or unicodedata.normalize("NFKC", c) in req_variants
+        ):
+            return c
+
+    # Pass 2: match basename of choice against basename of requested
+    for c in choices:
+        c_base = os.path.basename(c.replace("\\", "/"))
+        if (
+            c_base in req_basenames
+            or unicodedata.normalize("NFC", c_base) in req_basenames
+            or unicodedata.normalize("NFD", c_base) in req_basenames
+            or unicodedata.normalize("NFKC", c_base) in req_basenames
+        ):
+            return c
+
+    # Pass 3: match stem (without extension) case-insensitively or punctuation-stripped CJK
+    for c in choices:
+        c_base = os.path.basename(c.replace("\\", "/"))
+        c_stem = os.path.splitext(c_base)[0].lower()
+        if c_stem in req_stems:
+            return c
+        if req_clean and _clean_cjk_stem(c_stem) in req_clean:
+            return c
+
+    return None
+
 
 
 def _normalize_directory(directory: Optional[str]) -> str:
@@ -477,6 +541,67 @@ class DirectComfyEngine(InProcessEngine):
                             # damage one level up.
                             paths.append(f"models/{target_dir}/{model_name}")
         return sorted(set(paths))
+    def _reconcile_graph_models_with_object_info(
+        self,
+        graph: Dict[str, Any],
+        object_info: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Reconcile model inputs in the prompt graph against /object_info choices.
+
+        Resolves Unicode normalization mismatches (NFC/NFD), subfolder prefixes
+        (e.g. 'anime/model.safetensors'), and CJK punctuation differences before
+        ComfyUI validates and rejects the prompt.
+        """
+        if not isinstance(graph, dict) or not isinstance(object_info, dict):
+            return graph
+
+        reconciled = copy.deepcopy(graph)
+        for _node_id, node_data in reconciled.items():
+            if not isinstance(node_data, dict):
+                continue
+            class_type = node_data.get("class_type")
+            inputs = node_data.get("inputs")
+            if not class_type or not isinstance(inputs, dict):
+                continue
+            node_info = object_info.get(class_type)
+            if not isinstance(node_info, dict):
+                continue
+
+            node_input = node_info.get("input", {}) or {}
+            spec_map: Dict[str, Any] = {}
+            for section in ("required", "optional"):
+                sec_val = node_input.get(section)
+                if isinstance(sec_val, dict):
+                    spec_map.update(sec_val)
+                elif isinstance(sec_val, (list, tuple)):
+                    for item in sec_val:
+                        if isinstance(item, (list, tuple)) and len(item) >= 2:
+                            spec_map[item[0]] = item[1:]
+
+            for input_key, input_val in list(inputs.items()):
+                if input_key not in MODEL_INPUT_NAMES or not isinstance(input_val, str) or not input_val:
+                    continue
+                spec = spec_map.get(input_key)
+                if not spec or not isinstance(spec, (list, tuple)) or not spec:
+                    continue
+                choices = spec[0] if isinstance(spec[0], list) else (spec if isinstance(spec, list) else None)
+                if not isinstance(choices, list) or not choices:
+                    continue
+
+                matched = _match_comfy_model_choice(input_val, choices)
+                if matched and matched != input_val:
+                    inputs[input_key] = matched
+                    logger.info(
+                        "direct_comfy_model_name_reconciled",
+                        provider_id=self.provider_id,
+                        node_type=class_type,
+                        input_key=input_key,
+                        requested=input_val,
+                        resolved=matched,
+                    )
+
+        return reconciled
+
 
     async def list_models(self, directory: str) -> List[Dict[str, Any]]:
         """List models, preferring the agent sidecar when configured.
@@ -963,6 +1088,16 @@ class DirectComfyEngine(InProcessEngine):
                 # (`modal/tts/app.py`: `workflow_json.get("prompt",
                 # workflow_json)`); this engine never did.
                 graph = workflow.get("prompt") if isinstance(workflow.get("prompt"), dict) else workflow
+                try:
+                    obj_info = (
+                        self._object_info_cache[1]
+                        if self._object_info_cache and (time.monotonic() - self._object_info_cache[0] < self._object_info_ttl)
+                        else await self._fetch_object_info()
+                    )
+                    if obj_info:
+                        graph = self._reconcile_graph_models_with_object_info(graph, obj_info)
+                except Exception as exc:
+                    logger.debug("direct_comfy_reconcile_skip", provider_id=self.provider_id, error=str(exc))
                 t_prompt_start = time.monotonic()
                 prompt_resp = await client.post(
                     "/prompt",

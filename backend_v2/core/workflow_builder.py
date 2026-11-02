@@ -1,6 +1,7 @@
 import math
 import os
 import re
+import unicodedata
 from typing import Any, Optional, Union
 from datetime import datetime, timezone
 from pydantic import BaseModel, Field
@@ -74,50 +75,79 @@ def extract_prompt_loras(prompt: str) -> tuple[list[LoraOption], str]:
     return loras, cleaned
 
 
-def resolve_lora_name(name: str) -> str:
-    """Resolve a friendly LoRA name or version alias to the actual storage filename.
+def _unicode_variants(value: str) -> list[str]:
+    """Return deduplicated list of Unicode normalization forms (raw, NFC, NFD, NFKC)."""
+    if not value:
+        return []
+    forms = [
+        value,
+        unicodedata.normalize("NFC", value),
+        unicodedata.normalize("NFD", value),
+        unicodedata.normalize("NFKC", value),
+    ]
+    return list(dict.fromkeys(f for f in forms if f))
+
+
+def resolve_model_filename(
+    name: str,
+    directory: str,
+    default_exts: tuple[str, ...] = (".safetensors", ".ckpt", ".pt"),
+) -> str:
+    """Resolve a friendly model name, alias, or CJK variant to the actual storage filename.
 
     If name matches a file directly on disk, returns it verbatim.
-    Otherwise queries the DB catalog for matching storage_filename, original_filename,
-    version name, or model name under models/loras.
+    Otherwise checks on-disk Unicode normalization variants, then queries the DB
+    catalog for matching storage_filename, original_filename, version name, or model name.
     """
     if not name:
         return name
 
-    candidates = [name]
+    base_candidates = [name]
     if not os.path.splitext(name)[1]:
-        candidates = [name + ".safetensors", name + ".pt", name]
+        base_candidates = [f"{name}{ext}" for ext in default_exts] + [name]
     base_name = os.path.basename(name)
     if base_name != name:
-        candidates.append(base_name)
+        base_candidates.append(base_name)
+
+    candidates = list(dict.fromkeys(v for c in base_candidates for v in _unicode_variants(c)))
 
     data_dir = os.path.dirname(os.path.abspath(settings.input_dir))
-    loras_dir = os.path.join(data_dir, "models", "loras")
-    if os.path.isdir(loras_dir):
+    target_dir = os.path.join(data_dir, "models", directory)
+    if os.path.isdir(target_dir):
         for cand in candidates:
-            if os.path.isfile(os.path.join(loras_dir, cand)):
+            if os.path.isfile(os.path.join(target_dir, cand)):
                 return cand
+        try:
+            on_disk_entries = os.listdir(target_dir)
+            for entry in on_disk_entries:
+                entry_variants = set(_unicode_variants(entry))
+                if any(cand in entry_variants for cand in candidates):
+                    return entry
+        except Exception:
+            pass
 
     try:
         from api.deps import get_session_sync
         from sqlmodel import select, or_, func
         from core.entities import ModelFile, ModelV2, ModelVersion
 
+        lower_candidates = [c.lower() for c in candidates]
         with get_session_sync() as session:
             stmt = (
                 select(ModelFile.storage_filename)
                 .join(ModelVersion, ModelVersion.id == ModelFile.version_id)
                 .join(ModelV2, ModelV2.id == ModelVersion.model_id)
-                .where(ModelV2.directory.in_(["loras", "models/loras"]))
+                .where(ModelV2.directory.in_([directory, f"models/{directory}"]))
                 .where(
                     or_(
                         ModelFile.storage_filename.in_(candidates),
                         ModelFile.original_filename.in_(candidates),
                         ModelVersion.name.in_(candidates),
                         ModelV2.name.in_(candidates),
-                        func.lower(ModelVersion.name) == name.lower(),
-                        func.lower(ModelFile.original_filename) == name.lower(),
-                        func.lower(ModelFile.original_filename) == f"{name.lower()}.safetensors",
+                        func.lower(ModelFile.storage_filename).in_(lower_candidates),
+                        func.lower(ModelFile.original_filename).in_(lower_candidates),
+                        func.lower(ModelVersion.name).in_(lower_candidates),
+                        func.lower(ModelV2.name).in_(lower_candidates),
                     )
                 )
             )
@@ -125,9 +155,20 @@ def resolve_lora_name(name: str) -> str:
             if found:
                 return found
     except Exception as exc:
-        logger.debug("resolve_lora_name_failed", name=name, error=str(exc))
+        logger.debug("resolve_model_filename_failed", name=name, directory=directory, error=str(exc))
 
     return name
+
+
+def resolve_lora_name(name: str) -> str:
+    """Resolve a friendly LoRA name or version alias to the actual storage filename."""
+    return resolve_model_filename(name, "loras", default_exts=(".safetensors", ".pt"))
+
+
+def resolve_checkpoint_name(name: str) -> str:
+    """Resolve a friendly checkpoint name or alias to the actual storage filename."""
+    return resolve_model_filename(name, "checkpoints", default_exts=(".safetensors", ".ckpt", ".pt"))
+
 
 
 class ControlNetOption(BaseModel):
@@ -510,19 +551,20 @@ class WorkflowBuilder:
                     "the second CLIP as well.",
                     field="clip2",
                 )
+            unet_name = resolve_model_filename(options.unet, "unet")
             current_model = [self.add_node("UNETLoader", {
-                "unet_name": options.unet,
+                "unet_name": unet_name,
                 "weight_dtype": "default"
             }), 0]
 
             if options.clip2:
-                clip1_name = options.clip
-                clip2_name = options.clip2
+                clip1_name = resolve_model_filename(options.clip, "clip")
+                clip2_name = resolve_model_filename(options.clip2, "clip")
                 loader_type = "flux"
 
                 if options.modelType == "sdxl":
-                    clip1_name = options.clip2
-                    clip2_name = options.clip
+                    clip1_name = resolve_model_filename(options.clip2, "clip")
+                    clip2_name = resolve_model_filename(options.clip, "clip")
                     loader_type = "sdxl"
 
                 current_clip = [self.add_node("DualCLIPLoader", {
@@ -532,26 +574,29 @@ class WorkflowBuilder:
                 }), 0]
             else:
                 current_clip = [self.add_node("CLIPLoader", {
-                    "clip_name": options.clip,
+                    "clip_name": resolve_model_filename(options.clip, "clip"),
                     "type": "stable_diffusion"
                 }), 0]
 
-            vae_name = options.vae if (options.vae and options.vae != "Baked in") else "ae.safetensors"
+            raw_vae = options.vae if (options.vae and options.vae != "Baked in") else "ae.safetensors"
+            vae_name = resolve_model_filename(raw_vae, "vae")
             current_vae = [self.add_node("VAELoader", {
                 "vae_name": vae_name
             }), 0]
         else:
             # Standard Checkpoint Loader
+            ckpt_name = resolve_checkpoint_name(options.checkpoint or "")
             checkpoint_loader = self.add_node("CheckpointLoaderSimple", {
-                "ckpt_name": options.checkpoint or ""
+                "ckpt_name": ckpt_name
             })
             current_model = [checkpoint_loader, 0]
             current_clip = [checkpoint_loader, 1]
             current_vae = [checkpoint_loader, 2]
 
             if options.vae and options.vae != "Baked in":
+                vae_name = resolve_model_filename(options.vae, "vae")
                 current_vae = [self.add_node("VAELoader", {
-                    "vae_name": options.vae
+                    "vae_name": vae_name
                 }), 0]
 
         return current_model, current_clip, current_vae

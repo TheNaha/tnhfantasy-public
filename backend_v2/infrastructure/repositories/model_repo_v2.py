@@ -185,10 +185,12 @@ class ModelRepositoryV2:
         self.session.flush()  # Get model ID
         
         # Create tags
+        seen_tags: set[str] = set()
         for tag in civitai_data.get("tags", []):
-            tag_obj = ModelTag(model_id=model.id, tag=tag)
-            self.session.add(tag_obj)
-        
+            if tag and tag not in seen_tags:
+                seen_tags.add(tag)
+                tag_obj = ModelTag(model_id=model.id, tag=tag)
+                self.session.add(tag_obj)
         # Create selected versions
         is_first = True
         for version_data in civitai_data.get("modelVersions", []):

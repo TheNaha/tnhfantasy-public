@@ -209,6 +209,7 @@ MODALITY_STATE_IDS: dict[str, int] = {
     "llm": 2,
     "tts": 3,
 }
+STATE_ID_TO_MODALITY: dict[int, str] = {v: k for k, v in MODALITY_STATE_IDS.items()}
 
 class LoadBalancer:
     """Load balances jobs across multiple serverless providers."""
@@ -322,9 +323,13 @@ class LoadBalancer:
             # `least-connections` could hand that provider a second job while the
             # first was still occupying it.
             active_states = ACTIVE_JOB_STATUSES
+            modality = STATE_ID_TO_MODALITY.get(state_id)
+            job_filters = [Job.status.in_(active_states), Job.provider_id.is_not(None)]
+            if modality:
+                job_filters.append(Job.task_type == modality)
             counted = session.exec(
                 select(Job.provider_id, func.count(Job.id))
-                .where(Job.status.in_(active_states), Job.provider_id.is_not(None))
+                .where(*job_filters)
                 .group_by(Job.provider_id)
             ).all()
 

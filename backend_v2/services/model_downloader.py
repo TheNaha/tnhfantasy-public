@@ -112,8 +112,14 @@ class ModelDownloader:
         # Add pending statuses for all relevant files and providers BEFORE
         # triggering - but only for the providers that can act on them.
         all_versions = self.repo.get_versions_for_model(model_id)
-        target_versions = [v for v in all_versions if v.id in version_ids] if version_ids else all_versions
-
+        if version_ids:
+            wanted = {str(vid) for vid in version_ids}
+            target_versions = [
+                v for v in all_versions
+                if str(v.id) in wanted or (v.civitai_version_id is not None and str(v.civitai_version_id) in wanted)
+            ]
+        else:
+            target_versions = all_versions
         for provider, _engine in model_managing:
             for version in target_versions:
                 file = self.repo.get_primary_file_for_version(version.id)

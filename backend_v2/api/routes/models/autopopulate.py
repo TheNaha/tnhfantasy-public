@@ -24,8 +24,7 @@ class AutopopulateRequest(BaseModel):
     civitai_id: int | None = None
 
 class BatchAutopopulateCandidatesRequest(BaseModel):
-    model_ids: list[int]
-
+    model_ids: list[str | int]
 
 def _get_models_needing_population(repo: ModelRepositoryV2) -> list:
     return repo.get_models_needing_population()

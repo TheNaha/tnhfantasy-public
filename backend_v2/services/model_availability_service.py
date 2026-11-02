@@ -6,6 +6,7 @@ Used for pre-flight job validation and model-aware load balancing.
 from dataclasses import dataclass, field
 import os
 import time
+import unicodedata
 
 from sqlalchemy import and_, or_
 from sqlmodel import Session, select
@@ -40,6 +41,21 @@ def clear_available_models_cache(directory: str | None = None) -> None:
         _available_models_cache.clear()
     else:
         _available_models_cache.pop(directory, None)
+
+def _filename_variants(filename: str) -> set[str]:
+    """Compute set of Unicode normalization forms and basename variants for a filename."""
+    if not filename:
+        return set()
+    base = os.path.basename(filename.replace("\\", "/"))
+    raw = {filename, base}
+    out: set[str] = set()
+    for item in raw:
+        if item:
+            out.add(item)
+            out.add(unicodedata.normalize("NFC", item))
+            out.add(unicodedata.normalize("NFD", item))
+            out.add(unicodedata.normalize("NFKC", item))
+    return out
 
 
 def _cached_available_models(directory: str) -> list[str] | None:
@@ -195,13 +211,18 @@ class ModelAvailabilityService:
 
         result: dict[tuple[str, str], dict[str, str]] = {}
 
-        file_filters = [
-            and_(
-                ModelV2.directory == directory,
-                ModelFile.storage_filename == filename,
+        file_filters = []
+        for directory, filename in requested_pairs:
+            variants = _filename_variants(filename)
+            file_filters.append(
+                and_(
+                    ModelV2.directory == directory,
+                    or_(
+                        ModelFile.storage_filename.in_(variants),
+                        ModelFile.original_filename.in_(variants),
+                    ),
+                )
             )
-            for directory, filename in requested_pairs
-        ]
 
         stmt = select(ModelFile, ModelVersion, ModelV2).join(
             ModelVersion, ModelFile.version_id == ModelVersion.id
@@ -214,14 +235,21 @@ class ModelAvailabilityService:
         files = self.session.exec(stmt).all()
 
         matching_file_ids: list[int] = []
-        file_id_to_key: dict[int, tuple[str, str]] = {}
+        file_id_to_keys: dict[int, list[tuple[str, str]]] = {}
 
         for file, _version, model in files:
-            key = (model.directory, file.storage_filename)
-            if key in requested_pairs:
-                matching_file_ids.append(file.id)
-                file_id_to_key[file.id] = key
+            file_variants = _filename_variants(file.storage_filename)
+            if file.original_filename:
+                file_variants.update(_filename_variants(file.original_filename))
 
+            matched_keys: list[tuple[str, str]] = []
+            for req_dir, req_fn in requested_pairs:
+                if model.directory == req_dir and (file_variants & _filename_variants(req_fn)):
+                    matched_keys.append((req_dir, req_fn))
+
+            if matched_keys:
+                matching_file_ids.append(file.id)
+                file_id_to_keys[file.id] = matched_keys
         if not matching_file_ids:
             return result
 
@@ -231,8 +259,8 @@ class ModelAvailabilityService:
         statuses = self.session.exec(status_stmt).all()
 
         for status in statuses:
-            file_key = file_id_to_key.get(status.file_id)
-            if file_key:
+            file_keys = file_id_to_keys.get(status.file_id, [])
+            for file_key in file_keys:
                 result.setdefault(file_key, {})
                 provider_key = status.provider_id
                 if provider_key:
@@ -250,14 +278,19 @@ class ModelAvailabilityService:
         Returns True if at least one missing model exists in the model library
         and just needs to be downloaded to providers.
         """
-        file_filters = [
-            and_(
-                ModelV2.directory == directory,
-                ModelFile.storage_filename == filename,
-            )
-            for directory, filenames in global_missing.items()
-            for filename in filenames
-        ]
+        file_filters = []
+        for directory, filenames in global_missing.items():
+            for filename in filenames:
+                variants = _filename_variants(filename)
+                file_filters.append(
+                    and_(
+                        ModelV2.directory == directory,
+                        or_(
+                            ModelFile.storage_filename.in_(variants),
+                            ModelFile.original_filename.in_(variants),
+                        ),
+                    )
+                )
         
         if not file_filters:
             return False
@@ -363,8 +396,13 @@ class ModelAvailabilityService:
         ready = self.get_available_models("checkpoints")
         if not ready:
             return None
-        if preferred and preferred in ready:
-            return preferred
+        if preferred:
+            if preferred in ready:
+                return preferred
+            pref_vars = _filename_variants(preferred)
+            for r in ready:
+                if _filename_variants(r) & pref_vars:
+                    return r
         fallback = ready[0]
         if preferred:
             logger.warning(
@@ -384,7 +422,13 @@ class ModelAvailabilityService:
         if not preferred:
             return None
         ready = self.get_available_models("loras")
-        return preferred if preferred in ready else None
+        if preferred in ready:
+            return preferred
+        pref_vars = _filename_variants(preferred)
+        for r in ready:
+            if _filename_variants(r) & pref_vars:
+                return r
+        return None
 
     def get_missing_models_for_provider(
         self,

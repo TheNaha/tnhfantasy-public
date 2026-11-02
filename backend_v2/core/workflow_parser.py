@@ -31,7 +31,6 @@ MODEL_LOADER_NODES: dict[str, tuple[str, str]] = {
     
     # CLIP loaders
     "CLIPLoader": ("clip_name", "clip"),
-    "DualCLIPLoader": ("clip_name1", "clip"),  # Has two inputs
     
     # Hypernetwork
     "HypernetworkLoader": ("hypernetwork_name", "hypernetworks"),
@@ -45,6 +44,12 @@ MODEL_LOADER_NODES: dict[str, tuple[str, str]] = {
     # Embeddings / Textual Inversion — loaded by name reference in prompts
     # and/or via an EmbeddingLoader node in custom workflows.
     "EmbeddingLoader": ("embedding_name", "embeddings"),
+    
+    # IPAdapter
+    "IPAdapterModelLoader": ("ipadapter_file", "ipadapter"),
+    
+    # AnimateDiff motion modules
+    "ADE_AnimateDiffLoaderWithContext": ("model_name", "motion_modules"),
 }
 
 # KSampler-like node classes that carry sampler_name and scheduler combo inputs.

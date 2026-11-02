@@ -146,7 +146,8 @@ class ModelCivitaiSyncService:
             ).all()
             existing_tag_set = {t.tag for t in existing_tags}
             for tag_name in civitai_tags:
-                if tag_name not in existing_tag_set:
+                if tag_name and tag_name not in existing_tag_set:
+                    existing_tag_set.add(tag_name)
                     self.session.add(ModelTag(model_id=model.id, tag=tag_name))
 
         # Update versions — match by civitai_id or name, create new versions for unmatched

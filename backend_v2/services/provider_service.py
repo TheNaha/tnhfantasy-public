@@ -27,7 +27,7 @@ logger = provider_logger()
 
 # Provider types that are always LLM workers regardless of id/name.
 LLM_PROVIDER_TYPES = {"openai_compat", "openai", "anthropic", "google", "gemini", "ollama", "modal_llm"}
-
+TTS_PROVIDER_TYPES = {"modal_tts", "direct_tts", "beam_tts", "remote_tts"}
 
 def _normalize_capabilities(
     value: Any,
@@ -86,14 +86,16 @@ def _normalize_capabilities(
 
 
 def _infer_worker_type(provider_id: str, provider_type: str, explicit: str | None = None) -> str:
-    """Infer worker_type, preferring explicit value, then known LLM provider types, then id/type prefixes."""
+    """Infer worker_type, preferring explicit value, then known LLM/TTS provider types, then id/type prefixes."""
     if explicit and explicit != "image":
         return explicit
-    if str(provider_type).lower() in LLM_PROVIDER_TYPES:
+    pt_lower = str(provider_type).lower()
+    pid_lower = str(provider_id).lower()
+    if pt_lower in LLM_PROVIDER_TYPES or pid_lower.startswith("llm") or pt_lower.startswith("llm"):
         return "llm"
-    if str(provider_id).lower().startswith("llm") or str(provider_type).lower().startswith("llm"):
-        return "llm"
-    if str(provider_type).lower() == "remote_hybrid" or "hybrid" in str(provider_type).lower():
+    if pt_lower in TTS_PROVIDER_TYPES or pid_lower.startswith("tts") or pt_lower.endswith("_tts"):
+        return "tts"
+    if pt_lower == "remote_hybrid" or "hybrid" in pt_lower:
         return "hybrid"
     return "image"
 
@@ -153,13 +155,26 @@ class ProviderService:
             reconciliation_state=read_reconciliation_state(existing) if existing else None,
         )
 
+        existing_creds = clean_dict(getattr(existing, "credentials", None))
+        if "credentials" in payload and payload["credentials"] is not None:
+            raw_incoming = payload["credentials"]
+            if isinstance(raw_incoming, dict):
+                merged_creds = {**existing_creds, **clean_dict(raw_incoming)}
+                for k, v in raw_incoming.items():
+                    if v in (None, ""):
+                        merged_creds.pop(k, None)
+            else:
+                merged_creds = existing_creds
+        else:
+            merged_creds = existing_creds
+
         return {
             "id": payload.get("id") or getattr(existing, "id", None),
             "type": provider_type,
             "worker_type": payload.get("worker_type"),
             "enabled": payload.get("enabled", getattr(existing, "enabled", True)),
             "priority": payload.get("priority", getattr(existing, "priority", 1)),
-            "credentials": clean_dict(payload.get("credentials", getattr(existing, "credentials", {}))),
+            "credentials": clean_dict(merged_creds),
             "config": config,
             # Column name, so `repo.create`/`repo.update` (which splat this
             # dict into the model) persist it rather than dropping a kwarg it

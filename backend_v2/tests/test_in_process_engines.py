@@ -3661,3 +3661,78 @@ class TestEveryEngineRegistersAnUpstreamAbort:
         with patch.object(engine, "get_http_client", return_value=client):
             _ = [ev async for ev in engine.inference({"messages": []}, job_id="j-goog")]
         assert "j-goog" in engine._job_aborts
+
+
+class TestDirectComfyModelChoiceReconciliation:
+    """Verify DirectComfyEngine resolves CJK, NFC/NFD, and subfolder model choices."""
+
+    def test_reconcile_cjk_nfc_to_nfd_and_subfolders(self):
+        import unicodedata
+        from services.engines.direct_comfy_engine import DirectComfyEngine
+
+        engine = DirectComfyEngine("direct-cjk", comfy_url="http://localhost:8188")
+
+        # NFD choice on remote ComfyUI instance with subfolder
+        nfd_korean = unicodedata.normalize("NFD", "한국어_체크포인트.safetensors")
+        nfd_japanese = unicodedata.normalize("NFD", "アニメが大好き_v1.safetensors")
+
+        object_info = {
+            "CheckpointLoaderSimple": {
+                "input": {
+                    "required": {
+                        "ckpt_name": [[f"korean_sub/{nfd_korean}", "other.safetensors"]],
+                    }
+                }
+            },
+            "LoraLoader": {
+                "input": {
+                    "required": {
+                        "lora_name": [[f"anime/{nfd_japanese}"]],
+                    }
+                }
+            },
+        }
+
+        # NFC requested filenames
+        nfc_korean = unicodedata.normalize("NFC", "한국어_체크포인트.safetensors")
+        nfc_japanese = unicodedata.normalize("NFC", "アニメが大好き_v1.safetensors")
+
+        graph = {
+            "1": {
+                "class_type": "CheckpointLoaderSimple",
+                "inputs": {"ckpt_name": nfc_korean},
+            },
+            "2": {
+                "class_type": "LoraLoader",
+                "inputs": {"lora_name": nfc_japanese},
+            },
+        }
+
+        reconciled = engine._reconcile_graph_models_with_object_info(graph, object_info)
+        assert reconciled["1"]["inputs"]["ckpt_name"] == f"korean_sub/{nfd_korean}"
+        assert reconciled["2"]["inputs"]["lora_name"] == f"anime/{nfd_japanese}"
+
+    def test_reconcile_cjk_punctuation_and_stem_match(self):
+        from services.engines.direct_comfy_engine import DirectComfyEngine
+
+        engine = DirectComfyEngine("direct-cjk-punct", comfy_url="http://localhost:8188")
+        object_info = {
+            "CheckpointLoaderSimple": {
+                "input": {
+                    "required": {
+                        "ckpt_name": [["checkpoints/动漫模型_final.safetensors"]],
+                    }
+                }
+            }
+        }
+
+        # User/CivitAI name with fullwidth brackets: 【动漫模型_final】
+        graph = {
+            "1": {
+                "class_type": "CheckpointLoaderSimple",
+                "inputs": {"ckpt_name": "【动漫模型_final】.safetensors"},
+            }
+        }
+        reconciled = engine._reconcile_graph_models_with_object_info(graph, object_info)
+        assert reconciled["1"]["inputs"]["ckpt_name"] == "checkpoints/动漫模型_final.safetensors"
+

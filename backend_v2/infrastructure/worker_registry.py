@@ -794,34 +794,20 @@ def _run_notify_listener(loop: asyncio.AbstractEventLoop) -> None:
                 except Exception:
                     continue
 
-                # Claim the outbox row (UPDATE status -> claimed, RETURNING job_data).
-                def _claim_outbox(oid: str = outbox_id) -> dict | None:
-                    c = psycopg2.connect(database_url)
-                    try:
-                        c.autocommit = True
-                        with c.cursor() as cur:
-                            cur.execute(
-                                """
-                                UPDATE worker_dispatch_outbox
-                                SET status = 'claimed', claimed_at = NOW()
-                                WHERE id = %s AND status = 'pending'
-                                RETURNING provider_id, job_data
-                                """,
-                                (oid,),
-                            )
-                            row = cur.fetchone()
-                            if row is None:
-                                return None
-                            pid_, job_data = row
-                            if isinstance(job_data, str):
-                                job_data = json.loads(job_data)
-                            return {"provider_id": pid_, "job_data": job_data}
-                    finally:
-                        c.close()
+                # Only claim if this process has locally connected workers
+                try:
+                    local_provider_ids = asyncio.run_coroutine_threadsafe(
+                        _get_local_provider_ids_async(), loop
+                    ).result(timeout=5.0)
+                except Exception:
+                    local_provider_ids = []
+
+                if not local_provider_ids:
+                    continue
 
                 try:
                     fut = asyncio.run_coroutine_threadsafe(
-                        _claim_outbox_async(outbox_id), loop
+                        _claim_outbox_async(outbox_id, local_provider_ids), loop
                     )
                     claimed = fut.result(timeout=5.0)
                 except Exception as exc:
@@ -846,27 +832,9 @@ def _run_notify_listener(loop: asyncio.AbstractEventLoop) -> None:
                 except Exception:
                     continue
                 if worker is None:
-                    def _mark_failed(jid: str = job_id) -> None:
-                        c = psycopg2.connect(database_url)
-                        try:
-                            c.autocommit = True
-                            with c.cursor() as cur:
-                                cur.execute(
-                                    """
-                                    INSERT INTO worker_dispatch_result
-                                        (job_id, status, error, created_at)
-                                    VALUES (%s, 'failed', %s, NOW())
-                                    ON CONFLICT (job_id) DO UPDATE
-                                        SET status = 'failed', error = EXCLUDED.error
-                                    """,
-                                    (jid, "No local WebSocket worker for provider"),
-                                )
-                        finally:
-                            c.close()
-
                     try:
                         asyncio.run_coroutine_threadsafe(
-                            _mark_failed_async(), loop
+                            _mark_failed_async(job_id), loop
                         ).result(timeout=5.0)
                     except Exception:
                         pass
@@ -879,27 +847,9 @@ def _run_notify_listener(loop: asyncio.AbstractEventLoop) -> None:
                 except Exception:
                     continue
                 if busy_with is not None:
-                    def _mark_busy(jid: str = job_id, bw: str = busy_with) -> None:
-                        c = psycopg2.connect(database_url)
-                        try:
-                            c.autocommit = True
-                            with c.cursor() as cur:
-                                cur.execute(
-                                    """
-                                    INSERT INTO worker_dispatch_result
-                                        (job_id, status, error, created_at)
-                                    VALUES (%s, 'failed', %s, NOW())
-                                    ON CONFLICT (job_id) DO UPDATE
-                                        SET status = 'failed', error = EXCLUDED.error
-                                    """,
-                                    (jid, f"Worker busy with job {bw}"),
-                                )
-                        finally:
-                            c.close()
-
                     try:
                         asyncio.run_coroutine_threadsafe(
-                            _mark_busy_async(), loop
+                            _mark_busy_async(job_id, busy_with), loop
                         ).result(timeout=5.0)
                     except Exception:
                         pass
@@ -924,30 +874,9 @@ def _run_notify_listener(loop: asyncio.AbstractEventLoop) -> None:
                     asyncio.run_coroutine_threadsafe(
                         _release_worker_slot(worker, job_id), loop
                     ).result(timeout=5.0)
-
-                    def _mark_send_failed(
-                        jid: str = job_id, msg: str = str(exc)
-                    ) -> None:
-                        c = psycopg2.connect(database_url)
-                        try:
-                            c.autocommit = True
-                            with c.cursor() as cur:
-                                cur.execute(
-                                    """
-                                    INSERT INTO worker_dispatch_result
-                                        (job_id, status, error, created_at)
-                                    VALUES (%s, 'failed', %s, NOW())
-                                    ON CONFLICT (job_id) DO UPDATE
-                                        SET status = 'failed', error = EXCLUDED.error
-                                    """,
-                                    (jid, msg),
-                                )
-                        finally:
-                            c.close()
-
                     try:
                         asyncio.run_coroutine_threadsafe(
-                            _mark_send_failed_async(), loop
+                            _mark_send_failed_async(job_id, str(exc)), loop
                         ).result(timeout=5.0)
                     except Exception:
                         pass
@@ -968,28 +897,9 @@ def _run_notify_listener(loop: asyncio.AbstractEventLoop) -> None:
                     asyncio.run_coroutine_threadsafe(
                         _release_worker_slot(worker, job_id), loop
                     ).result(timeout=5.0)
-
-                    def _mark_timeout(jid: str = job_id) -> None:
-                        c = psycopg2.connect(database_url)
-                        try:
-                            c.autocommit = True
-                            with c.cursor() as cur:
-                                cur.execute(
-                                    """
-                                    INSERT INTO worker_dispatch_result
-                                        (job_id, status, error, created_at)
-                                    VALUES (%s, 'failed', %s, NOW())
-                                    ON CONFLICT (job_id) DO UPDATE
-                                        SET status = 'failed', error = EXCLUDED.error
-                                    """,
-                                    (jid, "Cross-process dispatch timed out"),
-                                )
-                        finally:
-                            c.close()
-
                     try:
                         asyncio.run_coroutine_threadsafe(
-                            _mark_timeout_async(), loop
+                            _mark_timeout_async(job_id), loop
                         ).result(timeout=5.0)
                     except Exception:
                         pass
@@ -1006,43 +916,9 @@ def _run_notify_listener(loop: asyncio.AbstractEventLoop) -> None:
                 result_payload = result.get("outputs", {})
                 error_payload = result.get("error")
 
-                def _write_result(
-                    jid: str = job_id,
-                    st: str = status,
-                    res: dict | None = result_payload or None,
-                    err: str | None = error_payload,
-                ) -> None:
-                    c = psycopg2.connect(database_url)
-                    try:
-                        c.autocommit = True
-                        with c.cursor() as cur:
-                            cur.execute(
-                                """
-                                INSERT INTO worker_dispatch_result
-                                    (job_id, status, result, error, created_at)
-                                VALUES (%s, %s, %s, %s, NOW())
-                                ON CONFLICT (job_id) DO UPDATE
-                                    SET status = EXCLUDED.status,
-                                        result = EXCLUDED.result,
-                                        error = EXCLUDED.error
-                                """,
-                                    (
-                                        jid,
-                                        st,
-                                        json.dumps(res) if res is not None else None,
-                                        err,
-                                    ),
-                            )
-                            cur.execute(
-                                "NOTIFY worker_dispatch_result_%s, %s",
-                                (jid, json.dumps({"status": st, "job_id": jid})),
-                            )
-                    finally:
-                        c.close()
-
                 try:
                     asyncio.run_coroutine_threadsafe(
-                        _write_result_async(), loop
+                        _write_result_async(job_id, status, result_payload or None, error_payload), loop
                     ).result(timeout=5.0)
                 except Exception as exc:
                     logger.warning(
@@ -1072,22 +948,45 @@ def _run_notify_listener(loop: asyncio.AbstractEventLoop) -> None:
 # the event-loop-bound operations. These wrappers keep the thread code simple.
 
 
-async def _claim_outbox_async(outbox_id: str) -> dict | None:
+async def _get_local_provider_ids_async() -> list[str]:
+    """Return list of provider IDs with live workers connected in this process."""
+    async with _workers_lock:
+        return [
+            pid for pid in list(connected_workers.keys())
+            if _get_live_worker_unlocked(pid) is not None
+        ]
+
+
+async def _claim_outbox_async(outbox_id: str, provider_ids: list[str] | None = None) -> dict | None:
     """Claim one outbox row; returns {provider_id, job_data} or None."""
+    if provider_ids is not None and len(provider_ids) == 0:
+        return None
+
     def _do() -> dict | None:
         c = psycopg2.connect(database_url)
         try:
             c.autocommit = True
             with c.cursor() as cur:
-                cur.execute(
-                    """
-                    UPDATE worker_dispatch_outbox
-                    SET status = 'claimed', claimed_at = NOW()
-                    WHERE id = %s AND status = 'pending'
-                    RETURNING provider_id, job_data
-                    """,
-                    (outbox_id,),
-                )
+                if provider_ids:
+                    cur.execute(
+                        """
+                        UPDATE worker_dispatch_outbox
+                        SET status = 'claimed', claimed_at = NOW()
+                        WHERE id = %s AND status = 'pending' AND provider_id = ANY(%s)
+                        RETURNING provider_id, job_data
+                        """,
+                        (outbox_id, list(provider_ids)),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        UPDATE worker_dispatch_outbox
+                        SET status = 'claimed', claimed_at = NOW()
+                        WHERE id = %s AND status = 'pending'
+                        RETURNING provider_id, job_data
+                        """,
+                        (outbox_id,),
+                    )
                 row = cur.fetchone()
                 if row is None:
                     return None
@@ -1099,7 +998,6 @@ async def _claim_outbox_async(outbox_id: str) -> dict | None:
             c.close()
 
     return await asyncio.to_thread(_do)
-
 
 async def _mark_failed_async(job_id: str, error: str = "No local WebSocket worker for provider") -> None:
     def _do() -> None:

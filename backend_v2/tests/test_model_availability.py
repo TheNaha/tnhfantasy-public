@@ -107,3 +107,54 @@ class TestGetMissingModelsForProvider:
             "test-provider", {"checkpoints": ["missing.safetensors"]}
         )
         assert isinstance(missing, dict)
+
+
+class TestCJKAndOriginalFilenameAvailability:
+    def test_cjk_nfc_nfd_and_original_filename_matching(self, service, provider_in_db, session):
+        import unicodedata
+        from core.entities import ModelV2, ModelVersion, ModelFile, ProviderVersionStatus
+
+        # Create a model with NFD storage_filename and an original_filename
+        nfd_name = unicodedata.normalize("NFD", "한국어_체크포인트.safetensors")
+        nfc_name = unicodedata.normalize("NFC", "한국어_체크포인트.safetensors")
+
+        model = ModelV2(id="cjk-model", name="Korean Model", type="checkpoint", directory="checkpoints")
+        session.add(model)
+        session.flush()
+
+        version = ModelVersion(id="cjk-ver", model_id=model.id, name="v1.0", is_enabled=True)
+        session.add(version)
+        session.flush()
+
+        file = ModelFile(
+            id=9999,
+            version_id=version.id,
+            storage_filename=nfd_name,
+            original_filename="Original_Korean_Name.safetensors",
+            size_bytes=1024,
+        )
+        session.add(file)
+        session.flush()
+
+        status = ProviderVersionStatus(
+            provider_id="test-provider",
+            file_id=file.id,
+            status="ready",
+        )
+        session.add(status)
+        session.commit()
+
+        # 1. Lookup with NFC name should find NFD file and mark provider eligible
+        avail_nfc = service.check_availability({"checkpoints": [nfc_name]})
+        assert avail_nfc.valid is True
+        assert "test-provider" in avail_nfc.eligible_providers
+
+        # 2. Lookup with original_filename should find file and mark provider eligible
+        avail_orig = service.check_availability({"checkpoints": ["Original_Korean_Name.safetensors"]})
+        assert avail_orig.valid is True
+        assert "test-provider" in avail_orig.eligible_providers
+
+        # 3. get_available_checkpoint with NFC name should return matching installed name
+        matched = service.get_available_checkpoint(preferred=nfc_name)
+        assert matched == nfd_name
+
