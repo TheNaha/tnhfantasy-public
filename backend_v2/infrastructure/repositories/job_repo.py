@@ -353,6 +353,7 @@ class JobRepository:
         if not result.rowcount:
             return None
         self.session.commit()
+        self.session.expire_all()
         return self.get(job_id)
     
     def delete(self, job_id: str) -> bool:

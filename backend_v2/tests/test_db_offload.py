@@ -282,3 +282,20 @@ class TestTheOffloadDeclinesWhenItWouldRace:
             "with a per-checkout pool the work must reach the offload pool"
         )
         assert engine is not None
+
+    @pytest.mark.asyncio
+    async def test_job_service_isolated_session_on_multi_connection_pool(self, session, monkeypatch):
+        """When _pool_is_single_connection is False, JobService uses isolated sessions for offload work."""
+        from services.job_service import JobService
+        import infrastructure.db_executor as db_executor
+
+        service = JobService(session)
+        job = await service.create_job(task_type="image", workflow={"1": {}}, metadata={})
+
+        monkeypatch.setattr(db_executor, "_pool_is_single_connection", lambda: False)
+
+        updated = await service.update_job(job.id, status=JobStatus.SENT_TO_PROVIDER)
+        assert updated.status == JobStatus.SENT_TO_PROVIDER
+
+        read_back = await service.get_job(job.id)
+        assert read_back.status == JobStatus.SENT_TO_PROVIDER

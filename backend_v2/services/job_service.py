@@ -266,7 +266,7 @@ class JobService:
             except Exception:
                 bind = None
         if bind is not None:
-            return Session(bind)
+            return Session(bind, expire_on_commit=False)
         return None
     
     def _create_job_sync(
