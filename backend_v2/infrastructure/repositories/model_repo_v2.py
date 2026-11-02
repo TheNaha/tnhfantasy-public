@@ -1150,10 +1150,8 @@ class ModelRepositoryV2:
         Returns:
             Dict with 'deleted_count' and 'orphaned_providers' list
         """
-        from sqlalchemy import distinct
-        
         # Get all unique provider identifiers in ProviderVersionStatus.
-        stmt = select(distinct(ProviderVersionStatus.provider_id))
+        stmt = select(ProviderVersionStatus.provider_id).distinct()
         all_provider_names = {
             provider_key
             for provider_key in self.session.exec(stmt).all()

@@ -7,6 +7,7 @@ Supports multi-account Modal credentials and streams TaskEvents directly.
 
 import asyncio
 import base64
+import inspect
 import os
 import time
 from typing import Any, AsyncIterator, Dict, List, Optional
@@ -172,6 +173,24 @@ class ModalTTSEngine(InProcessEngine):
                             token_secret=self.token_secret,
                         )
         return self._client
+
+    async def close(self) -> None:
+        """Release the cached Modal client (parity with ModalEngine close()).
+
+        The client is closed when it exposes `aclose` before the reference is
+        dropped: only setting `_client = None` leaks the client's connection
+        pool across credential rotations and engine invalidations.
+        """
+        client, self._client = self._client, None
+        aclose = getattr(client, "aclose", None)
+        if aclose is None:
+            return
+        try:
+            result = aclose()
+            if inspect.isawaitable(result):
+                await result
+        except Exception as exc:
+            logger.warning("modal_tts_client_close_failed", provider_id=self.provider_id, error=str(exc))
 
     async def check_health(self) -> Dict[str, Any]:
         """Probe Modal app availability.

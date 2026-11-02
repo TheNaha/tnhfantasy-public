@@ -361,40 +361,43 @@ async def cancel_job(sid, data):
         # generation kept running and billing.
         if queue_manager.is_job_active_anywhere(job_id):
             # Job is currently being processed - signal cancellation to worker
+            provider = None
+            runtime = None
             async with get_session_context() as session:
                 job_service = get_job_service(session)
                 job = await job_service.get_job(job_id)
-                
-                # Try to cancel on the provider worker
                 if job.provider_id:
                     provider_service = get_provider_service(session)
                     provider = await provider_service.get_provider(job.provider_id)
                     runtime = await resolve_provider_runtime_async(provider)
 
-                    if runtime.mode == "in_process":
-                        # Reach the engine instance actually streaming the job;
-                        # the factory cache may hold a different instance.
-                        try:
-                            from services.engines.base import find_engine_for_job
-                            from services.engines.engine_factory import get_engine
+            # Try to cancel on the provider worker without holding a database connection
+            if provider and runtime:
+                if runtime.mode == "in_process":
+                    # Reach the engine instance actually streaming the job;
+                    # the factory cache may hold a different instance.
+                    try:
+                        from services.engines.base import find_engine_for_job
+                        from services.engines.engine_factory import get_engine
 
-                            engine = find_engine_for_job(job_id) or get_engine(provider.id)
-                            if engine and hasattr(engine, "cancel_job"):
-                                await engine.cancel_job(job_id)
-                                logger.info(f"[WebSocket] In-process engine acknowledged cancel for {job_id}")
-                        except Exception as cancel_err:
-                            logger.warning(f"[WebSocket] Could not signal in-process engine to cancel: {cancel_err}")
-                    elif runtime.mode == "external_worker":
-                        try:
-                            from infrastructure.worker_registry import request_worker_job_cancel
+                        engine = find_engine_for_job(job_id) or get_engine(provider.id)
+                        if engine and hasattr(engine, "cancel_job"):
+                            await engine.cancel_job(job_id)
+                            logger.info(f"[WebSocket] In-process engine acknowledged cancel for {job_id}")
+                    except Exception as cancel_err:
+                        logger.warning(f"[WebSocket] Could not signal in-process engine to cancel: {cancel_err}")
+                elif runtime.mode == "external_worker":
+                    try:
+                        from infrastructure.worker_registry import request_worker_job_cancel
 
-                            await request_worker_job_cancel(provider.id, job_id)
-                        except Exception as cancel_err:
-                            logger.warning(f"[WebSocket] Could not signal external worker to cancel: {cancel_err}")
-                
-                # Mark as cancelled in DB
+                        await request_worker_job_cancel(provider.id, job_id)
+                    except Exception as cancel_err:
+                        logger.warning(f"[WebSocket] Could not signal external worker to cancel: {cancel_err}")
+
+            # Mark as cancelled in DB
+            async with get_session_context() as session:
+                job_service = get_job_service(session)
                 await job_service.update_job(job_id, status=JobStatus.CANCELLED)
-            
             await sio.emit('cancel_job_ack', {
                 'job_id': job_id,
                 'status': 'cancellation_requested',
