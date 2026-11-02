@@ -402,12 +402,17 @@ export function ChatWorkspaceProvider({ children }) {
                     character,
                     onCreate: async (selectedGreeting) => {
                         setGreetingModal(null);
-                        const chat = await createChatMutation.mutateAsync({ 
-                            name: 'New Chat', 
-                            character_id: characterId,
-                            override_greeting: selectedGreeting 
-                        });
-                        selectChat(chat.id);
+                        try {
+                            const chat = await createChatMutation.mutateAsync({
+                                name: 'New Chat',
+                                character_id: characterId,
+                                override_greeting: selectedGreeting
+                            });
+                            selectChat(chat.id);
+                        } catch {
+                            toast.error('Failed to create chat');
+                            hasCreatedChatRef.current = false;
+                        }
                     }
                 });
             } else {
@@ -845,14 +850,18 @@ export function ChatWorkspaceProvider({ children }) {
                 character,
                 onCreate: async (selectedGreeting) => {
                     setGreetingModal(null);
-                    const chat = await createChatMutation.mutateAsync({ 
-                        ...payload,
-                        override_greeting: selectedGreeting 
-                    });
-                    if (warnIfWorldIgnored(chat, worldId)) toast(WORLD_IGNORED_MESSAGE('chat'));
-                    selectChat(chat.id);
-                    setMobileTab('chat');
-                    toast.success('New chat created');
+                    try {
+                        const chat = await createChatMutation.mutateAsync({
+                            ...payload,
+                            override_greeting: selectedGreeting
+                        });
+                        if (warnIfWorldIgnored(chat, worldId)) toast(WORLD_IGNORED_MESSAGE('chat'));
+                        selectChat(chat.id);
+                        setMobileTab('chat');
+                        toast.success('New chat created');
+                    } catch {
+                        toast.error('Failed to create chat');
+                    }
                 }
             });
         } else {

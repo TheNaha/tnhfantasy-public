@@ -1,7 +1,8 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from sqlalchemy import text
 
 from api.deps import get_session
+from core.exceptions import ServiceUnavailableError
 
 router = APIRouter(tags=["health"])
 
@@ -28,5 +29,5 @@ def ready(session=Depends(get_session)):
     try:
         session.exec(text("SELECT 1"))
     except Exception as exc:
-        raise HTTPException(status_code=503, detail="database unavailable") from exc
+        raise ServiceUnavailableError("database unavailable", service="database") from exc
     return {"status": "ready", "version": "2.0.0"}
