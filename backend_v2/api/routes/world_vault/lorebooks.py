@@ -171,7 +171,7 @@ def search_entries(
     lorebook_id: str, 
     q: str = Query(..., max_length=MAX_SEARCH_LENGTH),
 
-    limit: int = 5,
+    limit: int = Query(5, ge=1, le=100),
     session: Session = Depends(get_session),
     lorebook_repo: LorebookRepository = Depends(get_lorebook_repo),
 ):

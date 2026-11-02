@@ -871,7 +871,7 @@ def delete_chat(chat_id: str, session: Session = Depends(get_session), chat_repo
 
 
 @router.get("/{chat_id}/messages", response_model=list[Message])
-def list_messages(chat_id: str, branch_id: str | None = None, session: Session = Depends(get_session), chat_repo: ChatRepository = Depends(get_chat_repo),   limit: int = 100, offset: int = 0, q: str | None = Query(None, max_length=MAX_SEARCH_LENGTH), tail: bool = False):
+def list_messages(chat_id: str, branch_id: str | None = None, session: Session = Depends(get_session), chat_repo: ChatRepository = Depends(get_chat_repo),   limit: int = Query(100, ge=1, le=1000), offset: int = Query(0, ge=0), q: str | None = Query(None, max_length=MAX_SEARCH_LENGTH), tail: bool = False):
     chat = chat_repo.get(chat_id)
     if not chat:
         raise NotFoundError("Chat", chat_id)

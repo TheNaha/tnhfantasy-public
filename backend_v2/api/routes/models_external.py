@@ -41,7 +41,7 @@ async def get_civitai_enums(
 
 @router.get("/civitai/tags")
 async def get_civitai_tags(
-    limit: int = 20,
+    limit: int = Query(20, ge=1, le=100),
     service: ExternalModelService = Depends(get_external_model_service),
 ) -> dict[str, Any]:
     """Get valid tags for CivitAI filters."""
@@ -89,8 +89,8 @@ async def search_civitai(
 
 @router.get("/huggingface")
 async def search_huggingface(
-    query: str,
-    limit: int = 20,
+    query: str = Query(..., max_length=200),
+    limit: int = Query(20, ge=1, le=100),
     service: ExternalModelService = Depends(get_external_model_service),
 ) -> dict[str, Any]:
     """Search models on HuggingFace."""

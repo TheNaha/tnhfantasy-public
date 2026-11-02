@@ -25,6 +25,9 @@ import os
 import re
 
 from core.exceptions import ValidationError
+from infrastructure.logging import get_logger
+
+logger = get_logger("workflow_postprocess")
 
 #: File extensions recognised for embedding files in `models/embeddings/`.
 _EMBEDDING_EXTENSIONS = (".safetensors", ".pt", ".bin", ".ckpt")
@@ -86,8 +89,8 @@ def embedding_file_exists(name: str) -> bool:
             )
             if session.exec(stmt).first():
                 return True
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("embedding_resolve_failed", error=str(exc))
 
     return False
 
@@ -142,8 +145,8 @@ def resolve_embedding_filename(name: str) -> str:
             found = session.exec(stmt).first()
             if found:
                 return os.path.splitext(found)[0]
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("embedding_resolve_failed", error=str(exc))
 
     return name
 

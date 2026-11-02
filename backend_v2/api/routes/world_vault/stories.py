@@ -150,6 +150,8 @@ class CreateStoryRequest(BaseModel):
     llm_model: str | None = None
     memory: str | None = None
     max_agentic_depth: int | None = None
+    max_agentic_images: int | None = None
+    max_agentic_narrations: int | None = None
     pov: str | None = None
     word_count_goal: int | None = None
 
@@ -173,6 +175,7 @@ class UpdateStoryRequest(BaseModel):
     # rejected, it is silently absent, which is how "Autonomous Illustration ->
     # 0" came back 200 and did nothing.
     max_agentic_images: int | None = None
+    max_agentic_narrations: int | None = None
     # Who the reader character is. On the schema as well as the allow-list,
     # because `model_dump(exclude_unset=True)` can only forward a field the
     # request model declares — and an undeclared one is silently absent rather
@@ -328,6 +331,8 @@ def create_story(req: CreateStoryRequest, session: Session = Depends(get_session
         llm_model=req.llm_model,
         memory=req.memory,
         max_agentic_depth=req.max_agentic_depth,
+        max_agentic_images=req.max_agentic_images,
+        max_agentic_narrations=req.max_agentic_narrations,
         pov=req.pov,
         word_count_goal=req.word_count_goal,
     )

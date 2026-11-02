@@ -73,6 +73,9 @@ async def _trigger(svc: ProviderLifecycleService, status, **extra):
         "services.provider_lifecycle_service.resolve_provider_runtime_async",
         return_value=SimpleNamespace(mode="in_process"),
     ), patch(
+        "services.engines.engine_factory.get_engine",
+        return_value=MagicMock(),
+    ), patch(
         "services.in_process_reconciliation.trigger_in_process_reconciliation",
         AsyncMock(return_value=result),
     ):
@@ -145,6 +148,9 @@ class TestTheEngineStatusDecidesTheStoredState:
             "services.provider_lifecycle_service.resolve_provider_runtime_async",
             return_value=SimpleNamespace(mode="in_process"),
         ), patch(
+            "services.engines.engine_factory.get_engine",
+            return_value=MagicMock(),
+        ), patch(
             "services.in_process_reconciliation.trigger_in_process_reconciliation",
             AsyncMock(return_value={"message": "empty answer"}),
         ):
@@ -174,6 +180,9 @@ class TestTheEngineStatusDecidesTheStoredState:
         with patch(
             "services.provider_lifecycle_service.resolve_provider_runtime_async",
             return_value=SimpleNamespace(mode="in_process"),
+        ), patch(
+            "services.engines.engine_factory.get_engine",
+            return_value=MagicMock(),
         ), patch(
             "services.in_process_reconciliation.trigger_in_process_reconciliation",
             AsyncMock(side_effect=RuntimeError("engine blew up")),

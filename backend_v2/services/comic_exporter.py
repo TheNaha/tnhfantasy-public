@@ -660,8 +660,8 @@ async def export_comic_chapter(
         try:
             scenario_checkpoint, _ = resolve_scenario_defaults(session, story)
             checkpoint = scenario_checkpoint
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("resolve_scenario_defaults_failed", error=str(exc))
     if not checkpoint:
         from config import resolve_default_checkpoint
 

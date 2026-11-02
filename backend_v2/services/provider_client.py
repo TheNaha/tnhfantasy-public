@@ -76,13 +76,6 @@ class JobCancelledError(Exception):
         self.provider_id = provider_id
 
 
-def extract_worker_error_message(update: dict) -> str:
-    """Normalize worker error payloads from different providers."""
-    return update.get("message", "Unknown worker error")
-
-
-
-
 def validate_image_outputs(payload: dict) -> None:
     """Validate a completed image TaskEvent's ``outputs`` before finalization."""
     if not isinstance(payload, dict):

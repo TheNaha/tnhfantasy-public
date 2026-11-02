@@ -21,6 +21,10 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
 
+from infrastructure.logging import get_logger
+
+logger = get_logger("llm_router")
+
 # `registry.py` lives in `backend_v2/modal_llm/`, which is INSIDE the deployable
 # unit on purpose. It used to sit at the repo root, and the backend resolved it
 # with `parents[2]` — the repo root in development, `/` inside the container,
@@ -146,8 +150,8 @@ class LLMRouter:
                 active_model = self.registry.models[active_id]
                 others = [m for m in self.registry.enabled_for(role) if m.id != active_id]
                 return [active_model] + others
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("models_for_kind_resolve_failed", error=str(exc))
         return self.registry.enabled_for(role)
 
     def primary_for_kind(

@@ -199,8 +199,8 @@ def _served_models(session: Session) -> set[str]:
                 for m in reg.models.values():
                     if m.enabled:
                         served.add(m.id)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("served_models_resolve_failed", error=str(exc))
     return served
 
 
@@ -291,8 +291,8 @@ def model_scopes_for_kind(
         role = get_router().role_for_kind(kind)
         if role:
             scopes.add(str(role).strip().lower())
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("model_scopes_resolve_failed", error=str(exc))
     return scopes
 
 

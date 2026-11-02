@@ -25,7 +25,7 @@ reader, and there is nothing to desync because there is only one thing to
 write.
 """
 
-from collections.abc import Iterator, Sequence
+from collections.abc import Sequence
 from datetime import datetime
 
 from sqlmodel import Session, select
@@ -128,11 +128,6 @@ def detach_entity(session: Session, entity) -> None:
     """
     entity.world_id = None
     session.add(entity)
-
-
-def iter_member_tables() -> Iterator[tuple[type, str]]:
-    """The member tables and their labels, for callers that need the whole set."""
-    yield from MEMBER_TABLES
 
 
 def apply_world_id(session: Session, entity, update_data: dict) -> None:
