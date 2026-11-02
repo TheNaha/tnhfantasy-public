@@ -175,8 +175,12 @@ function SessionSplitPicker({ session, onCancel, onDone }) {
 
     const submit = useCallback(async () => {
         if (!canSplit || splitMutation.isPending) return;
-        await splitMutation.mutateAsync({ id: session.id, keepAssetIds: Array.from(keepIds) });
-        onDone();
+        try {
+            await splitMutation.mutateAsync({ id: session.id, keepAssetIds: Array.from(keepIds) });
+            onDone();
+        } catch (err) {
+            console.error('Failed to split session:', err);
+        }
     }, [canSplit, keepIds, onDone, session.id, splitMutation]);
 
     return (
@@ -468,8 +472,12 @@ function SessionMergePicker({ session, candidates, onCancel, onDone }) {
 
     const submit = useCallback(async () => {
         if (!targetSessionId || targetSessionId === session.id || mergeMutation.isPending) return;
-        await mergeMutation.mutateAsync({ id: session.id, targetSessionId });
-        onDone();
+        try {
+            await mergeMutation.mutateAsync({ id: session.id, targetSessionId });
+            onDone();
+        } catch (err) {
+            console.error('Failed to merge session:', err);
+        }
     }, [mergeMutation, onDone, session.id, targetSessionId]);
 
     return (

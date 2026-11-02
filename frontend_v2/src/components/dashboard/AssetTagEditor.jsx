@@ -58,9 +58,13 @@ export default function AssetTagEditor({ assetId }) {
             setDraft('');
             return;
         }
-        await addTag.mutateAsync(value);
-        setDraft('');
-        setIsFocused(false);
+        try {
+            await addTag.mutateAsync(value);
+            setDraft('');
+            setIsFocused(false);
+        } catch (err) {
+            console.error('Failed to add tag:', err);
+        }
     };
 
     return (

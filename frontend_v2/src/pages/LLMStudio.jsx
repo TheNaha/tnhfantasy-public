@@ -2610,6 +2610,8 @@ function AgentModal({ agent, availableModels = [], onClose, onSave }) {
                 max_tokens: maxTokens === '' ? null : parseInt(maxTokens, 10),
                 enabled,
             });
+        } catch {
+            toast.error('Failed to save agent');
         } finally {
             setSaving(false);
         }
@@ -3161,8 +3163,12 @@ function AgentVariantsSection({ agent, variants: providedVariants }) {
     };
 
     const handleActivate = async (variant) => {
-        await activateVariant.mutateAsync({ agentId: agent.id, variantId: variant.id });
-        toast.success(`Variant "${variant.name}" is now active.`);
+        try {
+            await activateVariant.mutateAsync({ agentId: agent.id, variantId: variant.id });
+            toast.success(`Variant "${variant.name}" is now active.`);
+        } catch {
+            toast.error('Failed to activate variant');
+        }
     };
 
     const handleDelete = async (variant) => {
@@ -3173,8 +3179,12 @@ function AgentVariantsSection({ agent, variants: providedVariants }) {
             isDangerous: true,
         });
         if (!ok) return;
-        await deleteVariant.mutateAsync({ agentId: agent.id, variantId: variant.id });
-        toast.success(`Variant "${variant.name}" deleted.`);
+        try {
+            await deleteVariant.mutateAsync({ agentId: agent.id, variantId: variant.id });
+            toast.success(`Variant "${variant.name}" deleted.`);
+        } catch {
+            toast.error('Failed to delete variant');
+        }
     };
 
     return (

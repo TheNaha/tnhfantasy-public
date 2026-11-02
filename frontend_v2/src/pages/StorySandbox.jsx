@@ -1091,6 +1091,8 @@ export default function StorySandbox() {
                         } else {
                             toast.error('Failed to copy content');
                         }
+                    }).catch(() => {
+                        toast.error('Failed to copy content');
                     });
                 }
             }

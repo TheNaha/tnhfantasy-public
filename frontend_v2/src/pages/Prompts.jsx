@@ -52,18 +52,22 @@ export default function Prompts() {
     }, [prompts, selectedCategory, searchQuery]);
 
     const handleUsePrompt = async (prompt) => {
-        // The increment runs FIRST and succeeds, so on an insecure origin the
-        // user got a usage count that went up and no feedback whatsoever: the
-        // `navigator.clipboard` dereference below threw synchronously, before
-        // any promise existed, so neither `.then` nor `.catch` could run.
-        await incrementPromptUsageMutation.mutateAsync(prompt.id);
-        // `copyToClipboard` resolves to whether the copy happened, which is the
-        // only honest basis for picking between the two messages below.
-        const copied = await copyToClipboard(prompt.text);
-        if (copied) {
-            toast.success(`Prompt copied to clipboard`, { icon: '📋' });
-        } else {
-            toast.success(`Prompt "${prompt.name}" selected`, { icon: '✨' });
+        try {
+            // The increment runs FIRST and succeeds, so on an insecure origin the
+            // user got a usage count that went up and no feedback whatsoever: the
+            // `navigator.clipboard` dereference below threw synchronously, before
+            // any promise existed, so neither `.then` nor `.catch` could run.
+            await incrementPromptUsageMutation.mutateAsync(prompt.id);
+            // `copyToClipboard` resolves to whether the copy happened, which is the
+            // only honest basis for picking between the two messages below.
+            const copied = await copyToClipboard(prompt.text);
+            if (copied) {
+                toast.success(`Prompt copied to clipboard`, { icon: '📋' });
+            } else {
+                toast.success(`Prompt "${prompt.name}" selected`, { icon: '✨' });
+            }
+        } catch {
+            toast.error('Failed to use prompt');
         }
     };
 

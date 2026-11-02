@@ -263,6 +263,8 @@ function LinkDialog({ source, target, onClose, onCreate }) {
         }).then(() => {
             setSubmitting(false);
             onClose();
+        }).catch(() => {
+            setSubmitting(false);
         });
     };
 

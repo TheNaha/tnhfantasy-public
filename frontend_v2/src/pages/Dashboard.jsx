@@ -434,7 +434,11 @@ export default function Dashboard() {
     }, [metadata, navigate, toastErrorDuration, toastSuccessDuration]);
 
     const handlePullToRefresh = useCallback(async () => {
-        await refetch();
+        try {
+            await refetch();
+        } catch (err) {
+            console.error('Pull-to-refresh failed:', err);
+        }
         await new Promise(resolve => setTimeout(resolve, 500));
     }, [refetch]);
 
