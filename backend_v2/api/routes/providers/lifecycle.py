@@ -209,8 +209,8 @@ async def remove_model_from_provider(
                 for suffix in (".json", ".preview.png", ".sha256"):
                     try:
                         await engine.delete_file(storage_path + suffix)
-                    except Exception:
-                        pass
+                    except Exception as sidecar_exc:
+                        logger.debug("provider_sidecar_delete_failed", path=storage_path + suffix, error=str(sidecar_exc))
             except Exception as exc:
                 logger.warning("provider_model_delete_failed", provider_id=provider_id, path=storage_path, error=str(exc))
     else:

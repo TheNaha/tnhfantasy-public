@@ -39,6 +39,8 @@ from core.workflow_postprocess import (  # noqa: F401
     postprocess_prompt_text,
 )
 
+logger = get_logger("workflow_builder")
+
 
 class LoraOption(BaseModel):
     name: str
@@ -122,8 +124,8 @@ def resolve_lora_name(name: str) -> str:
             found = session.exec(stmt).first()
             if found:
                 return found
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("resolve_lora_name_failed", name=name, error=str(exc))
 
     return name
 
@@ -227,8 +229,6 @@ class GeneratorOptions(BaseModel):
     # silently replaced.
     filenamePrefix: str | None = None
 
-
-logger = get_logger("workflow_builder")
 
 
 class WorkflowBuilder:
