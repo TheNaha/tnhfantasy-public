@@ -29,7 +29,7 @@ export default function AddModelToProviderModal({ providers, onClose }) {
     const directories = PROVIDER_MODEL_DIRECTORIES;
 
     // Fetch library models manifest
-    const { data: manifestData, isLoading: manifestLoading } = useQuery({
+    const { data: manifestData, isLoading: manifestLoading, isError: manifestError, refetch: refetchManifest } = useQuery({
         queryKey: ['global-sync-manifest'],
         queryFn: () => providersApi.getSyncManifest(),
         staleTime: 30_000,
@@ -235,6 +235,17 @@ export default function AddModelToProviderModal({ providers, onClose }) {
                                 <div className="py-12 text-center text-gray-500 flex items-center justify-center gap-2">
                                     <Loader2 size={16} className="animate-spin text-blue-400" />
                                     <span className="text-xs">Loading library catalog...</span>
+                                </div>
+                            ) : manifestError ? (
+                                <div className="py-8 px-4 text-center text-xs border border-dashed border-red-500/40 bg-red-500/10 rounded-xl space-y-2">
+                                    <p className="text-red-400">Failed to load library catalog.</p>
+                                    <button
+                                        type="button"
+                                        onClick={() => refetchManifest()}
+                                        className="px-3 py-1 bg-gray-800 hover:bg-gray-700 text-white rounded text-xs transition-colors"
+                                    >
+                                        Retry
+                                    </button>
                                 </div>
                             ) : filteredLibraryModels.length === 0 ? (
                                 <div className="py-8 text-center text-gray-500 text-xs border border-dashed border-gray-700 rounded-xl">

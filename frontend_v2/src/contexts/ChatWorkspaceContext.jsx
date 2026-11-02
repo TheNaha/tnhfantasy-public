@@ -12,7 +12,7 @@ import { useAddImagesToCollection } from '../hooks/useCollections';
 import { useWorldVaultStore } from '../store/worldVaultStore';
 import { useConfirmation } from '../store/confirmationStore';
 import useSettingsStore from '../store/settingsStore';
-import { useWebSocket, EventTypes, cancelJob } from '../api/websocket';
+import { EventTypes, cancelJob } from '../api/websocket';
 import { useDebounce } from '../hooks/useDebounce';
 import { useChatStreaming } from '../hooks/useChatStreaming';
 import { CHAT_LIST_KEY } from '../hooks/useChats';
@@ -386,7 +386,6 @@ export function ChatWorkspaceProvider({ children }) {
     const emptyLorebooks = useMemo(() => [], []);
     const selectedLorebooks = activeChat?.active_lorebook_ids || emptyLorebooks;
 
-    const { subscribe } = useWebSocket();
     const runLLMJob = useLLMJobResult();
     const { confirm } = useConfirmation();
 
@@ -1352,7 +1351,6 @@ export function ChatWorkspaceProvider({ children }) {
         showNewChatModal,
         showScenesModal,
         startRename,
-        subscribe,
         suggestJobId,
         suggestJobIdRef,
         suggestReplyMutation,
@@ -1424,7 +1422,7 @@ export function ChatWorkspaceProvider({ children }) {
         setTargetCharacterId, setTimelineVisible,
         showCharacterDetails, showLorebookModal, showLocationModal,
         showMoreTools, showNewChatModal,
-        showScenesModal, startRename, subscribe, suggestJobId,
+        showScenesModal, startRename, suggestJobId,
         suggestJobIdRef, suggestReplyMutation, suggestSafetyTimerRef,
         selectChat, swipeMessageMutation, systemPromptData, targetCharacterId,
         textareaRef, timelineVisible, titlePollCancelledRef,
