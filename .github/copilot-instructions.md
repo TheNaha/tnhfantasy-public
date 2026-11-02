@@ -39,13 +39,13 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
 
 # Backend (from backend_v2/)
 .venv/bin/pip install -r requirements.txt
-uvicorn api.main:app --host 0.0.0.0 --port 8002 --reload
+uvicorn api.main:app --host 127.0.0.1 --port 8002 --reload
 pytest
 
 # Frontend (from frontend_v2/)
 bun install
 bun run dev -- --host 0.0.0.0 --port 5174
-bun test
+bun run test
 ```
 
 ## Conventions

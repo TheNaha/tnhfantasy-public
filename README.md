@@ -19,7 +19,7 @@ An open-source **AI fantasy engine** combining image generation, roleplay chat, 
 - [Deployment Guide](docs/deployment.md) — Production setup and scaling
 - [API Reference](docs/api.md) — REST endpoints and WebSocket schema
 - [Provider Setup](docs/provider-architecture.md) — Add custom compute backends
-- [Contribute](CONTRIBUTING.md) — Development workflow (see `.github/copilot-instructions.md`)
+- [Conventions](.github/copilot-instructions.md) — Development workflow and conventions
 
 ## Tech Stack
 
@@ -33,7 +33,7 @@ An open-source **AI fantasy engine** combining image generation, roleplay chat, 
 ## Getting Started
 
 ### Prerequisites
-- Docker & Docker Compose (recommended) OR Python 3.14+ + PostgreSQL 16
+- Docker & Docker Compose (recommended) OR Python 3.13+ + PostgreSQL 16
 - Bun for frontend development
 
 ### With Docker (recommended)
@@ -113,8 +113,8 @@ scripts/             Setup, build, and utility scripts
 ### Running Tests
 
 ```bash
-# Backend (from backend_v2/)
-pytest -v
+# Backend (from backend_v2/, inside the container or with .venv on the host)
+docker exec tnhfantasy-backend python -m pytest -q tests/test_job_service.py
 
 # Frontend (from frontend_v2/)
 bun run test --run
@@ -176,17 +176,6 @@ Built with:
 - [React](https://react.dev/) — UI library
 - [Modal](https://modal.com/) + [Beam](https://www.beam.cloud/) — Serverless compute
 - [pgvector](https://github.com/pgvector/pgvector) — Vector similarity search
-## Quick start
-
-1. Copy `.env.example` to `.env` and configure. `.env.example` is the canonical reference for every environment variable the code reads.
-2. On a new host, run `scripts/preflight.sh` first — it creates the external `metrics`/`proxy` networks and reports config that silently disables features.
-3. Start the stack:
-   ```bash
-   docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build -V -d
-   ```
-   `-V` matters in dev (frontend `node_modules` anonymous volume).
-4. Open the Web UI on port **5174**.
-
 ## Package manager
 
 The frontend workspace in `frontend_v2` is **bun only**. `npm`, `pnpm` and `yarn` are rejected by the preinstall guard. Use `bun install`, `bun run dev`, `bun run test`, `bun run build`.

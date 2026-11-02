@@ -1,13 +1,14 @@
 # TNHFantasy — Project Status
 
 **The single authoritative status document.** Everything here was verified
-against the code on **2026-10-10**, not carried over from an earlier plan.
+against the code on **2026-11-01** (see the "Verified state" section below and
+`docs/audit-2026-11-02.md`), not carried over from an earlier plan.
 
 If you are about to make a decision about what to work on next, read this file
-and then the **most recent** audit, which is `docs/audit-2026-10-10.md`. That
-audit is a *delta* pass scoped to what the 2026-10-08 engine consolidation left
-behind; for anything that predates 10-08, `docs/audit-2026-10-05.md` remains the
-reference. Each audit supersedes its predecessors for everything it marks fixed;
+and then the **most recent** audit, which is `docs/audit-2026-11-02.md`. That
+audit is a maintenance pass (code + integration); for the consolidated engine
+picture, `docs/audit-2026-11-01.md` remains the prior reference. Earlier audits
+(`docs/audit-2026-10-*.md`) are not present in this checkout. Each audit supersedes its predecessors for everything it marks fixed;
 reading an older one tells you about defects that no longer exist. The other
 planning documents that used to sit at the repo root are historical and live in
 `docs/archive/` — they are kept for provenance, not for guidance.

@@ -14,7 +14,7 @@ React + Vite frontend for the TNHFantasy serverless ComfyUI stack.
 
 ```bash
 bun install
-bun run dev -- --host 0.0.0.0 --port 5174
+bun run dev
 ```
 
 ## Commands
@@ -23,7 +23,7 @@ bun run dev -- --host 0.0.0.0 --port 5174
 |---------|-------------|
 | `bun run dev` | Start dev server (port 5174) |
 | `bun run build` | Production build |
-| `bun test` | Run tests |
+| `bun run test` | Run tests |
 | `bun run test:watch` | Run tests in watch mode |
 | `bun run lint` | Run ESLint |
 
