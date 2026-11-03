@@ -904,7 +904,7 @@ class QueueManager:
         """Start every queue."""
         for queue in self.pools.values():
             await queue.start()
-        if _DB_CLAIMS_ENABLED:
+        if _db_claims_enabled():
             self._notify_listener = _PgNotifyListener(
                 tuple(queue._queue for queue in self.pools.values()),
                 asyncio.get_running_loop(),
@@ -1017,7 +1017,7 @@ class QueueManager:
         recoverable_running_ids = {job.id for job in recoverable_running}
 
         summary: dict[str, Any] = {
-            "mode": "db_claims" if _DB_CLAIMS_ENABLED else "in_memory",
+            "mode": "db_claims" if _db_claims_enabled() else "in_memory",
             "recovered": 0,
             "failed": len(stale_jobs) + len(stranded_jobs),
             "failed_job_ids": [job.id for job in stale_jobs]
@@ -1027,7 +1027,7 @@ class QueueManager:
             "running": len(recoverable_running),
         }
 
-        if _DB_CLAIMS_ENABLED:
+        if _db_claims_enabled():
             # DB mode: claims are stale after a restart. Reset every active job
             # back to PENDING (same semantic as lifecycle requeue) and clear all
             # claims so workers can re-claim them from the DB.
