@@ -375,12 +375,24 @@ function ShortcutCard({ icon: Icon, title, description, actionLabel, onClick, co
 }
 
 function CountCard({ label, value, icon: Icon, onClick }) {
+    const empty = Number(value) === 0;
     return (
-        <button type="button" onClick={onClick} className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/5 p-3 text-left transition hover:border-white/25 hover:bg-white/10">
-            <Icon size={17} className="text-cyan-300" aria-hidden="true" />
+        <button type="button" onClick={onClick} className={`flex flex-col items-center gap-2 rounded-xl border p-4 text-center transition ${empty
+            ? 'border-amber-500/30 bg-amber-500/5 hover:border-amber-500/50 hover:bg-amber-500/10'
+            : 'border-white/10 bg-white/5 hover:border-white/25 hover:bg-white/10'}`}>
+            <Icon size={18} className={`${empty ? 'text-amber-400' : 'text-cyan-300'}`} aria-hidden="true" />
             <span>
-                <span className="block text-lg font-semibold text-white">{value}</span>
-                <span className="block text-xs text-slate-500">{label}</span>
+                {empty ? (
+                    <>
+                        <span className="block text-sm font-semibold text-amber-300">No {label} yet</span>
+                        <span className="block text-xs text-amber-200/80 uppercase tracking-wider">Create {label}</span>
+                    </>
+                ) : (
+                    <>
+                        <span className="block text-lg font-semibold text-white">{value}</span>
+                        <span className="block text-xs text-slate-500">{label}</span>
+                    </>
+                )}
             </span>
         </button>
     );
