@@ -169,6 +169,14 @@ function _openSocket() {
             reconnectionDelay: 1000,
             reconnectionDelayMax: 5000,
             timeout: 20000,
+            // Background tabs are throttled by browsers (Chrome clamps timers to
+            // ~once per minute), so the socket.io heartbeat can stall. A short
+            // pingTimeout then kills a perfectly healthy connection just because
+            // the user switched tabs. Raise it so the connection survives being
+            // backgrounded; the visibilitychange handler in useJobsRealtime
+            // reconnects and replays missed events when the tab returns.
+            pingTimeout: 120000,
+            pingInterval: 25000,
         });
 
         socket.on('connect', () => {
