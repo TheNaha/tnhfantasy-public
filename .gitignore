@@ -95,6 +95,10 @@ ss.png
 Tavern-Cards/
 ss2.png
 
+# OpenChamber session artifacts (screenshots, state, scratchpad)
+# These are conversation/session scratch files, not source code.
+.openchamber/
+
 # AI-generated artifacts (kept on 'internal' branch only)
 /SECURITY_AUDIT_PUBLIC_RELEASE.md
 /TNHComfy_LLM_Decision_Brief.md
