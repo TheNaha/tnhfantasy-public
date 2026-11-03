@@ -1976,6 +1976,16 @@ def _get_schema_migration_steps() -> list[MigrationStep]:
             description="Add provider_version_status.bytes_downloaded, download_speed, eta_seconds columns so the UI can show download progress and speed during model reconciliation",
             apply_fn=_migration_112_download_progress_tracking,
         ),
+        MigrationStep(
+            version="113_location_map_coordinates",
+            description="Add locations.map_x and .map_y normalized 0-1 coordinates so the interactive world map can place location pins",
+            apply_fn=_migration_113_location_map_coordinates,
+        ),
+        MigrationStep(
+            version="114_job_cost_tracking",
+            description="Add jobs.estimated_cost_cents and .cost_currency columns for per-job and per-provider cost dashboards",
+            apply_fn=_migration_114_job_cost_tracking,
+        ),
     ]
 
 
@@ -2125,6 +2135,64 @@ def _migration_112_download_progress_tracking(conn) -> bool:
         conn,
         "provider_version_status",
         {"bytes_downloaded", "download_speed", "eta_seconds"},
+    )
+    return True
+
+
+def _migration_113_location_map_coordinates(conn) -> bool:
+    """Add map_x/map_y columns to locations for the interactive world map.
+
+    Coordinates are normalized 0-1 floats within the world canvas. Nullable
+    so existing locations keep working without a position.
+    """
+    inspector = inspect(conn)
+    if "locations" not in inspector.get_table_names():
+        return False
+
+    columns = _get_table_columns(conn, "locations")
+    for column, ddl in (("map_x", "REAL"), ("map_y", "REAL")):
+        if column not in columns:
+            conn.execute(
+                text(f"ALTER TABLE locations ADD COLUMN {column} {ddl}")
+            )
+            logger.info(
+                "migration_column_added",
+                table="locations",
+                column=column,
+            )
+    _verify_required_columns(
+        conn,
+        "locations",
+        {"map_x", "map_y"},
+    )
+    return True
+
+
+def _migration_114_job_cost_tracking(conn) -> bool:
+    """Add cost tracking columns to jobs.
+
+    Adds estimated_cost_cents (nullable int) and cost_currency (default USD)
+    so per-job and per-provider cost can be tracked for dashboards.
+    """
+    inspector = inspect(conn)
+    if "jobs" not in inspector.get_table_names():
+        return False
+
+    columns = _get_table_columns(conn, "jobs")
+    for column, ddl in (("estimated_cost_cents", "INTEGER"), ("cost_currency", "VARCHAR DEFAULT 'USD'")):
+        if column not in columns:
+            conn.execute(
+                text(f"ALTER TABLE jobs ADD COLUMN {column} {ddl}")
+            )
+            logger.info(
+                "migration_column_added",
+                table="jobs",
+                column=column,
+            )
+    _verify_required_columns(
+        conn,
+        "jobs",
+        {"estimated_cost_cents", "cost_currency"},
     )
     return True
 

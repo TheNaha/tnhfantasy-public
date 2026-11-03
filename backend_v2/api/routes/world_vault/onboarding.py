@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile
@@ -169,6 +171,31 @@ def list_crossover_archetypes():
             for key, val in CROSSOVER_ARCHETYPES.items()
         ]
     }
+
+
+@router.get("/templates")
+def list_world_templates():
+    """Return available world starter-pack templates.
+
+    Each template includes world, characters, locations, lorebooks,
+    scenarios, and stories pre-populated for a genre.
+    """
+    template_dir = Path(__file__).resolve().parent.parent.parent / "data" / "templates"
+    templates = []
+    if template_dir.is_dir():
+        for path in sorted(template_dir.glob("*.json")):
+            try:
+                data = json.loads(path.read_text())
+                templates.append({
+                    "id": data.get("id", path.stem),
+                    "name": data.get("name", path.stem),
+                    "description": data.get("description", ""),
+                    "genre": data.get("genre", ""),
+                    "tags": data.get("tags", []),
+                })
+            except (json.JSONDecodeError, OSError):
+                continue
+    return {"templates": templates}
 
 
 @router.post("/analyze-card")

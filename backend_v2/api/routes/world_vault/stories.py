@@ -6,7 +6,7 @@ from io import BytesIO
 from typing import Any
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, Header, Query, Response
+from fastapi import APIRouter, Depends, Header, Query, Response, UploadFile, File, Form
 from pydantic import BaseModel, Field
 from PIL import Image, ImageDraw, ImageFont
 from sqlmodel import Session, delete, select
@@ -3099,5 +3099,151 @@ def start_chat_from_story(
     return {
         "chat_id": chat.id,
         "name": chat.name,
+    }
+
+
+@router.post("/image-to-story")
+async def image_to_story(
+    image: UploadFile = File(..., description="Image file to generate a story from"),
+    prompt: str = Form(default=None, description="Optional user description"),
+    title: str = Form(default=None, description="Optional story title"),
+    genre: str = Form(default=None, description="Optional story genre"),
+    session: Session = Depends(get_session),
+    story_repo: StoryRepository = Depends(get_story_repo),
+    story_chapter_repo: StoryChapterRepository = Depends(get_story_chapter_repo),
+):
+    """Create a story from an uploaded image using an LLM.
+
+    The image is described (via the LLM's vision capability when available,
+    otherwise via the user prompt) and used as the seed for a new story with
+    a first chapter. Returns the job id so the frontend can poll for completion.
+    """
+    import base64
+
+    from services.llm_workflow import build_llm_workflow
+
+    # Read the image bytes and encode as base64 for vision-capable LLMs
+    image_bytes = await image.read()
+    image_b64 = base64.b64encode(image_bytes).decode("ascii")
+
+    # Build a workflow that describes the image and writes a story opening
+    system_prompt = (
+        "You are a storyteller. Given an image (and an optional user "
+        "description), write the opening of a short story inspired by what "
+        "you see. Include vivid sensory details, a compelling hook, and room "
+        "for the reader to continue. Output only the story prose, no "
+        "meta-commentary."
+    )
+
+    user_prompt = prompt or "Describe this image and write a story opening inspired by it."
+
+    metadata = {
+        "type": "image_to_story",
+        "system_prompt": system_prompt,
+        "user_prompt": user_prompt,
+        "image_b64": image_b64,
+        "image_filename": image.filename,
+        "image_content_type": image.content_type,
+        "title": title or "Untitled Story",
+        "genre": genre,
+    }
+
+    try:
+        workflow = build_llm_workflow(
+            prompt=user_prompt,
+            system_prompt=system_prompt,
+            model=None,  # Let the router pick
+            temperature=0.8,
+        )
+    except Exception as exc:
+        raise ValidationError(f"Failed to build LLM workflow: {exc}")
+
+    job = await submit_llm_job(session, workflow, metadata)
+    await asyncio.to_thread(session.commit)
+
+    return {
+        "job_id": job.id,
+        "status": "queued",
+        "image_filename": image.filename,
+        "message": "Story generation queued from image",
+    }
+
+
+class BatchGenerateRequest(BaseModel):
+    """Request body for POST /stories/batch-generate.
+
+    `premise` is the story seed. `count` is how many distinct chapter
+    openings to generate (1-10).
+    """
+
+    model_config = {"extra": "forbid"}
+
+    premise: str = Field(..., min_length=1, max_length=2000)
+    count: int = Field(default=3, ge=1, le=10)
+
+
+@router.post("/batch-generate")
+async def batch_generate_stories(
+    req: BatchGenerateRequest,
+    session: Session = Depends(get_session),
+    story_repo: StoryRepository = Depends(get_story_repo),
+    story_chapter_repo: StoryChapterRepository = Depends(get_story_chapter_repo),
+):
+    """Generate N distinct chapter openings from one premise.
+
+    Builds a single LLM job with N batched prompts, each asking for a
+    different take on the same premise. Returns the variants so the user
+    can pick one to continue as a full story.
+    """
+    from services.llm_workflow import build_llm_workflow
+
+    system_prompt = (
+        "You are a creative writer. Given a story premise, write a distinct "
+        "chapter opening of about 150-250 words. Include a hook, introduce "
+        "the setting and tone, and end on an unresolved note. Each variant "
+        "should take a different angle — different genre, mood, or "
+        "protagonist focus. Output ONLY the chapter prose, no labels, no "
+        "meta-commentary. Prefix each variant with '### VARIANT N' where N "
+        "is the variant number, then the prose."
+    )
+
+    # Build N prompt variants
+    prompts = []
+    for i in range(req.count):
+        variant_prompt = (
+            f"Premise: {req.premise}\n\n"
+            f"Write variant {i + 1} of {req.count}. Take a different angle "
+            f"than the others — vary the genre, tone, or protagonist focus. "
+            f"Output: '### VARIANT {i + 1}' followed by the chapter prose."
+        )
+        prompts.append(variant_prompt)
+
+    metadata = {
+        "type": "story_batch_generate",
+        "system_prompt": system_prompt,
+        "prompts": prompts,
+        "count": req.count,
+        "premise": req.premise,
+    }
+
+    try:
+        workflow = build_llm_workflow(
+            prompt=prompts[0],
+            system_prompt=system_prompt,
+            model=None,
+            temperature=0.9,
+        )
+    except Exception as exc:
+        raise ValidationError(f"Failed to build LLM workflow: {exc}")
+
+    job = await submit_llm_job(session, workflow, metadata)
+    await asyncio.to_thread(session.commit)
+
+    return {
+        "job_id": job.id,
+        "status": "queued",
+        "count": req.count,
+        "premise": req.premise,
+        "message": f"Generated {req.count} story variants",
     }
 

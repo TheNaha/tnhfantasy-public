@@ -1,5 +1,6 @@
 import { render, screen, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
+import { QueryClientProvider, QueryClient } from '@tanstack/react-query';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import OnboardingWizard from './OnboardingWizard';
 import { SETUP_COMPLETE_KEY, isSetupComplete, markSetupComplete } from '../../utils/setupComplete';
@@ -12,6 +13,9 @@ vi.mock('react-router-dom', async (importOriginal) => {
 });
 
 vi.mock('../../api', () => ({
+    api: {
+        get: vi.fn(() => Promise.resolve({ data: { templates: [] } })),
+    },
 }));
 
 vi.mock('../../hooks/useProvidersPageData', () => ({
@@ -41,10 +45,17 @@ vi.mock('framer-motion', () => ({
 }));
 
 function renderWizard(props = {}) {
+    const queryClient = new QueryClient({
+        defaultOptions: {
+            queries: { retry: false },
+        },
+    });
     return render(
-        <MemoryRouter>
-            <OnboardingWizard onClose={props.onClose || (() => {})} />
-        </MemoryRouter>
+        <QueryClientProvider client={queryClient}>
+            <MemoryRouter>
+                <OnboardingWizard onClose={props.onClose || (() => {})} />
+            </MemoryRouter>
+        </QueryClientProvider>
     );
 }
 
@@ -87,6 +98,9 @@ describe('OnboardingWizard', () => {
         expect(screen.getByText('Welcome to your Fantasy Engine')).toBeInTheDocument();
 
         fireEvent.click(screen.getByText('Continue'));
+        expect(screen.getByText('Choose a world template')).toBeInTheDocument();
+
+        fireEvent.click(screen.getByText('Continue'));
         expect(screen.getByText('Connect a provider')).toBeInTheDocument();
 
         fireEvent.click(screen.getByText('Continue'));
@@ -121,7 +135,7 @@ describe('OnboardingWizard', () => {
     it('back button returns to the previous step', () => {
         renderWizard();
         fireEvent.click(screen.getByText('Continue'));
-        expect(screen.getByText('Connect a provider')).toBeInTheDocument();
+        expect(screen.getByText('Choose a world template')).toBeInTheDocument();
         fireEvent.click(screen.getByText('Back'));
         expect(screen.getByText('Welcome to your Fantasy Engine')).toBeInTheDocument();
         expect(screen.getByText('Back')).toBeDisabled();
@@ -129,6 +143,7 @@ describe('OnboardingWizard', () => {
 
     it('add-manually link navigates to providers page', () => {
         renderWizard();
+        fireEvent.click(screen.getByText('Continue'));
         fireEvent.click(screen.getByText('Continue'));
         fireEvent.click(screen.getByText('Add a provider manually'));
         expect(mockNavigate).toHaveBeenCalledWith('/providers');

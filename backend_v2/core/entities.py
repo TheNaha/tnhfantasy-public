@@ -173,6 +173,10 @@ class Job(SQLModel, table=True):
     # Provider assignment
     provider_id: str | None = Field(default=None)
 
+    # Cost tracking (estimated, in USD cents)
+    estimated_cost_cents: int | None = Field(default=None)
+    cost_currency: str = Field(default="USD")
+
     # Claim marker for the Postgres-backed job queue (SELECT ... FOR UPDATE SKIP LOCKED).
     # Not NULL while a worker owns the job; cleared when processing finishes.
     claimed_at: datetime | None = Field(default=None)
@@ -1943,6 +1947,10 @@ class Location(SQLModel, table=True):
     atmosphere: str | None = Field(default=None, sa_column=Column(Text))
     tags: list[str] = Field(default=[], sa_column=Column(JSONColumn))
     image_path: str | None = Field(default=None)
+    # Map coordinates for the interactive world map. x/y are normalized 0-1
+    # values within the world canvas, converted to pixels by the frontend.
+    map_x: float | None = Field(default=None, index=True)
+    map_y: float | None = Field(default=None, index=True)
     # The World this place is in. See `World`.
     world_id: str | None = Field(foreign_key="worlds.id", default=None, index=True)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

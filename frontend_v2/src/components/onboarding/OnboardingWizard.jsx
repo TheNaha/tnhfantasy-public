@@ -2,30 +2,40 @@ import { useState } from 'react';
 import { motion } from 'framer-motion';
 import toast from 'react-hot-toast';
 import { useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import {
     Sparkles, Server, Cpu, PartyPopper, Plus, ArrowRight, ArrowLeft, X, CheckCircle2,
+    Wand2, ShieldCheck, LayoutTemplate,
 } from 'lucide-react';
 import useProvidersPageData from '../../hooks/useProvidersPageData';
 import { useModelDirectories } from '../../hooks/useModelDirectories';
 import { GENERATOR_MODEL_REQUESTS } from '../../constants/modelDirectories';
 import { SETUP_COMPLETE_KEY, markSetupComplete } from '../../utils/setupComplete';
 import { useEscapeKey } from '../../hooks/useEscapeKey';
+import { buildQueryKey, QUERY_KEYS } from '../constants/queryKeys';
+import { api } from '../../api';
 
 const STEPS = [
     { id: 'welcome', icon: Sparkles, title: 'Welcome to your Fantasy Engine' },
+    { id: 'templates', icon: LayoutTemplate, title: 'Choose a world template' },
     { id: 'providers', icon: Server, title: 'Connect a provider' },
     { id: 'models', icon: Cpu, title: 'Install a checkpoint' },
     { id: 'ready', icon: PartyPopper, title: "You're ready" },
 ];
 
 export default function OnboardingWizard({ onClose }) {
-    // Escape dismisses, matching the shared ModalOverlay dialogs and the
-    // "Esc → Close modals" line in KeyboardShortcutsModal.
     useEscapeKey(onClose);
     const navigate = useNavigate();
     const [stepIndex, setStepIndex] = useState(0);
+    const [selectedTemplateId, setSelectedTemplateId] = useState(null);
     const { providers, isLoading: providersLoading } = useProvidersPageData();
     const { modelsByKey, loading: modelsLoading } = useModelDirectories(GENERATOR_MODEL_REQUESTS);
+
+    const { data: templatesData = { templates: [] }, isLoading: templatesLoading } = useQuery({
+        queryKey: buildQueryKey(QUERY_KEYS.TEMPLATES),
+        queryFn: ({ signal }) => api.get('/api/v2/world-vault/onboarding/templates', { signal }),
+    });
+    const templates = templatesData.templates || [];
 
     const step = STEPS[stepIndex];
     const providerCount = providers?.length ?? 0;
@@ -33,6 +43,10 @@ export default function OnboardingWizard({ onClose }) {
 
     const finish = () => {
         markSetupComplete();
+        if (selectedTemplateId) {
+            localStorage.setItem('tnh_selected_template', selectedTemplateId);
+            toast.success(`Template '${templates.find(t => t.id === selectedTemplateId)?.name}' selected — apply it when creating your first world.`, { icon: '✨' });
+        }
         toast.success('Setup complete — enjoy your Fantasy Engine!', { icon: '✨' });
         onClose();
     };
@@ -41,6 +55,10 @@ export default function OnboardingWizard({ onClose }) {
         if (stepIndex < STEPS.length - 1) setStepIndex(stepIndex + 1);
         else finish();
     };
+
+    const canProceed = step.id === 'templates'
+        ? selectedTemplateId !== null || templates.length === 0
+        : true;
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
@@ -97,6 +115,77 @@ export default function OnboardingWizard({ onClose }) {
                         </div>
                     )}
 
+                    {step.id === 'templates' && (
+                        <div className="space-y-4">
+                            <p className="text-gray-400 text-sm leading-relaxed">
+                                Start with a pre-built world or begin with a blank canvas. Templates
+                                include characters, locations, lorebooks, scenarios, and a starter
+                                story — all editable later.
+                            </p>
+                            {templatesLoading ? (
+                                <div className="flex items-center gap-2 text-gray-400 text-sm">
+                                    <div className="w-4 h-4 border-2 border-blue-500/30 border-t-transparent rounded-full animate-spin" />
+                                    Loading templates…
+                                </div>
+                            ) : templates.length === 0 ? (
+                                <div className="text-gray-500 text-sm">
+                                    No templates available. Start with an empty world.
+                                </div>
+                            ) : (
+                                <div className="grid grid-cols-1 gap-3">
+                                    {templates.map((tmpl) => {
+                                        const isSelected = selectedTemplateId === tmpl.id;
+                                        return (
+                                            <button
+                                                key={tmpl.id}
+                                                onClick={() => setSelectedTemplateId(isSelected ? null : tmpl.id)}
+                                                className={`flex items-center gap-3 p-3 rounded-xl border transition-all ${isSelected
+                                                    ? 'border-blue-500 bg-blue-500/10 text-white'
+                                                    : 'border-white/10 bg-gray-800/50 hover:border-white/20 hover:bg-gray-800 text-gray-300'}`}
+                                            >
+                                                <div className="w-8 h-8 rounded-lg bg-gray-700 flex items-center justify-center shrink-0">
+                                                    <Wand2 size={14} className={isSelected ? 'text-blue-400' : 'text-gray-500'} />
+                                                </div>
+                                                <div className="flex-1">
+                                                    <div className="flex items-center justify-between">
+                                                        <span className="text-sm font-semibold text-gray-200">{tmpl.name}</span>
+                                                        {isSelected && <CheckCircle2 size={14} className="text-blue-400" />}
+                                                    </div>
+                                                    <p className="text-xs text-gray-500 mt-1">{tmpl.description}</p>
+                                                    <span className="text-xs uppercase tracking-wider text-gray-500 mt-1 inline-block px-2 py-0.5 rounded bg-gray-700/50">
+                                                        {tmpl.genre}
+                                                    </span>
+                                                </div>
+                                            </button>
+                                        );
+                                    })}
+                                    <button
+                                        onClick={() => setSelectedTemplateId(null)}
+                                        className={`flex items-center gap-3 p-3 rounded-xl border transition-all ${selectedTemplateId === null
+                                            ? 'border-blue-500 bg-blue-500/10 text-white'
+                                            : 'border-white/10 bg-gray-800/50 hover:border-white/20 hover:bg-gray-800 text-gray-300'}`}
+                                    >
+                                        <div className="w-8 h-8 rounded-lg bg-gray-700 flex items-center justify-center shrink-0">
+                                            <ShieldCheck size={14} className={selectedTemplateId === null ? 'text-blue-400' : 'text-gray-500'} />
+                                        </div>
+                                        <div className="flex-1">
+                                            <span className="text-sm font-semibold text-gray-200">Blank World</span>
+                                            <p className="text-xs text-gray-500 mt-1">Start with an empty world — build everything from scratch</p>
+                                        </div>
+                                    </button>
+                                </div>
+                            )}
+                            {selectedTemplateId && (
+                                <div className="mt-3 p-3 rounded-lg bg-blue-500/10 border border-blue-500/20">
+                                    <p className="text-sm text-blue-300">
+                                        Selected: <span className="font-semibold">{templates.find(t => t.id === selectedTemplateId)?.name}</span>. You can always
+                                        start over or build your own world later.
+                                    </p>
+                                </div>
+                            )}
+                        </div>
+                    )}
+
                     {step.id === 'providers' && (
                         <div className="space-y-4">
                             <p className="text-gray-400 text-sm leading-relaxed">
@@ -120,14 +209,14 @@ export default function OnboardingWizard({ onClose }) {
                                         </p>
                                     </div>
                                 </div>
+                                <button
+                                    onClick={() => navigate('/providers')}
+                                    className="flex items-center gap-2 text-blue-400 hover:text-blue-300 text-sm font-medium transition-colors"
+                                >
+                                    <Plus size={16} />
+                                    Add a provider manually
+                                </button>
                             </div>
-                            <button
-                                onClick={() => navigate('/providers')}
-                                className="flex items-center gap-2 text-blue-400 hover:text-blue-300 text-sm font-medium transition-colors"
-                            >
-                                <Plus size={16} />
-                                Add a provider manually
-                            </button>
                         </div>
                     )}
 
@@ -196,7 +285,8 @@ export default function OnboardingWizard({ onClose }) {
                         </button>
                         <button
                             onClick={next}
-                            className="flex items-center gap-2 bg-gradient-to-r from-blue-600 to-violet-600 hover:from-blue-500 hover:to-violet-500 text-white text-sm font-bold px-5 py-2.5 rounded-xl transition-all transform active:scale-95"
+                            disabled={!canProceed}
+                            className={`flex items-center gap-2 bg-gradient-to-r from-blue-600 to-violet-600 hover:from-blue-500 hover:to-violet-500 text-white text-sm font-bold px-5 py-2.5 rounded-xl transition-all transform active:scale-95 ${!canProceed ? 'opacity-50 cursor-not-allowed' : ''}`}
                         >
                             {stepIndex === STEPS.length - 1 ? 'Finish' : 'Continue'}
                             <ArrowRight size={16} />

@@ -57,13 +57,18 @@ const Voices = lazy(() => import('./pages/Voices'));
 const Lorebooks = lazy(() => import('./pages/Lorebooks'));
 const WorldVaultHub = lazy(() => import('./pages/WorldVaultHub'));
 const Locations = lazy(() => import('./pages/Locations'));
+const WorldMap = lazy(() => import('./pages/WorldMap'));
 const BatchGenerate = lazy(() => import('./pages/BatchGenerate'));
 const Activity = lazy(() => import('./pages/Activity'));
 const Worlds = lazy(() => import('./pages/Worlds'));
 const WorldArchitect = lazy(() => import('./pages/WorldArchitect'));
 const RelationshipGraph = lazy(() => import('./pages/RelationshipGraph'));
+const RelationshipTimeline = lazy(() => import('./pages/RelationshipTimeline'));
 const Prompts = lazy(() => import('./pages/Prompts'));
 const LLMStudio = lazy(() => import('./pages/LLMStudio'));
+const ImageToStory = lazy(() => import('./pages/ImageToStory'));
+const BatchStory = lazy(() => import('./pages/BatchStory'));
+const ProviderCostDashboard = lazy(() => import('./pages/ProviderCostDashboard'));
 const NotFound = lazy(() => import('./pages/NotFound'));
 
 // Keyed by routeKey so a crashed page resets when the user navigates away
@@ -130,12 +135,16 @@ function AnimatedRoutes() {
                 <Route path="/lorebooks" element={<Boundary routeKey={routeKey}><Lorebooks /></Boundary>} />
                 <Route path="/world-vault" element={<Boundary routeKey={routeKey}><WorldVaultHub /></Boundary>} />
                 <Route path="/locations" element={<Boundary routeKey={routeKey}><Locations /></Boundary>} />
+<Route path="/world-map/:worldId?" element={<Boundary routeKey={routeKey}><WorldMap /></Boundary>} />
                 {/* Retired. The Avatar Gallery was this page's grid again with
                     the edit actions stripped off, so it owned no data and no
                     capability that could not live here. Redirected rather than
                     404'd so any bookmark keeps working. */}
                 <Route path="/avatar-gallery" element={<Navigate to="/characters" replace />} />
                 <Route path="/batch-generate" element={<Boundary routeKey={routeKey}><BatchGenerate /></Boundary>} />
+<Route path="/image-to-story" element={<Boundary routeKey={routeKey}><ImageToStory /></Boundary>} />
+<Route path="/batch-story" element={<Boundary routeKey={routeKey}><BatchStory /></Boundary>} />
+<Route path="/providers/cost" element={<Boundary routeKey={routeKey}><ProviderCostDashboard /></Boundary>} />
                 <Route path="/activity" element={<Boundary routeKey={routeKey}><Activity /></Boundary>} />
                 {/* Kept as an alias: the page was called "World Timeline" and is now
                     "Activity", and bookmarks should survive a rename. */}
@@ -150,6 +159,7 @@ function AnimatedRoutes() {
                 <Route path="/worlds" element={<Boundary routeKey={routeKey}><Worlds /></Boundary>} />
                 <Route path="/world-architect" element={<Boundary routeKey={routeKey}><WorldArchitect /></Boundary>} />
                 <Route path="/world-graph" element={<Boundary routeKey={routeKey}><RelationshipGraph /></Boundary>} />
+<Route path="/relationship-timeline" element={<Boundary routeKey={routeKey}><RelationshipTimeline /></Boundary>} />
                 <Route path="/prompts" element={<Boundary routeKey={routeKey}><Prompts /></Boundary>} />
                 <Route path="/read/story/:token" element={<Boundary routeKey={routeKey}><StoryReader /></Boundary>} />
                 <Route path="/models/discover" element={<Boundary routeKey={routeKey}><DiscoverModels /></Boundary>} />

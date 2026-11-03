@@ -34,6 +34,8 @@ class LocationCreate(BaseModel):
     atmosphere: str | None = None
     tags: list[str] | None = None
     image_path: str | None = None
+    map_x: float | None = None
+    map_y: float | None = None
     # Which World this entity belongs to. Ownership of record lives on the
     # member, not in an array on the `worlds` row — see `services/
     # world_ownership.py`. Absent means "leave alone"; an explicit null detaches.
@@ -46,6 +48,8 @@ class LocationUpdate(BaseModel):
     atmosphere: str | None = None
     tags: list[str] | None = None
     image_path: str | None = None
+    map_x: float | None = None
+    map_y: float | None = None
     # Which World this entity belongs to. Ownership of record lives on the
     # member, not in an array on the `worlds` row — see `services/
     # world_ownership.py`. Absent means "leave alone"; an explicit null detaches.

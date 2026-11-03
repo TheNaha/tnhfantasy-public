@@ -33,6 +33,7 @@ export const QUERY_KEYS = {
     MEMORIES: 'memories',
     LOCATIONS: 'locations',
     WORLDS: 'worlds',
+    TEMPLATES: 'templates',
     SEARCH: 'search',
     MODELS: 'models',
     PERSONAS: 'personas',
