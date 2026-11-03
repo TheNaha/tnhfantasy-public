@@ -7,6 +7,7 @@ import { api } from '../../api';
 import { useCheckInstalledVersions } from '../../hooks/useCivitaiSearch';
 import { useEscapeKey } from '../../hooks/useEscapeKey';
 import { formatBytes, KB } from '../../utils/bytes';
+import StatCard from '../ui/StatCard';
 
 export default function ModelImportCard({ model, onCancel }) {
     // Escape dismisses, matching the shared ModalOverlay dialogs and the
@@ -229,14 +230,18 @@ export default function ModelImportCard({ model, onCancel }) {
                     {/* Stats */}
                     {model.stats && (
                         <div className="grid grid-cols-2 gap-4 bg-gray-800/30 p-4 rounded-xl border border-gray-700/50">
-                            <div className="text-center">
-                                <div className="text-lg font-bold text-white">{(model.stats.downloadCount || 0).toLocaleString()}</div>
-                                <div className="text-xs text-gray-500 uppercase tracking-wider">Downloads</div>
-                            </div>
-                            <div className="text-center">
-                                <div className="text-lg font-bold text-green-400">{(model.stats.thumbsUpCount || 0).toLocaleString()}</div>
-                                <div className="text-xs text-gray-500 uppercase tracking-wider">Likes</div>
-                            </div>
+                            <StatCard
+                                label="Downloads"
+                                value={(model.stats.downloadCount || 0).toLocaleString()}
+                                colorClass="text-white"
+                                labelClass="text-xs text-gray-500 uppercase tracking-wider"
+                            />
+                            <StatCard
+                                label="Likes"
+                                value={(model.stats.thumbsUpCount || 0).toLocaleString()}
+                                colorClass="text-green-400"
+                                labelClass="text-xs text-gray-500 uppercase tracking-wider"
+                            />
                         </div>
                     )}
 

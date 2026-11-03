@@ -6,6 +6,7 @@ import { copyToClipboard } from '../utils/clipboard';
 import { getProviderDisplayName } from '../utils/providerUtils';
 import CivitaiSearchModal from './model-manager/CivitaiSearchModal';
 import ModalOverlay from './common/ModalOverlay';
+import StatCard from './ui/StatCard';
 import { useAutopopulateModel } from '../hooks/useAutopopulate';
 import {
     ONLINE_RUNTIME_STATES,
@@ -306,18 +307,24 @@ export default function ModelMetadataModal({ metadata, onClose, providers = [], 
                         )}
                         {/* Stats */}
                         <div className="grid grid-cols-3 gap-4 bg-gray-800/30 p-4 rounded-xl border border-gray-700/50">
-                            <div className="text-center">
-                                <div className="text-lg font-bold text-white">{(stats.downloads || 0).toLocaleString()}</div>
-                                <div className="text-xs text-gray-500 uppercase tracking-wider">Downloads</div>
-                            </div>
-                            <div className="text-center">
-                                <div className="text-lg font-bold text-green-400">{(stats.thumbsUp || 0).toLocaleString()}</div>
-                                <div className="text-xs text-gray-500 uppercase tracking-wider">Likes</div>
-                            </div>
-                            <div className="text-center">
-                                <div className="text-lg font-bold text-blue-400">{baseModel}</div>
-                                <div className="text-xs text-gray-500 uppercase tracking-wider">Base Model</div>
-                            </div>
+                            <StatCard
+                                label="Downloads"
+                                value={(stats.downloads || 0).toLocaleString()}
+                                colorClass="text-white"
+                                labelClass="text-xs text-gray-500 uppercase tracking-wider"
+                            />
+                            <StatCard
+                                label="Likes"
+                                value={(stats.thumbsUp || 0).toLocaleString()}
+                                colorClass="text-green-400"
+                                labelClass="text-xs text-gray-500 uppercase tracking-wider"
+                            />
+                            <StatCard
+                                label="Base Model"
+                                value={baseModel}
+                                colorClass="text-blue-400"
+                                labelClass="text-xs text-gray-500 uppercase tracking-wider"
+                            />
                         </div>
 
                         {/* Provider Runtime + Model Availability */}

@@ -7,6 +7,7 @@ import { api, modelsApi, providersApi } from '../../api';
 import ModalOverlay from '../common/ModalOverlay';
 import CivitaiSearchModal from './CivitaiSearchModal';
 import AutopopulateSelector from './AutopopulateSelector';
+import StatCard from '../ui/StatCard';
 import { copyToClipboard } from '../../utils/clipboard';
 import { formatBytes } from '../../utils/bytes';
 import { QUERY_KEYS } from '../../constants/queryKeys';
@@ -533,18 +534,24 @@ export default function ModelDetailsModal({ file, providers = [], onClose }) {
                         <>
                             {/* Stats */}
                             <div className="grid grid-cols-3 gap-4 bg-gray-800/50 p-4 rounded-xl border border-gray-700">
-                                <div className="text-center">
-                                    <div className="text-lg font-bold text-white">{(stats.downloads || 0).toLocaleString()}</div>
-                                    <div className="text-xs text-gray-500">Downloads</div>
-                                </div>
-                                <div className="text-center">
-                                    <div className="text-lg font-bold text-green-400">{(stats.thumbsUp || 0).toLocaleString()}</div>
-                                    <div className="text-xs text-gray-500">Likes</div>
-                                </div>
-                                <div className="text-center">
-                                    <div className="text-lg font-bold text-white">{baseModel}</div>
-                                    <div className="text-xs text-gray-500">Base Model</div>
-                                </div>
+                                <StatCard
+                                    label="Downloads"
+                                    value={(stats.downloads || 0).toLocaleString()}
+                                    colorClass="text-white"
+                                    labelClass="text-xs text-gray-500"
+                                />
+                                <StatCard
+                                    label="Likes"
+                                    value={(stats.thumbsUp || 0).toLocaleString()}
+                                    colorClass="text-green-400"
+                                    labelClass="text-xs text-gray-500"
+                                />
+                                <StatCard
+                                    label="Base Model"
+                                    value={baseModel}
+                                    colorClass="text-white"
+                                    labelClass="text-xs text-gray-500"
+                                />
                             </div>
 
                             {/* Trigger Words */}
