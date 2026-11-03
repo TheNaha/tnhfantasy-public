@@ -26,6 +26,7 @@ function StreamingInput({
                 onChange={onChange}
                 onKeyDown={onKeyDown}
                 placeholder={placeholder}
+                aria-label={placeholder}
                 className="flex-1 bg-transparent text-gray-200 placeholder-gray-500 focus:outline-none resize-none text-sm self-center min-h-[24px] max-h-[200px]"
                 rows={1}
                 disabled={disabled}

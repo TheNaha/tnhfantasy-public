@@ -181,7 +181,7 @@ const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat
                                             }
                                             return (
                                                 <span
-                                                    key={tc.id || idx}
+                                                    key={`${tc.id ?? `tc-${idx}`}-${idx}`}
                                                     title="Agentic tool call"
                                                     className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-purple-500/10 border border-purple-500/25 text-xs text-purple-300 font-mono"
                                                 >
@@ -249,7 +249,7 @@ const MessageItem = memo(function MessageItem({ msg, linkedCharacter, activeChat
                                     }
                                     return (
                                         <span
-                                            key={tc.id || idx}
+                                            key={`${tc.id ?? `tc-${idx}`}-${idx}`}
                                             title="Agentic tool call"
                                             className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-purple-500/10 border border-purple-500/25 text-xs text-purple-300 font-mono"
                                         >
