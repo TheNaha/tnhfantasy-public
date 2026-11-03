@@ -17,7 +17,7 @@ const MAP_HEIGHT = 800;
 
 export default function WorldMap({ worldId }) {
     const { data: locations = [], isLoading, isError, error, refetch } = useLocations();
-    const { data: worlds = [], isLoading: worldsLoading } = useWorlds();
+    const { data: worlds = [], isLoading: worldsLoading, isError: worldsError, error: worldsErr, refetch: refetchWorlds } = useWorlds();
     const updateLocation = useUpdateLocation();
 
     const [draggingLocationId, setDraggingLocationId] = useState(null);
@@ -129,10 +129,10 @@ export default function WorldMap({ worldId }) {
         );
     }
 
-    if (isError) {
+    if (isError || worldsError) {
         return (
             <div className="flex h-full items-center justify-center p-8">
-                <QueryErrorState noun="locations" error={error} onRetry={refetch} />
+                <QueryErrorState noun={isError ? 'locations' : 'worlds'} error={error || worldsErr} onRetry={() => { refetch(); refetchWorlds(); }} />
             </div>
         );
     }
