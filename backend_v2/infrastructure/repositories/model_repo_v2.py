@@ -1022,6 +1022,9 @@ class ModelRepositoryV2:
         size_bytes: int | None = None,
         error_message: str | None = None,
         force_create: bool = False,
+        bytes_downloaded: int | None = None,
+        download_speed: float | None = None,
+        eta_seconds: int | None = None,
     ) -> ProviderVersionStatus | None:
         """Update or create provider status for a file."""
         existing = self.get_provider_status(file_id, provider_id)
@@ -1037,6 +1040,12 @@ class ModelRepositoryV2:
                 existing.storage_path = storage_path
             if size_bytes:
                 existing.size_bytes = size_bytes
+            if bytes_downloaded is not None:
+                existing.bytes_downloaded = bytes_downloaded
+            if download_speed is not None:
+                existing.download_speed = download_speed
+            if eta_seconds is not None:
+                existing.eta_seconds = eta_seconds
             if error_message is not None:
                 existing.error_message = error_message
             elif status != "failed":
@@ -1061,6 +1070,9 @@ class ModelRepositoryV2:
                 storage_path=storage_path,
                 size_bytes=size_bytes,
                 error_message=error_message,
+                bytes_downloaded=bytes_downloaded if bytes_downloaded is not None else 0,
+                download_speed=download_speed,
+                eta_seconds=eta_seconds,
                 queued_at=datetime.now(timezone.utc),
                 downloaded_at=datetime.now(timezone.utc) if status == "ready" else None,
                 retry_count=0

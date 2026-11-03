@@ -535,10 +535,10 @@ async def test_app_serves_requests_after_boot(client, boot):
     # status-card routes, the three load-balancer aliases, the `/api/v2/gallery`
     # alias, the two worker status routes and `POST /api/v2/voices/speak`.
     # Every one of them had zero callers.
-    assert len(spec["paths"]) == 295, (
+    assert len(spec["paths"]) == 298, (
         "route count changed; if routes were added deliberately, bump this"
     )
-    assert sum(len(ops) for ops in spec["paths"].values()) == 383
+    assert sum(len(ops) for ops in spec["paths"].values()) == 386
     assert "/api/ready" in spec["paths"]
     assert not any(path.startswith("/socket.io") for path in spec["paths"])
 
