@@ -923,7 +923,12 @@ class ProviderVersionStatus(SQLModel, table=True):
     status: str = Field(default="pending")  # pending, downloading, ready, failed
     storage_path: str | None = None  # Actual path on provider storage
     size_bytes: int | None = Field(default=None, sa_type=BigInteger)  # Actual size after download
-    
+
+    # Download progress tracking
+    bytes_downloaded: int = Field(default=0)  # Bytes transferred so far
+    download_speed: float | None = Field(default=None)  # Current bytes/sec
+    eta_seconds: int | None = Field(default=None)  # Estimated seconds remaining
+
     # Timestamps
     queued_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     downloaded_at: datetime | None = None

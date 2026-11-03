@@ -1971,6 +1971,11 @@ def _get_schema_migration_steps() -> list[MigrationStep]:
             description="Add provider_ws_connections, worker_dispatch_outbox, worker_dispatch_result tables so any backend process can see which external worker (e.g. Colab remote agent) is connected and dispatch jobs to it across processes via Postgres NOTIFY",
             apply_fn=_migration_111_remote_agent_ws_connections,
         ),
+        MigrationStep(
+            version="112_download_progress_tracking",
+            description="Add provider_version_status.bytes_downloaded, download_speed, eta_seconds columns so the UI can show download progress and speed during model reconciliation",
+            apply_fn=_migration_112_download_progress_tracking,
+        ),
     ]
 
 
@@ -2087,6 +2092,39 @@ def _migration_111_remote_agent_ws_connections(conn) -> bool:
         conn,
         "worker_dispatch_result",
         {"job_id", "status", "result", "error", "created_at"},
+    )
+    return True
+
+
+def _migration_112_download_progress_tracking(conn) -> bool:
+    """Add download progress columns to provider_version_status.
+
+    Adds bytes_downloaded, download_speed, eta_seconds so the UI can render
+    download progress bars and speed during model reconciliation. All nullable
+    with defaults, so existing rows keep working and new downloads populate
+    them.
+    """
+    columns = _get_table_columns(conn, "provider_version_status")
+    for column, ddl in (
+        ("bytes_downloaded", "INTEGER NOT NULL DEFAULT 0"),
+        ("download_speed", "REAL"),
+        ("eta_seconds", "INTEGER"),
+    ):
+        if column not in columns:
+            conn.execute(
+                text(
+                    f"ALTER TABLE provider_version_status ADD COLUMN {column} {ddl}"
+                )
+            )
+            logger.info(
+                "migration_column_added",
+                table="provider_version_status",
+                column=column,
+            )
+    _verify_required_columns(
+        conn,
+        "provider_version_status",
+        {"bytes_downloaded", "download_speed", "eta_seconds"},
     )
     return True
 

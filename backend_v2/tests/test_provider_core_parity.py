@@ -175,6 +175,122 @@ class TestGetUploadSizeCapAgrees:
         )
 
 
+class TestResponseHelpersAgree:
+    """`ok`, `failed`, `from_upstream` exist verbatim in both fork copies.
+
+    The deployable copy is the pre-slimming superset; the live copy is the
+    remote_agent subset. Both must build envelopes identically — a divergence
+    here means a downstream engine that was tested against one fork produces
+    payloads the other fork's caller can't parse.
+    """
+
+    @pytest.fixture
+    def responses(self):
+        """Load both fork copies of responses.py by file path."""
+        from tests.repo_paths import require_repo_root
+
+        root = require_repo_root("deployables/provider_worker_core/")
+        deployable_path = root / "deployables/provider_worker_core/responses.py"
+        live_path = root / "remote_agent/provider_core/responses.py"
+
+        # The deployable copy imports `from provider_core.models import ...`,
+        # which lives under remote_agent/. Make it importable.
+        remote_agent_dir = str(root / "remote_agent")
+        if remote_agent_dir not in sys.path:
+            sys.path.insert(0, remote_agent_dir)
+
+        def _load(path, name):
+            spec = importlib.util.spec_from_file_location(name, path)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            return module
+
+        return _load(deployable_path, "deployable_responses"), _load(
+            live_path, "live_responses"
+        )
+
+    @pytest.mark.parametrize("name", ["ok", "failed", "from_upstream"])
+    def test_both_forks_export_the_function(self, responses, name):
+        deployable, live = responses
+        assert hasattr(deployable, name), (
+            f"provider_worker_core.responses no longer exports {name}"
+        )
+        assert hasattr(live, name), (
+            f"remote_agent.provider_core.responses no longer exports {name}"
+        )
+
+    def test_ok_agrees_both_forks(self, responses):
+        deployable, live = responses
+        for fn in (deployable.ok, live.ok):
+            payload = fn("all good", provider="modal", files=[{"name": "a.safetensors"}])
+            assert payload["status"] == "success"
+            assert payload["success"] is True
+            assert payload["message"] == "all good"
+            assert payload["provider"] == "modal"
+            assert payload["files"] == [{"name": "a.safetensors"}]
+
+    def test_ok_drops_none_values(self, responses):
+        deployable, live = responses
+        for fn in (deployable.ok, live.ok):
+            payload = fn("minimal")
+            assert payload["status"] == "success"
+            assert payload["success"] is True
+            assert payload["message"] == "minimal"
+            assert payload["files"] == []
+            assert "provider" not in payload
+
+    def test_failed_agrees_both_forks(self, responses):
+        deployable, live = responses
+        for fn in (deployable.failed, live.failed):
+            payload = fn("boom", code=502, retryable=True, provider="beam")
+            assert payload["status"] == "error"
+            assert payload["success"] is False
+            assert payload["message"] == "boom"
+            assert payload["retryable"] is True
+            assert payload["code"] == 502
+            assert payload["provider"] == "beam"
+
+    def test_failed_defaults_to_permanent(self, responses):
+        deployable, live = responses
+        for fn in (deployable.failed, live.failed):
+            payload = fn("permanent")
+            assert payload["retryable"] is False
+            assert "code" not in payload
+
+    def test_from_upstream_agrees_both_forks(self, responses):
+        deployable, live = responses
+        upstream = {"files": [{"name": "ckpt.safetensors"}], "extra": "kept"}
+        for fn in (deployable.from_upstream, live.from_upstream):
+            payload = fn(
+                upstream,
+                provider="remote_comfy",
+                message="list ok",
+            )
+            assert payload["status"] == "success"
+            assert payload["success"] is True
+            assert payload["provider"] == "remote_comfy"
+            assert payload["message"] == "list ok"
+            assert payload["files"] == [{"name": "ckpt.safetensors"}]
+            assert payload["extra"] == "kept"
+
+    def test_from_upstream_adopts_error_status(self, responses):
+        deployable, live = responses
+        upstream = {"status": "error", "detail": "not found"}
+        for fn in (deployable.from_upstream, live.from_upstream):
+            payload = fn(
+                upstream,
+                message="upstream failed",
+                code=404,
+                retryable=False,
+            )
+            assert payload["status"] == "error"
+            assert payload["success"] is False
+            # Upstream failure overrides the caller's message
+            assert payload["message"] == "Upstream reported failure"
+            assert payload["code"] == 404
+            assert payload["retryable"] is False
+
+
 class TestForkShape:
     """The fork is deliberate; these keep it honest without forbidding it."""
 

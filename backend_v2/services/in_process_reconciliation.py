@@ -19,6 +19,7 @@ Step mapping to the container flow:
 
 import asyncio
 import os
+import time
 from typing import Any, Optional
 import unicodedata
 
@@ -643,28 +644,94 @@ async def _run_reconciliation(
                         progress=0,
                     )
 
-                    def _mark_downloading() -> None:
-                        _write_provider_status(model_service, 
+                    def _mark_download_start() -> None:
+                        _write_provider_status(model_service,
                             file_id=file_id,
                             provider_id=provider_id,
                             status="downloading",
                             storage_path=storage_path,
+                            bytes_downloaded=0,
+                            download_speed=None,
+                            eta_seconds=None,
                             force_create=True,
                         )
 
-                    await asyncio.to_thread(_mark_downloading)
+                    await asyncio.to_thread(_mark_download_start)
+
+                    # Progress monitor: polls local file size during download so
+                    # the UI can render a progress bar and speed. For remote
+                    # engines (Modal/Beam) the file lands on cloud storage, so
+                    # os.path.exists is False and we fall back to recording the
+                    # final speed after completion.
+                    start_time = time.monotonic()
+                    expected_size = int((file_info.get("size_kb") or 0) * 1024)
+                    progress_stop = asyncio.Event()
+
+                    async def _progress_monitor():
+                        while not progress_stop.is_set():
+                            try:
+                                current_bytes = os.path.getsize(storage_path) if os.path.exists(storage_path) else 0
+                            except OSError:
+                                current_bytes = 0
+
+                            elapsed = time.monotonic() - start_time
+                            if current_bytes > 0 and elapsed > 0:
+                                speed = current_bytes / elapsed
+                                eta = None
+                                if expected_size > 0 and speed > 0:
+                                    eta = int((expected_size - current_bytes) / speed)
+
+                                def _update_progress() -> None:
+                                    _write_provider_status(model_service,
+                                        file_id=file_id,
+                                        provider_id=provider_id,
+                                        status="downloading",
+                                        storage_path=storage_path,
+                                        bytes_downloaded=current_bytes,
+                                        download_speed=speed,
+                                        eta_seconds=eta,
+                                        force_create=True,
+                                    )
+
+                                await asyncio.to_thread(_update_progress)
+
+                            try:
+                                await asyncio.wait_for(progress_stop.wait(), timeout=2.0)
+                            except asyncio.TimeoutError:
+                                pass
+
+                    monitor_task = asyncio.create_task(_progress_monitor())
+
                     try:
                         token = token_for(download_url) if callable(token_for) else None
                         await engine.download_file(download_url, storage_path, token)
                         stats["downloads_completed"] += 1
+                    finally:
+                        progress_stop.set()
+                        try:
+                            await asyncio.wait_for(monitor_task, timeout=5.0)
+                        except asyncio.TimeoutError:
+                            monitor_task.cancel()
 
+                    # Final stats after download completes
+                    elapsed = time.monotonic() - start_time
+                    try:
+                        actual_size = os.path.getsize(storage_path) if os.path.exists(storage_path) else expected_size
+                    except OSError:
+                        actual_size = expected_size
+                    final_speed = actual_size / elapsed if elapsed > 0 else None
+
+                    try:
                         def _mark_ready() -> None:
-                            _write_provider_status(model_service, 
+                            _write_provider_status(model_service,
                                 file_id=file_id,
                                 provider_id=provider_id,
                                 status="ready",
                                 storage_path=storage_path,
-                                size_bytes=int((file_info.get("size_kb") or 0) * 1024),
+                                size_bytes=actual_size,
+                                bytes_downloaded=actual_size,
+                                download_speed=final_speed,
+                                eta_seconds=0,
                                 force_create=True,
                             )
 
