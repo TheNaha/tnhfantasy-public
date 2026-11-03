@@ -7,7 +7,7 @@ output files directly without requiring separate container microservices.
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Dict, List
 
 import base64
 import inspect
@@ -197,6 +197,24 @@ def get_file_size_cap() -> int:
     except (TypeError, ValueError):
         return default
     return cap if cap > 0 else 0
+
+
+def _files_from(payload: Any) -> List[Dict[str, Any]]:
+    """Accept the storage app's dict dialect or a bare JSON array.
+
+    Mirrors provider_core.responses.files_from: the agent answers a dict with
+    a ``files`` key today, but a proxy in front of it may answer a bare JSON
+    array — accept either, and degrade to [] rather than raising.
+    """
+    if isinstance(payload, list):
+        files = payload
+    elif isinstance(payload, dict):
+        files = payload.get("files", [])
+    else:
+        return []
+    if not isinstance(files, list):
+        return []
+    return [f for f in files if isinstance(f, dict)]
 
 
 class EngineAuthError(RuntimeError):

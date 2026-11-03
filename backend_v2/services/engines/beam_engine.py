@@ -25,6 +25,7 @@ from services.engines.base import (
     FileTooLargeError,
     InProcessEngine,
     clamp_timeout,
+    _files_from,
     get_file_size_cap,
     get_upload_size_cap,
     is_auth_error,
@@ -51,19 +52,6 @@ def _max_background_tasks() -> int:
         return env_positive_int(os.getenv("PROVIDER_MAX_BACKGROUND_TASKS"), 16)
     except (TypeError, ValueError):
         return 16
-
-
-def _files_from(payload: Any) -> List[Dict[str, Any]]:
-    """Accept the storage app's dict dialect or a bare JSON array."""
-    if isinstance(payload, list):
-        files = payload
-    elif isinstance(payload, dict):
-        files = payload.get("files", [])
-    else:
-        return []
-    if not isinstance(files, list):
-        return []
-    return [f for f in files if isinstance(f, dict)]
 
 
 class BeamEngine(InProcessEngine):
