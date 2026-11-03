@@ -193,6 +193,7 @@ export default function SimpleGenerator() {
                     />
                 }
                 showAdvancedSampling={!isSimpleMode}
+                showAdvancedSections={!isSimpleMode}
             />
         </div>
     );

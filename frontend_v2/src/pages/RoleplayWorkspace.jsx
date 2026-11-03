@@ -23,7 +23,7 @@ import OnboardingWizard from '../components/onboarding/OnboardingWizard';
 import { QueryErrorState } from '../components/common/QueryState';
 import { parseGalleryDate } from '../utils/dateTime';
 import { EXPERT_TOOLS } from '../constants/navigation';
-import { isSetupComplete } from '../utils/setupComplete';
+import { isSetupComplete, markSetupComplete } from '../utils/setupComplete';
 
 const asList = (value) => Array.isArray(value) ? value : (value?.chats || value?.stories || value?.worlds || []);
 
@@ -352,7 +352,14 @@ export default function RoleplayWorkspace() {
             {/* Gated on `!anyError` as well as on the flag: the wizard is the
                 "you have nothing yet" flow, so showing it over a failed fetch
                 tells a returning user their work does not exist. */}
-            {showOnboarding && !anyError && <OnboardingWizard onClose={() => setShowOnboarding(false)} />}
+            {showOnboarding && !anyError && (
+                <OnboardingWizard
+                    onClose={() => {
+                        markSetupComplete();
+                        setShowOnboarding(false);
+                    }}
+                />
+            )}
         </div>
     );
 }

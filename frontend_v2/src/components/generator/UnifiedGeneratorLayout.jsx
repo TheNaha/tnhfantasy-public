@@ -35,6 +35,7 @@ export default function UnifiedGeneratorLayout({
     rightColumnBottom,
     mobileActionBar,
     showAdvancedSampling = true,
+    showAdvancedSections = true,
 }) {
     const navigate = useNavigate();
     const [viewingMetadata, setViewingMetadata] = useState(null);
@@ -172,34 +173,29 @@ export default function UnifiedGeneratorLayout({
                                 setAutoOpenLoraIndex={setAutoOpenLoraIndex}
                             />
 
-                            <ControlNetSection
-                                controlnets={controlnets}
-                                addControlNet={addControlNet}
-                                removeControlNet={removeControlNet}
-                                updateControlNet={updateControlNet}
-                                controlNetModels={controlNetModels}
-                            />
+                            {showAdvancedSections && (
+                                <>
+                                    <ControlNetSection
+                                        controlnets={controlnets}
+                                        addControlNet={addControlNet}
+                                        removeControlNet={removeControlNet}
+                                        updateControlNet={updateControlNet}
+                                        controlNetModels={controlNetModels}
+                                    />
 
-                            <IPAdapterSection
-                                ipAdapters={ipAdapters}
-                                addIpAdapter={addIpAdapter}
-                                removeIpAdapter={removeIpAdapter}
-                                updateIpAdapter={updateIpAdapter}
-                            />
+                                    <IPAdapterSection
+                                        ipAdapters={ipAdapters}
+                                        addIpAdapter={addIpAdapter}
+                                        removeIpAdapter={removeIpAdapter}
+                                        updateIpAdapter={updateIpAdapter}
+                                    />
 
-                            <EnhancementsSection
-                                capabilities={capabilities}
-                                modelType={modelType}
-                                hiresFix={mode === 't2i' ? hiresFix : undefined}
-                                // The Hi-Res Fix card is only offered where it
-                                // can work. It used to be rendered on every
-                                // mode, with the VALUE suppressed outside t2i
-                                // but the setter passed - so the card was
-                                // there, it looked live, and clicking it wrote
-                                // to the shared store: turning Hi-Res Fix ON
-                                // for the Simple page from the Img2Img page.
-                                setHiresFix={mode === 't2i' ? setHiresFix : undefined}
-                                hiresUpscaler={hiresUpscaler}
+                                    <EnhancementsSection
+                                        capabilities={capabilities}
+                                        modelType={modelType}
+                                        hiresFix={mode === 't2i' ? hiresFix : undefined}
+                                        setHiresFix={mode === 't2i' ? setHiresFix : undefined}
+                                        hiresUpscaler={hiresUpscaler}
                                 setHiresUpscaler={setHiresUpscaler}
                                 hiresDenoise={hiresDenoise}
                                 setHiresDenoise={setHiresDenoise}
@@ -232,6 +228,8 @@ export default function UnifiedGeneratorLayout({
                                 latentUpscaleMultiplier={latentUpscaleMultiplier}
                                 setLatentUpscaleMultiplier={setLatentUpscaleMultiplier}
                             />
+                                </>
+                            )}
                         </div>
                         {leftColumnBottom}
                     </>

@@ -200,15 +200,6 @@ export default function Settings() {
         }
     };
 
-    const handleTestToast = (type) => {
-        const duration = type === 'success' ? settings.ui.toastSuccessDuration : settings.ui.toastErrorDuration;
-        if (type === 'success') {
-            toast.success(`Test toast (${duration}ms duration)`, { duration });
-        } else {
-            toast.error(`Test error toast (${duration}ms duration)`, { duration });
-        }
-    };
-
     const tabs = [
         { id: 'ai', label: 'AI / LLM', icon: Brain },
         { id: 'branding', label: 'Branding', icon: SettingsIcon },
@@ -289,7 +280,6 @@ export default function Settings() {
                                 settings={settings.ui}
                                 onUpdate={(key, value) => handleUpdateSetting('ui', key, value)}
                                 onReset={() => handleResetCategory('ui')}
-                                onTestToast={handleTestToast}
                             />
                         )}
 
@@ -943,7 +933,7 @@ function BrandingSettings() {
 }
 
 // UI Settings Component
-function UISettings({ settings, onUpdate, onReset, onTestToast }) {
+function UISettings({ settings, onUpdate, onReset }) {
     return (
         <div className="space-y-4 md:space-y-8 animate-in fade-in duration-500">
             <div className="flex justify-between items-end pb-6 border-b border-white/5">
@@ -1004,14 +994,6 @@ function UISettings({ settings, onUpdate, onReset, onTestToast }) {
                 <SettingGroup
                     title="Toast Success Duration"
                     description="How long success toasts stay visible (milliseconds)"
-                    action={
-                        <button
-                            onClick={() => onTestToast('success')}
-                            className="text-2xs font-bold uppercase tracking-widest px-4 py-1.5 bg-green-500/10 hover:bg-green-500/20 border border-green-500/30 rounded-lg text-green-400 transition-colors shadow-inner"
-                        >
-                            Test
-                        </button>
-                    }
                 >
                     <div className="flex items-center gap-5">
                         <input
@@ -1031,14 +1013,6 @@ function UISettings({ settings, onUpdate, onReset, onTestToast }) {
                 <SettingGroup
                     title="Toast Error Duration"
                     description="How long error toasts stay visible (milliseconds)"
-                    action={
-                        <button
-                            onClick={() => onTestToast('error')}
-                            className="text-2xs font-bold uppercase tracking-widest px-4 py-1.5 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 rounded-lg text-red-400 transition-colors shadow-inner"
-                        >
-                            Test
-                        </button>
-                    }
                 >
                     <div className="flex items-center gap-5">
                         <input
