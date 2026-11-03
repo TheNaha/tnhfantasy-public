@@ -1,13 +1,13 @@
 # Playwright E2E Test Suite
 
-Workflow tests: frontend (5174) → backend (8002) → provider containers → remote inference.
+Workflow tests: frontend (5174) → backend (8002) → in-process engines → remote inference.
 
 ## Prerequisites
 
 The full stack must be running with providers:
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile providers up --build -V -d
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build -V -d
 ```
 
 Then verify the frontend answers on `http://localhost:5174` and the API on `http://localhost:8002`.
@@ -18,13 +18,13 @@ Then verify the frontend answers on `http://localhost:5174` and the API on `http
 cd frontend_v2
 npx playwright install chromium   # once, if not installed
 
-npm run test:e2e                 # full suite (serial)
-npm run test:e2e:ui              # UI-level tests only (skips real @fullstack generations)
-npm run test:e2e:fullstack       # only the real-generation workflow tests
-npx playwright test e2e/chat     # single folder
-npx playwright test e2e/chat/messaging.spec.js   # single spec
-npx playwright test --headed     # watch the browser
-npx playwright show-report       # view the HTML report after a run
+bun run test:e2e                 # full suite (serial)
+bun run test:e2e:ui              # UI-level tests only (skips real @fullstack generations)
+bun run test:e2e:fullstack       # only the real-generation workflow tests
+bunx playwright test e2e/chat     # single folder
+bunx playwright test e2e/chat/messaging.spec.js   # single spec
+bunx playwright test --headed     # watch the browser
+bunx playwright show-report       # view the HTML report after a run
 ```
 
 ## Test taxonomy

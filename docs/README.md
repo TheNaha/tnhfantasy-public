@@ -12,6 +12,7 @@
 8. [SillyTavern Card Compatibility](sillytavern-compatibility.md)
 9. [LLM Provider Handoff](llm-provider-handoff.md) — llama.cpp design brief
 10. [Status and open work](STATUS.md)
+11. [Audits](.audit/) — documentation audits; [maintenance/](maintenance/) — codebase maintenance audits
 
 ## Introduction
 

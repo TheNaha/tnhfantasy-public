@@ -111,6 +111,19 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build -V -d
 - `reindex_asset_loras.py`, `backfill_download_urls.py`, `clean_preview_cache.py`, `benchmark_statistics.py` — one-off maintenance.
 - `external_worker_client.py` — client helper for remote agents.
 
+### Flagged configuration (present but not yet wired)
+
+- `jobs_cleanup` (`max_age_hours`, `auto_cleanup`, `cleanup_interval`) is defined in `config.py`, validated, exposed via Settings, and tested, but no scheduler consumes `get_jobs_cleanup_*` — the knobs are inert today (maintenance audit D-02). Do not assume enabling `auto_cleanup` cleans anything yet.
+- `charGen*` prompts (8 of them) are in `DEFAULT_CONFIG` and whitelisted in Settings, but no character-generation path reads them (maintenance audit D-03). Wiring them in is a feature, not a config change.
+
+### Logging
+
+The backend uses **structlog** (`infrastructure/logging.py`) for structured logging. Conventions:
+
+- Log through the module logger; use keyword arguments for fields (`logger.info("msg", key=value)`), not f-strings, so fields stay queryable.
+- Swallowed exceptions should at least emit `logger.debug(..., exc_info=True)` rather than `pass` (see maintenance audit D-2/D-3 precedent).
+- Retries, provider calls, and job lifecycle emit at `info`/`warning`; per-request noise stays at `debug`.
+
 ### Remote agent (`remote_agent/`)
 
 Separate stack with its own compose file, `agentctl.sh`/`agentctl.bat`, and binary build. See `remote_agent/README.md`.

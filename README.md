@@ -176,21 +176,6 @@ Built with:
 - [React](https://react.dev/) — UI library
 - [Modal](https://modal.com/) + [Beam](https://www.beam.cloud/) — Serverless compute
 - [pgvector](https://github.com/pgvector/pgvector) — Vector similarity search
-## Package manager
-
-The frontend workspace in `frontend_v2` is **bun only**. `npm`, `pnpm` and `yarn` are rejected by the preinstall guard. Use `bun install`, `bun run dev`, `bun run test`, `bun run build`.
-
-## Backend (host-only)
-
-```bash
-cd backend_v2
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-.venv/bin/uvicorn api.main:app --host 127.0.0.1 --port 8002 --reload
-```
-
-The host-only path uses SQLite by default (`sqlite:///./data/db/comfy.db`); the Compose stack uses PostgreSQL. They are different databases.
 
 ## Maintenance
 
