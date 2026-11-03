@@ -33,7 +33,8 @@ export default function UnifiedGeneratorLayout({
     leftColumnBottom,
     rightColumnMiddle,
     rightColumnBottom,
-    mobileActionBar
+    mobileActionBar,
+    showAdvancedSampling = true,
 }) {
     const navigate = useNavigate();
     const [viewingMetadata, setViewingMetadata] = useState(null);
@@ -248,7 +249,7 @@ export default function UnifiedGeneratorLayout({
 
                         {rightColumnMiddle}
                         
-                        <SamplingSettings />
+                        {showAdvancedSampling && <SamplingSettings />}
 
                         <div className="hidden md:block">
                             {rightColumnBottom}
