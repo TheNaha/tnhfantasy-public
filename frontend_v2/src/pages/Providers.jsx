@@ -230,8 +230,29 @@ export default function Providers() {
                 </p>
             </div>
 
+            {/* ── Attention banner ── */}
+            {providers.some((p) => p.enabled && (p.diagnostics?.warnings?.length || 0) > 0) && (
+                <div className="mb-6 rounded-lg border border-amber-500/20 bg-amber-500/5 p-4 flex items-start gap-3">
+                    <span className="mt-0.5 flex-shrink-0">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                            <circle cx="12" cy="12" r="10" />
+                            <line x1="12" y1="8" x2="12" y2="12" />
+                            <line x1="12" y1="16" x2="12.01" y2="16" />
+                        </svg>
+                    </span>
+                    <div>
+                        <p className="text-sm font-medium text-amber-300">
+                            {providers.filter((p) => p.enabled && (p.diagnostics?.warnings?.length || 0) > 0).length} provider needs <span className="font-bold">attention</span>
+                        </p>
+                        <p className="text-xs text-amber-200/70 mt-0.5">
+                            Issues detected on an active provider. <a href="#providers" className="underline underline-offset-2 hover:text-white transition-colors">Review issues →</a>
+                        </p>
+                    </div>
+                </div>
+            )}
+
             {/* ── Toolbar ── */}
-            <div className="flex flex-wrap gap-3 mb-8">
+            <div className="flex flex-wrap gap-3 mb-4">
                 <button className="bg-gradient-to-r from-blue-600 to-violet-600 hover:from-blue-500 hover:to-violet-500 text-white px-5 py-2.5 rounded-xl font-bold transition-all duration-300 flex items-center gap-2 shadow-lg hover:shadow-[0_0_15px_rgba(59,130,246,0.4)] transform active:scale-95 border border-white/10" onClick={() => setShowAddModal(true)}>
                     <Plus size={18} strokeWidth={2.5} />
                     Add Provider
@@ -240,6 +261,9 @@ export default function Providers() {
                     <Download size={18} />
                     Add Model
                 </button>
+                {providers.length === 0 && (
+                    <span className="self-center text-xs text-gray-500 px-2 italic">disabled — no provider to add a model to</span>
+                )}
                 <button className="bg-[#0B0E14]/80 hover:bg-black/40 text-gray-300 hover:text-white px-5 py-2.5 rounded-xl font-bold transition-all duration-300 flex items-center gap-2 border border-white/10 shadow-inner" onClick={refreshAll} disabled={isRefreshing}>
                     <RefreshCw size={18} className={isRefreshing ? 'animate-spin' : ''} />
                     Refresh
@@ -365,6 +389,7 @@ export default function Providers() {
                                             onEdit={() => setEditingProvider(provider)}
                                             onDelete={() => handleDelete(provider.id)}
                                             onDeploy={handleDeployProvider}
+                                            onViewIssue={() => setSelectedProviderId(provider.id)}
                                             providerFailures={providerStatsMap.get(provider.id)?.failures ?? 0}
                                             jobsAssigned={providerStatsMap.get(provider.id)?.jobs_assigned ?? 0}
                                         />

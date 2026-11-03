@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import {
     Activity,
+    AlertTriangle,
     Circle,
     Cpu,
     Edit2,
@@ -104,6 +105,7 @@ function ProviderListItem({
     onEdit,
     onDelete,
     onDeploy,
+    onViewIssue,
     providerFailures = 0,
     jobsAssigned = 0,
 }) {
@@ -127,6 +129,7 @@ function ProviderListItem({
     const hasIssues = (diagnostics.warnings?.length || 0) > 0
         || (diagnostics.errors?.length || 0) > 0
         || providerFailures > 0;
+    const issueCount = (diagnostics.warnings?.length || 0) + (diagnostics.errors?.length || 0);
 
     const isReconciling = reconciliation.status === 'reconciling' || reconciliation.status === 'queued';
 
@@ -302,10 +305,11 @@ function ProviderListItem({
                         )}
                         {provider.enabled && hasIssues && (
                             <span
-                                className="flex-shrink-0 rounded-lg bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 text-xs font-bold uppercase tracking-widest text-amber-300 shadow-inner"
+                                className="flex items-center gap-1 rounded-lg bg-amber-500/15 border border-amber-500/25 px-2.5 py-0.5 text-xs font-bold uppercase tracking-wider text-amber-300 shadow-inner"
                                 title="Issues detected on this active provider"
                             >
-                                ⚠
+                                <span className="flex-shrink-0" style={{ width: '10px', height: '10px', borderRadius: '50%', backgroundColor: '#f59e0b', boxShadow: '0 0 0 2px rgba(245, 158, 11, 0.2)' }} />
+                                ⚠ {issueCount} issue{issueCount !== 1 ? 's' : ''}
                             </span>
                         )}
                         {isReconciling && (
@@ -481,6 +485,20 @@ function ProviderListItem({
                     >
                         <Edit2 size={16} />
                     </button>
+                    {hasIssues && (
+                        <button
+                            type="button"
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                onViewIssue?.(provider.id);
+                            }}
+                            className="rounded-xl p-2.5 text-amber-300 bg-amber-500/10 hover:bg-amber-500/20 hover:text-amber-200 transition-all duration-300"
+                            title="View issues"
+                            aria-label="View Provider Issues"
+                        >
+                            <AlertTriangle size={16} />
+                        </button>
+                    )}
                     {(() => {
                         const deployTarget = getDeployTargetForProvider(provider);
                         if (!deployTarget || !onDeploy) return null;
