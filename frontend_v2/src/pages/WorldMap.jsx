@@ -10,12 +10,13 @@ import toast from 'react-hot-toast';
 import ModalOverlay from '../components/common/ModalOverlay';
 import FormInput from '../components/common/FormInput';
 import EmptyState from '../components/EmptyState';
+import { QueryErrorState } from '../components/common/QueryState';
 
 const MAP_WIDTH = 1200;
 const MAP_HEIGHT = 800;
 
 export default function WorldMap({ worldId }) {
-    const { data: locations = [], isLoading, refetch } = useLocations();
+    const { data: locations = [], isLoading, isError, error, refetch } = useLocations();
     const { data: worlds = [], isLoading: worldsLoading } = useWorlds();
     const updateLocation = useUpdateLocation();
 
@@ -124,6 +125,14 @@ export default function WorldMap({ worldId }) {
         return (
             <div className="flex h-full items-center justify-center text-gray-400">
                 Loading world map…
+            </div>
+        );
+    }
+
+    if (isError) {
+        return (
+            <div className="flex h-full items-center justify-center p-8">
+                <QueryErrorState noun="locations" error={error} onRetry={refetch} />
             </div>
         );
     }
