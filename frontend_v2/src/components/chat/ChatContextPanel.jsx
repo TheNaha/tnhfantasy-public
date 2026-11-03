@@ -1950,9 +1950,9 @@ function DirectorStatekeeperSection({ chat, onSave }) {
                                 {charSkills.length === 0 ? (
                                     <span className="text-2xs text-gray-600 italic">No character skills listed</span>
                                 ) : (
-                                    charSkills.map((skill) => (
+                                    charSkills.map((skill, index) => (
                                         <span
-                                            key={skill}
+                                            key={`${skill}-${index}`}
                                             className="px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-2xs flex items-center gap-1"
                                         >
                                             <span>{skill}</span>
@@ -1992,9 +1992,9 @@ function DirectorStatekeeperSection({ chat, onSave }) {
                                 {userSkills.length === 0 ? (
                                     <span className="text-2xs text-gray-600 italic">No user skills listed</span>
                                 ) : (
-                                    userSkills.map((skill) => (
+                                    userSkills.map((skill, index) => (
                                         <span
-                                            key={skill}
+                                            key={`${skill}-${index}`}
                                             className="px-2 py-0.5 rounded-full bg-sky-500/15 border border-sky-500/30 text-sky-300 text-2xs flex items-center gap-1"
                                         >
                                             <span>{skill}</span>
@@ -2048,9 +2048,9 @@ function DirectorStatekeeperSection({ chat, onSave }) {
                             {inventoryList.length === 0 ? (
                                 <span className="text-2xs text-gray-600 italic">No tracked items yet</span>
                             ) : (
-                                inventoryList.map((item) => (
+                                inventoryList.map((item, index) => (
                                     <span
-                                        key={item}
+                                        key={`${item}-${index}`}
                                         className="px-2 py-0.5 rounded-full bg-indigo-500/15 border border-indigo-500/30 text-indigo-300 text-2xs flex items-center gap-1"
                                     >
                                         <span>{item}</span>
@@ -2190,8 +2190,8 @@ function DirectorStatekeeperSection({ chat, onSave }) {
                         </div>
                         {snap.last_updater_result.applied_fields?.length > 0 && (
                             <div className="flex flex-wrap gap-1 pt-0.5">
-                                {snap.last_updater_result.applied_fields.map((f) => (
-                                    <span key={f} className="px-1.5 py-0.2 rounded bg-purple-500/15 text-purple-300 font-mono text-3xs border border-purple-500/25">
+                                {snap.last_updater_result.applied_fields.map((f, index) => (
+                                    <span key={`${f}-${index}`} className="px-1.5 py-0.2 rounded bg-purple-500/15 text-purple-300 font-mono text-3xs border border-purple-500/25">
                                         {f.replace(/_/g, ' ')}
                                     </span>
                                 ))}

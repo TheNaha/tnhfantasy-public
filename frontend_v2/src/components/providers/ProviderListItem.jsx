@@ -324,8 +324,8 @@ function ProviderListItem({
                         </span>
                         {provider.capabilities && provider.capabilities.length > 1 && (
                             <span className="flex items-center gap-1">
-                                {provider.capabilities.map((cap) => (
-                                    <span key={cap} className="rounded bg-gray-800 border border-gray-700 px-1.5 py-0.2 text-2xs text-gray-300 uppercase">
+                                {provider.capabilities.map((cap, index) => (
+                                    <span key={`${cap}-${index}`} className="rounded bg-gray-800 border border-gray-700 px-1.5 py-0.2 text-2xs text-gray-300 uppercase">
                                         {cap}
                                     </span>
                                 ))}
