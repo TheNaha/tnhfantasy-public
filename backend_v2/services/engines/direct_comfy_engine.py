@@ -27,6 +27,7 @@ from services.engines.base import (
     InProcessEngine,
     MODEL_DIRECTORIES,
     clamp_timeout,
+    _files_from,
     get_upload_size_cap,
     normalize_validation_result,
     retryable_for_status,
@@ -201,22 +202,6 @@ def normalize_comfy_url(raw: str, default: str = "http://localhost:8188") -> str
     return value.rstrip("/")
 
 
-def _files_from(payload: Any) -> List[Dict[str, Any]]:
-    """Extract a file list from an agent/storage listing body.
-
-    Mirrors provider_core.responses.files_from: the agent answers a dict with
-    a ``files`` key today, but a proxy in front of it may answer a bare JSON
-    array — accept either, and degrade to [] rather than raising.
-    """
-    if isinstance(payload, list):
-        files = payload
-    elif isinstance(payload, dict):
-        files = payload.get("files", [])
-    else:
-        return []
-    if not isinstance(files, list):
-        return []
-    return [f for f in files if isinstance(f, dict)]
 
 
 @asynccontextmanager

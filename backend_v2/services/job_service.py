@@ -818,8 +818,6 @@ class JobService:
             status=JobStatus.CANCELLED,
             message=reason or "Cancelled by user",
         )
-        # Emit JOB_CANCELLED event
-        await emit_job_event(EventType.JOB_CANCELLED, self._job_to_dict(job))
 
     async def search_jobs(self, query: str, *, limit: int = 25) -> list[dict[str, Any]]:
         """Full-text search over job prompts (tsvector on Postgres, LIKE on SQLite)."""

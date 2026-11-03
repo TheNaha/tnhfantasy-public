@@ -14,7 +14,7 @@ import uuid
 from types import SimpleNamespace
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlmodel import Session
 
@@ -24,6 +24,7 @@ from api.deps import (
     get_session,
 )
 from core.entities import CATEGORY_LLM, CATEGORY_TTS, Provider
+from core.exceptions import NotFoundError, ValidationError
 from infrastructure.http_client import get_http_client
 from infrastructure.logging import api_logger
 from services.provider_runtime import resolve_provider_runtime_async
@@ -318,7 +319,7 @@ def _raise_for_save_errors(
 ) -> None:
     errors = validate_provider_payload(provider_type, credentials or {}, config or {})
     if errors:
-        raise HTTPException(status_code=422, detail={"errors": errors})
+        raise ValidationError("; ".join(errors))
 
 
 @router.post("/test-connection")
@@ -456,7 +457,7 @@ async def get_provider_discovered_models(
     """Query live upstream models/voices exposed directly by the provider engine."""
     provider = session.get(Provider, provider_id)
     if not provider:
-        raise HTTPException(status_code=404, detail=f"Provider '{provider_id}' not found")
+        raise NotFoundError("Provider", provider_id)
 
     from services.engines.engine_factory import can_create_engine, get_engine
     if not can_create_engine(provider):
@@ -536,7 +537,7 @@ async def get_provider_diagnostics(
     """Fetch deep real-time diagnostics, health probing, and system telemetry."""
     provider = session.get(Provider, provider_id)
     if not provider:
-        raise HTTPException(status_code=404, detail=f"Provider '{provider_id}' not found")
+        raise NotFoundError("Provider", provider_id)
 
     from services.engines.engine_factory import can_create_engine, get_engine
     from services.provider_runtime import resolve_provider_runtime_async
