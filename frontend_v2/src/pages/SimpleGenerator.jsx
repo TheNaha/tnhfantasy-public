@@ -24,8 +24,24 @@ export default function SimpleGenerator() {
     // scheduler, clip skip, seed) behind a toggle. Locking on those parameters
     // (`lockedParams` / `toggleParamLock` in SamplingSettings) is untouched:
     // when advanced mode is shown, every lock control works exactly as before.
-    const [isSimpleMode, setIsSimpleMode] = useState(true);
-    
+    const [isSimpleMode, setIsSimpleMode] = useState(() => {
+        if (typeof window === 'undefined') return true;
+        try {
+            const saved = localStorage.getItem('simple-generator-mode');
+            return saved !== null ? saved === 'simple' : true;
+        } catch {
+            return true;
+        }
+    });
+
+    useEffect(() => {
+        try {
+            localStorage.setItem('simple-generator-mode', isSimpleMode ? 'simple' : 'advanced');
+        } catch {
+            // localStorage may be unavailable (e.g. private browsing)
+        }
+    }, [isSimpleMode]);
+
     const { buildPayload, runSubmission, runWithPreflight } = useWorkflowBuilder('t2i');
 
     useKeyboardShortcuts();
@@ -111,26 +127,6 @@ export default function SimpleGenerator() {
 
     return (
         <div className="max-w-6xl mx-auto">
-            {/* Simple / Advanced mode toggle */}
-            <div className="mb-4 flex items-center justify-between px-2">
-                <div className="flex items-center gap-2">
-                    <Settings2 className="w-4 h-4 text-gray-400" />
-                    <span className="text-sm font-medium text-gray-300">
-                        {isSimpleMode ? 'Simple mode' : 'Advanced mode'}
-                    </span>
-                </div>
-                <button
-                    onClick={() => setIsSimpleMode(prev => !prev)}
-                    className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${isSimpleMode ? 'bg-blue-600' : 'bg-gray-700'}`}
-                    aria-label="Toggle simple/advanced mode"
-                >
-                    <span
-                        className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform duration-200 ${isSimpleMode ? 'translate-x-6' : 'translate-x-1'}`}
-                        aria-hidden="true"
-                    />
-                </button>
-            </div>
-
             {/* Checkpoint hint when no model is selected */}
             {!selectedCheckpoint?.name && (
                 <div className="mb-4 p-3 bg-amber-900/20 border border-amber-500/30 rounded-lg">
@@ -147,6 +143,29 @@ export default function SimpleGenerator() {
                     </div>
                 </div>
             )}
+
+            {/* Simple / Advanced mode toggle */}
+            <div className="mb-4 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                    <Settings2 className="w-4 h-4 text-gray-400" />
+                    <span className="text-sm font-medium text-gray-300">
+                        {isSimpleMode ? 'Simple mode' : 'Advanced mode'}
+                    </span>
+                </div>
+                <button
+                    type="button"
+                    role="switch"
+                    aria-checked={!isSimpleMode}
+                    aria-label={`Switch to ${isSimpleMode ? 'advanced' : 'simple'} mode`}
+                    onClick={() => setIsSimpleMode(prev => !prev)}
+                    className="relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+                >
+                    <span
+                        className={`inline-block h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${isSimpleMode ? 'translate-x-0' : 'translate-x-6'}`}
+                        aria-hidden="true"
+                    />
+                </button>
+            </div>
 
             <UnifiedGeneratorLayout
                 mode="t2i"
