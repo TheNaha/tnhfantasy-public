@@ -42,7 +42,7 @@ export function invalidateVaultAggregates(queryClient) {
  * archive, and the onBlur-saved `genre` / `word_count_goal` / `description` /
  * `memory` fields — and a 4xx on any of them read as "the toggle does nothing".
  */
-function reportError(action, error) {
+export function reportError(action, error) {
     // `api` raises `ApiError`, whose message is already extracted from the
     // response body, so the raw message is the useful one. The status is
     // appended because "Failed to save story" alone does not distinguish a 400

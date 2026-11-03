@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api';
 import { buildQueryKey, QUERY_KEYS } from '../constants/queryKeys';
-import { invalidateVaultAggregates } from './useWorldVaultResource';
+import { invalidateVaultAggregates, reportError } from './useWorldVaultResource';
 import { getApiUrl } from '../api/config';
 import {
     DEFAULT_CARD_EXPORT_FORMAT,
@@ -41,7 +41,8 @@ export const useCreateCharacter = () => {
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.CHARACTERS) });
             invalidateVaultAggregates(queryClient);
-        }
+        },
+        onError: (error) => reportError('create character', error),
     });
 };
 
@@ -53,7 +54,8 @@ export const useUpdateCharacter = () => {
             queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.CHARACTERS) });
             queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.CHARACTERS, variables.id) });
             invalidateVaultAggregates(queryClient);
-        }
+        },
+        onError: (error) => reportError('update character', error),
     });
 };
 
@@ -65,7 +67,8 @@ export const usePatchCharacter = () => {
             queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.CHARACTERS) });
             queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.CHARACTERS, variables.id) });
             invalidateVaultAggregates(queryClient);
-        }
+        },
+        onError: (error) => reportError('patch character', error),
     });
 };
 
@@ -86,7 +89,8 @@ export const useUploadAvatar = () => {
             queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.CHARACTERS, variables.characterId) });
             queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.CHARACTERS) });
             invalidateVaultAggregates(queryClient);
-        }
+        },
+        onError: (error) => reportError('upload avatar', error),
     });
 };
 
@@ -97,7 +101,8 @@ export const useReorderCharacters = () => {
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.CHARACTERS) });
             invalidateVaultAggregates(queryClient);
-        }
+        },
+        onError: (error) => reportError('reorder characters', error),
     });
 };
 
@@ -108,7 +113,8 @@ export const useDeleteCharacter = () => {
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.CHARACTERS) });
             invalidateVaultAggregates(queryClient);
-        }
+        },
+        onError: (error) => reportError('delete character', error),
     });
 };
 
@@ -140,7 +146,8 @@ export const useImportCharacterCard = () => {
                 queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.CHARACTERS, result.character.id) });
             }
             invalidateVaultAggregates(queryClient);
-        }
+        },
+        onError: (error) => reportError('import character card', error),
     });
 };
 
@@ -158,7 +165,8 @@ export const useExportCharacterCard = () => {
             const filename = buildCharacterCardExportFilename(character, format);
             downloadUrl(url, filename);
             return { url, filename, format: format || DEFAULT_CARD_EXPORT_FORMAT };
-        }
+        },
+        onError: (error) => reportError('export character card', error),
     });
 };
 
@@ -197,7 +205,8 @@ export const useAnalyzeCharacterCard = () => {
             return api.post('/api/v2/characters/import/analyze', formData, {
                 headers: { 'Content-Type': 'multipart/form-data' }
             });
-        }
+        },
+        onError: (error) => reportError('analyze character card', error),
     });
 };
 
@@ -227,7 +236,8 @@ export const useCommitCharacterCard = () => {
                 queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.CHARACTERS, result.character.id) });
             }
             invalidateVaultAggregates(queryClient);
-        }
+        },
+        onError: (error) => reportError('commit character card', error),
     });
 };
 
@@ -238,7 +248,8 @@ export const useCloneCharacter = () => {
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.CHARACTERS) });
             invalidateVaultAggregates(queryClient);
-        }
+        },
+        onError: (error) => reportError('clone character', error),
     });
 };
 
@@ -276,6 +287,7 @@ export const useAnimateCharacterAvatar = () => {
             queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.CHARACTERS) });
             queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.CHARACTERS, variables.characterId) });
             invalidateVaultAggregates(queryClient);
-        }
+        },
+        onError: (error) => reportError('animate character avatar', error),
     });
 };
