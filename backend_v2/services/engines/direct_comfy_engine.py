@@ -1340,8 +1340,8 @@ class DirectComfyEngine(InProcessEngine):
                 if self._object_info_cache and (time.monotonic() - self._object_info_cache[0] < self._object_info_ttl):
                     try:
                         graph = self._reconcile_graph_models_with_object_info(graph, self._object_info_cache[1])
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        logger.debug("direct_comfy_cache_reconcile_skip", provider_id=self.provider_id, error=str(exc))
 
                 t_prompt_start = time.monotonic()
                 prompt_resp = await client.post(

@@ -79,8 +79,8 @@ def get_catalog():
             checkpoint_recommendations = get_checkpoint_recommendations(session)
         finally:
             session.close()
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("checkpoint_recommendations_failed", error=str(exc))
 
     return {
         "catalog": registry.catalog(),
