@@ -108,9 +108,14 @@ class BeamEngine(InProcessEngine):
         return self._http
 
     async def close(self) -> None:
+        if self._background_tasks:
+            tasks = list(self._background_tasks)
+            for t in tasks:
+                t.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            self._background_tasks.clear()
         if self._http and not self._http.is_closed:
             await self._http.aclose()
-
     async def check_health(self) -> Dict[str, Any]:
         """Local-only check: never ping the serverless deployment.
 

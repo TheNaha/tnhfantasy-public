@@ -221,13 +221,43 @@ def get_character_collections_batch(
     repo: CollectionRepository = Depends(get_collection_repo),
 ):
     """Batch variant of by-character: one round-trip for N character cards."""
+    from collections import defaultdict
+
+    character_ids = [i.strip() for i in ids.split(",") if i.strip()]
+    if not character_ids:
+        return {}
+
+    collections = repo.get_collections_by_character_ids(character_ids)
+    col_by_char = {c.character_id: c for c in collections if c.character_id}
+
+    images_by_col = defaultdict(list)
+    if include_images and collections:
+        col_ids = [c.id for c in collections]
+        for img in repo.get_images_for_collections(col_ids):
+            images_by_col[img.collection_id].append(img.image_filename)
+
     result: dict[str, dict | None] = {}
-    for character_id in {i.strip() for i in ids.split(",") if i.strip()}:
-        collection = repo.get_collection_by_character_id(character_id)
-        if not collection:
+    for character_id in set(character_ids):
+        col = col_by_char.get(character_id)
+        if not col:
             result[character_id] = None
             continue
-        result[character_id] = _serialize_collection(repo, collection, include_images)
+        serialized = {
+            "id": col.id,
+            "name": col.name,
+            "color": col.color,
+            "description": col.description,
+            "thumbnail": col.thumbnail,
+            "character_id": col.character_id,
+            "workspace": col.workspace,
+            "created_at": col.created_at,
+            "updated_at": col.updated_at,
+        }
+        if include_images:
+            imgs = images_by_col[col.id]
+            serialized["images"] = imgs
+            serialized["image_count"] = len(imgs)
+        result[character_id] = serialized
     return result
 
 

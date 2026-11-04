@@ -94,3 +94,9 @@ class CollectionRepository:
     def get_collection_by_character_id(self, character_id: str) -> Collection | None:
         stmt = select(Collection).where(Collection.character_id == character_id)
         return self.session.exec(stmt).first()
+
+    def get_collections_by_character_ids(self, character_ids: list[str]) -> list[Collection]:
+        if not character_ids:
+            return []
+        stmt = select(Collection).where(Collection.character_id.in_(character_ids))
+        return list(self.session.exec(stmt).all())

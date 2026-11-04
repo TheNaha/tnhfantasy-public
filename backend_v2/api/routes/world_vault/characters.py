@@ -745,18 +745,9 @@ async def commit_character_card_import(
         return {"scope": "world", "blueprint": blueprint, "result": result}
 
     if (match_action or "auto").strip().lower() == "create":
-        # Explicitly create a new character even if the card names one.
-        parsed = _parse_card_upload(payload, filename)
-        char_data = parsed["char_data"]
-        char_data.pop("id", None)
-        metadata = char_data.get("card_metadata")
-        if isinstance(metadata, dict):
-            extensions = metadata.get("data", {}).get("extensions")
-            if isinstance(extensions, dict):
-                extensions.pop(APP_EXTENSION_KEY, None)
-        return _import_card_payload(session, payload, filename, force_new=True)
+        return await asyncio.to_thread(_import_card_payload, session, payload, filename, force_new=True)
 
-    return _import_card_payload(session, payload, filename, force_new=False)
+    return await asyncio.to_thread(_import_card_payload, session, payload, filename, force_new=False)
 
 
 def _import_card_payload(
