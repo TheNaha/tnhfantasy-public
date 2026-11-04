@@ -54,7 +54,7 @@ export default function RelationshipTimeline() {
                             `/api/v2/chats/${chat.id}/messages`,
                             { params: { limit: 200 } }
                         );
-                        const msgs = Array.isArray(resp.data) ? resp.data : (resp.data.messages || []);
+                        const msgs = Array.isArray(resp) ? resp : (resp?.messages || resp?.data || []);
                         return msgs.map((m) => ({
                             ...m,
                             chat_id: chat.id,

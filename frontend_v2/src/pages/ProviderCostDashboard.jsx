@@ -24,11 +24,12 @@ const COST_FORMATTER = new Intl.NumberFormat('en-US', {
  * Job.estimated_cost_cents (set by workers at job completion).
  */
 export default function ProviderCostDashboard() {
-    const { data: jobs = [], isLoading, isError, error, refetch } = useQuery({
+    const { data: jobsData, isLoading, isError, error, refetch } = useQuery({
         queryKey: buildQueryKey(QUERY_KEYS.JOBS, 'all'),
         queryFn: ({ signal }) => api.get('/api/jobs', { params: { limit: 1000 }, signal }),
         refetchInterval: 60000,
     });
+    const jobs = useMemo(() => (Array.isArray(jobsData) ? jobsData : (jobsData?.jobs || [])), [jobsData]);
 
     // Group by provider
     const byProvider = useMemo(() => {
