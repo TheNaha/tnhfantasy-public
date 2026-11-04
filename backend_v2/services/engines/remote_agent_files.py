@@ -452,7 +452,9 @@ class RemoteAgentFileMixin:
             }
         return body
 
-    async def validate_models(self, directories: List[str]) -> Dict[str, Any]:
+    async def validate_models(
+        self, directories: List[str], delete_invalid: bool = False
+    ) -> Dict[str, Any]:
         """Ask the agent to hash-check what it holds.
 
         The normalisation is the shared one, so a `remote_llm` provider's
@@ -471,7 +473,7 @@ class RemoteAgentFileMixin:
                     # 422 for the whole request. This is the key the deployed
                     # agent accepts; the plural one it never has.
                     "directory": self._narrow_dirs(directories),
-                    "delete_invalid": False,
+                    "delete_invalid": delete_invalid,
                 },
                 timeout=clamp_timeout(3600.0, default=3600.0),
             )

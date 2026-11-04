@@ -70,3 +70,11 @@ def test_the_catalog_still_serves_its_actual_payload(client):
     body = response.json()
     for key in ("catalog", "roles", "active", "shared_weights"):
         assert key in body
+
+
+def test_the_llm_catalog_carries_no_environment_or_provider_tokens(client, monkeypatch):
+    monkeypatch.setenv("HF_TOKEN", ENV_HF_TOKEN)
+    monkeypatch.setenv("CIVITAI_TOKEN", ENV_CIVITAI_TOKEN)
+
+    response = client.get("/api/v2/llm/catalog")
+    _assert_no_token_in(response, ENV_HF_TOKEN, ENV_CIVITAI_TOKEN)

@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, File, Query, UploadFile
 from pydantic import BaseModel, model_validator
 from sqlmodel import Session, select, func
 
-from api.deps import get_session, get_location_repo
+from api.deps import get_session, get_location_repo, get_session_sync
 from infrastructure.repositories.location_repo import LocationRepository
 from services.reference_cleanup import scrub_entity_references
 from services.world_ownership import apply_world_id, require_world
@@ -173,9 +173,9 @@ def delete_location(location_id: str, session: Session = Depends(get_session), l
 
 @router.post("/{location_id}/image")
 async def upload_location_image(location_id: str, file: UploadFile = File(...), session: Session = Depends(get_session), location_repo: LocationRepository = Depends(get_location_repo)):
-    # The upload read below is awaited, so the two session writes around it move
-    # to a worker thread.
-    await asyncio.to_thread(_require_location, location_repo, location_id)
+    # The upload read below is awaited, so the DB operations run in worker
+    # threads with their own thread-local session.
+    await asyncio.to_thread(_require_location, location_id)
 
     # Bounded + content-verified: the client-supplied extension is replaced by
     # the detected format so the stored path always matches the bytes.
@@ -195,26 +195,29 @@ async def upload_location_image(location_id: str, file: UploadFile = File(...), 
 
     await asyncio.to_thread(_write_image, base_dir, location_id, image_path, content)
 
-    await asyncio.to_thread(_save_location_image, session, location_repo, location_id, image_path)
+    await asyncio.to_thread(_save_location_image, location_id, image_path)
     return {"message": "Image uploaded", "image_path": image_path}
 
 
-def _require_location(location_repo: LocationRepository, location_id: str) -> None:
+def _require_location(location_id: str) -> None:
     """404 before the upload is consumed, off the event loop."""
-    if not location_repo.get(location_id):
-        raise NotFoundError("Location", location_id)
+    with get_session_sync() as db_session:
+        repo = LocationRepository(db_session)
+        if not repo.get(location_id):
+            raise NotFoundError("Location", location_id)
 
 
 def _save_location_image(
-    session: Session,
-    location_repo: LocationRepository,
     location_id: str,
     image_path: str,
 ) -> None:
     """Persist the stored image path on the location."""
-    location = location_repo.get(location_id)
-    location.image_path = image_path
-    location.updated_at = datetime.now(timezone.utc)
-    session.add(location)
-    session.commit()
-    session.refresh(location)
+    with get_session_sync() as db_session:
+        repo = LocationRepository(db_session)
+        location = repo.get(location_id)
+        if location is None:
+            return
+        location.image_path = image_path
+        location.updated_at = datetime.now(timezone.utc)
+        db_session.add(location)
+        db_session.commit()

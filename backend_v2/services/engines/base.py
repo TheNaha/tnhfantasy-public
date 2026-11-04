@@ -743,7 +743,9 @@ class InProcessEngine(ABC):
         await self._on_cancel(job_id)
         return True
 
-    async def validate_models(self, directories: list[str]) -> dict[str, Any]:
+    async def validate_models(
+        self, directories: list[str], delete_invalid: bool = False
+    ) -> dict[str, Any]:
         """Validate integrity of models in specified directories."""
         return {"status": "ok", "valid": True}
 

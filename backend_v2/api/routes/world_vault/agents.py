@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlmodel import Session, select
 
-from api.deps import get_session
+from api.deps import get_session, get_session_sync
 import config as app_config
 from core.entities import AgentProfile, AgentPromptVariant
 from core.exceptions import NotFoundError, ValidationError
@@ -307,17 +307,18 @@ async def upload_agent_avatar(
         os.makedirs(f"{app_config.settings.character_avatar_dir}/{profile_id}", exist_ok=True)
         with open(avatar_path, "wb") as buffer:
             buffer.write(content)
-        fresh = session.get(AgentProfile, profile_id)
-        if fresh is None:
-            fresh = session.exec(
-                select(AgentProfile).where(AgentProfile.slug == lookup_key)
-            ).first()
-        if fresh is None:
-            return
-        fresh.avatar_path = avatar_path
-        fresh.updated_at = datetime.now(timezone.utc)
-        session.add(fresh)
-        session.commit()
+        with get_session_sync() as db_session:
+            fresh = db_session.get(AgentProfile, profile_id)
+            if fresh is None:
+                fresh = db_session.exec(
+                    select(AgentProfile).where(AgentProfile.slug == lookup_key)
+                ).first()
+            if fresh is None:
+                return
+            fresh.avatar_path = avatar_path
+            fresh.updated_at = datetime.now(timezone.utc)
+            db_session.add(fresh)
+            db_session.commit()
 
     await asyncio.to_thread(_save)
 
