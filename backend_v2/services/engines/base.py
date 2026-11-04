@@ -659,9 +659,8 @@ class InProcessEngine(ABC):
                     from services.engines.engine_factory import drain_pending_engine_closes
 
                     drain_pending_engine_closes(self)
-                except Exception:
-                    pass
-
+                except Exception as exc:
+                    logger.debug("drain_pending_engine_closes_failed", extra={"provider_id": self.provider_id, "error": str(exc)})
     #: A rig the engine cannot write to (plain Direct ComfyUI) still gets a
     #: reconciliation pass: list what is loadable and mark those registry
     #: rows ready, without validation or downloads. Mirrors the legacy
@@ -743,7 +742,9 @@ class InProcessEngine(ABC):
         await self._on_cancel(job_id)
         return True
 
-    async def validate_models(self, directories: list[str]) -> dict[str, Any]:
+    async def validate_models(
+        self, directories: list[str], delete_invalid: bool = False
+    ) -> dict[str, Any]:
         """Validate integrity of models in specified directories."""
         return {"status": "ok", "valid": True}
 

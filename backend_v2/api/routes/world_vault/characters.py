@@ -13,7 +13,7 @@ from io import BytesIO
 from pydantic import BaseModel, Field
 from sqlmodel import Session, select
 
-from api.deps import get_session, get_character_repo
+from api.deps import get_session, get_character_repo, get_session_sync
 from infrastructure.logging import get_logger
 from infrastructure.repositories.character_repo import CharacterRepository
 from services.character_portability import not_portable_features, portable_summary
@@ -1092,10 +1092,9 @@ def reorder_characters(
     return {"updated": len(ids)}
 
 @router.post("/{character_id}/avatar")
-async def upload_avatar(character_id: str, file: UploadFile = File(...), session: Session = Depends(get_session), character_repo: CharacterRepository = Depends(get_character_repo)):
-    # The upload read below is awaited, so the two session writes around it move
-    # to a worker thread.
-    await asyncio.to_thread(_require_character, character_repo, character_id)
+async def upload_avatar(character_id: str, file: UploadFile = File(...)):
+    # threads with their own thread-local session.
+    await asyncio.to_thread(_require_character, character_id)
 
     # Avatars are rendered inline everywhere, so they are bounded tightly and
     # must be a real image (an .html or .svg renamed to .png is rejected).
@@ -1112,30 +1111,33 @@ async def upload_avatar(character_id: str, file: UploadFile = File(...), session
 
     await asyncio.to_thread(_write_avatar, avatar_path, content)
 
-    await asyncio.to_thread(_save_character_avatar, session, character_repo, character_id, avatar_path)
+    await asyncio.to_thread(_save_character_avatar, character_id, avatar_path)
 
     return {"message": "Avatar uploaded", "avatar_path": avatar_path, "has_avatar": True}
 
 
-def _require_character(character_repo: CharacterRepository, character_id: str) -> None:
+def _require_character(character_id: str) -> None:
     """404 before the upload is consumed, off the event loop."""
-    if not character_repo.get(character_id):
-        raise NotFoundError("Character", character_id)
+    with get_session_sync() as db_session:
+        repo = CharacterRepository(db_session)
+        if not repo.get(character_id):
+            raise NotFoundError("Character", character_id)
 
 
 def _save_character_avatar(
-    session: Session,
-    character_repo: CharacterRepository,
     character_id: str,
     avatar_path: str,
 ) -> None:
     """Persist the stored avatar path on the character."""
-    character = character_repo.get(character_id)
-    character.avatar_path = avatar_path
-    character.updated_at = datetime.now(timezone.utc)
-    session.add(character)
-    session.commit()
-    session.refresh(character)
+    with get_session_sync() as db_session:
+        repo = CharacterRepository(db_session)
+        character = repo.get(character_id)
+        if character is None:
+            return
+        character.avatar_path = avatar_path
+        character.updated_at = datetime.now(timezone.utc)
+        db_session.add(character)
+        db_session.commit()
 
 from pydantic import BaseModel
 from typing import Optional

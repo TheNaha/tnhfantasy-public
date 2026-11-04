@@ -1,5 +1,4 @@
 import asyncio
-import os
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
@@ -62,32 +61,18 @@ def get_model_catalog():
     decisions_active = active.get("decisions") or decisions_default
     shared_weights = (rp_active == util_active) or (util_raw in ("same_as_rp", "same"))
 
-    tokens = {
-        "hf_token": os.getenv("HF_TOKEN", ""),
-        "civitai_token": os.getenv("CIVITAI_TOKEN", ""),
-    }
     checkpoint_recommendations = {}
     try:
         from infrastructure.deps import get_session_sync
-        from infrastructure.repositories import ProviderRepository
         from services.checkpoint_recommendations import get_checkpoint_recommendations
 
         session = get_session_sync()
         try:
-            repo = ProviderRepository(session)
-            for p in repo.get_all():
-                creds = p.credentials or {}
-                if not tokens["hf_token"] and creds.get("hf_token"):
-                    tokens["hf_token"] = str(creds.get("hf_token"))
-                if not tokens["civitai_token"] and creds.get("civitai_token"):
-                    tokens["civitai_token"] = str(creds.get("civitai_token"))
-                if tokens["hf_token"] and tokens["civitai_token"]:
-                    break
             checkpoint_recommendations = get_checkpoint_recommendations(session)
         finally:
             session.close()
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("checkpoint_recommendations_failed", error=str(exc))
 
     return {
         "catalog": registry.catalog(),
@@ -106,7 +91,6 @@ def get_model_catalog():
             "image": active.get("image", ""),
         },
         "shared_weights": shared_weights,
-        "tokens": tokens,
         "checkpoint_recommendations": checkpoint_recommendations,
     }
 

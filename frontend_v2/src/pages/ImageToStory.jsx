@@ -32,7 +32,7 @@ export default function ImageToStory() {
             const resp = await api.post('/api/v2/stories/image-to-story', formData, {
                 headers: { 'Content-Type': 'multipart/form-data' },
             });
-            return resp.data;
+            return resp?.data || resp;
         },
         onSuccess: () => {
             toast.success('Story generation started — check your stories', { id: 'image-to-story' });

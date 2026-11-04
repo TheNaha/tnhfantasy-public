@@ -7,6 +7,7 @@ import {
 import { api } from '../api/client';
 import { buildQueryKey, QUERY_KEYS } from '../constants/queryKeys';
 import EmptyState from '../components/EmptyState';
+import { QueryErrorState } from '../components/common/QueryState';
 
 const COST_FORMATTER = new Intl.NumberFormat('en-US', {
     style: 'currency',
@@ -23,7 +24,7 @@ const COST_FORMATTER = new Intl.NumberFormat('en-US', {
  * Job.estimated_cost_cents (set by workers at job completion).
  */
 export default function ProviderCostDashboard() {
-    const { data: jobs = [], isLoading, refetch } = useQuery({
+    const { data: jobs = [], isLoading, isError, error, refetch } = useQuery({
         queryKey: buildQueryKey(QUERY_KEYS.JOBS, 'all'),
         queryFn: ({ signal }) => api.get('/api/jobs', { params: { limit: 1000 }, signal }),
         refetchInterval: 60000,
@@ -73,6 +74,13 @@ export default function ProviderCostDashboard() {
         );
     }
 
+    if (isError) {
+        return (
+            <div className="flex h-full items-center justify-center p-8">
+                <QueryErrorState noun="provider cost data" error={error} onRetry={refetch} />
+            </div>
+        );
+    }
     if (byProvider.length === 0) {
         return (
             <div className="flex h-full flex-col items-center justify-center p-8 text-center">

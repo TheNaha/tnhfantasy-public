@@ -704,7 +704,9 @@ async def _run_reconciliation(
 
                     try:
                         token = token_for(download_url) if callable(token_for) else None
-                        await engine.download_file(download_url, storage_path, token)
+                        download_res = await engine.download_file(download_url, storage_path, token)
+                        if isinstance(download_res, dict) and (download_res.get("status") in ("failed", "error") or ("error" in download_res and not download_res.get("success", False))):
+                            raise RuntimeError(download_res.get("error") or download_res.get("message") or "Download failed")
                         stats["downloads_completed"] += 1
                     except Exception as exc:
                         stats["downloads_failed"] += 1
@@ -1099,8 +1101,9 @@ async def _run_targeted_downloads(
 
                 try:
                     token = token_for(download_url) if callable(token_for) else None
-                    await engine.download_file(download_url, storage_path, token)
-
+                    download_res = await engine.download_file(download_url, storage_path, token)
+                    if isinstance(download_res, dict) and (download_res.get("status") in ("failed", "error") or ("error" in download_res and not download_res.get("success", False))):
+                        raise RuntimeError(download_res.get("error") or download_res.get("message") or "Download failed")
                     def _mark_ready() -> None:
                         _write_provider_status(
                             model_service,

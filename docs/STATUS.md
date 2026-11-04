@@ -6,7 +6,7 @@ against the code on **2026-11-01** (see the "Verified state" section below and
 
 If you are about to make a decision about what to work on next, read this file
 and then the **most recent** maintenance audit, which is
-`docs/maintenance/audit-2026-11-07.md` (code + integration). The root-level
+`docs/maintenance/audit-2026-11-08.md` (code + integration). The root-level
 `docs/audit-2026-11-02.md` remains the prior consolidated reference; for the
 consolidated engine picture, `docs/audit-2026-11-01.md` remains the prior
 reference. Earlier audits (`docs/audit-2026-10-*.md`) are not present in this
