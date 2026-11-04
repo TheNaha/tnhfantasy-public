@@ -1103,11 +1103,14 @@ async def upload_avatar(character_id: str, file: UploadFile = File(...), session
     content = await read_upload_bounded(file, MAX_AVATAR_BYTES)
     inspect_image(content, field="file", label="Avatar")
 
-    os.makedirs(f"{app_config.settings.character_avatar_dir}/{character_id}", exist_ok=True)
     avatar_path = f"{app_config.settings.character_avatar_dir}/{character_id}/avatar.png"
 
-    with open(avatar_path, "wb") as buffer:
-        buffer.write(content)
+    def _write_avatar(path: str, data: bytes) -> None:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "wb") as buffer:
+            buffer.write(data)
+
+    await asyncio.to_thread(_write_avatar, avatar_path, content)
 
     await asyncio.to_thread(_save_character_avatar, session, character_repo, character_id, avatar_path)
 

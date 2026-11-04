@@ -12,7 +12,7 @@ import { useModelDirectories } from '../../hooks/useModelDirectories';
 import { GENERATOR_MODEL_REQUESTS } from '../../constants/modelDirectories';
 import { SETUP_COMPLETE_KEY, markSetupComplete } from '../../utils/setupComplete';
 import { useEscapeKey } from '../../hooks/useEscapeKey';
-import { buildQueryKey, QUERY_KEYS } from '../constants/queryKeys';
+import { buildQueryKey, QUERY_KEYS } from '../../constants/queryKeys';
 import { api } from '../../api';
 
 const STEPS = [

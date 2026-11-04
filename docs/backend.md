@@ -16,7 +16,7 @@ The backend of TNHFantasy (`tnhfantasy-backend`) is built with **FastAPI** (Pyth
 
 The backend consists of several key modules, in a strict **routes → services → repositories** flow:
 
-1. **API Routes (`backend_v2/api/routes/`):** REST endpoints for jobs, models, providers, collections, generation, settings, statistics, health, files, websockets, and the World Vault (`/api/v2/*`). The World Vault routers are registered once in `api/routes/world_vault/__init__.py`.
+1. **API Routes (`backend_v2/api/routes/`):** REST endpoints for jobs, models (and `models_external`), providers, collections, generation, settings, statistics, health, files, websockets (and `worker_ws`), gallery, interrogate, nodes, prompts, and the World Vault (`/api/v2/*`). The World Vault routers are registered once in `api/routes/world_vault/__init__.py`.
 2. **API infrastructure (`backend_v2/api/`):** app setup (`app_setup.py`), dependency injection (`deps.py`), error handlers, job orchestration and processing (`lifecycle.py`, `job_processing.py`), and the Socket.IO manager (`websocket.py`).
 3. **Services (`backend_v2/services/`):** business logic — job queue, job service, job runner, job submission, load balancer, provider service, provider status/lifecycle/reconciliation, chat pipeline, pipeline runner/stages, illustrator, updater, asset reconciler, LLM router, embedding service, RAG pipeline, world ownership/integration/onboarding, and more.
 4. **Core (`backend_v2/core/`):** domain entities (`entities.py`), domain events (`events.py`), domain exceptions (`exceptions.py`), DTOs, pipeline limits, workflow builder/parser/postprocess, scene graph, provider capabilities.

@@ -2114,6 +2114,10 @@ def _migration_112_download_progress_tracking(conn) -> bool:
     with defaults, so existing rows keep working and new downloads populate
     them.
     """
+    inspector = inspect(conn)
+    if "provider_version_status" not in inspector.get_table_names():
+        return False
+
     columns = _get_table_columns(conn, "provider_version_status")
     for column, ddl in (
         ("bytes_downloaded", "INTEGER NOT NULL DEFAULT 0"),

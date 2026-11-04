@@ -7,6 +7,7 @@ import { useChats } from '../hooks/useChats';
 import { api } from '../api/client';
 import { parseGalleryDate } from '../utils/dateTime';
 import EmptyState from '../components/EmptyState';
+import { QueryErrorState } from '../components/common/QueryState';
 
 /**
  * RelationshipTimeline — shows how the relationship between two characters
@@ -17,8 +18,8 @@ import EmptyState from '../components/EmptyState';
  * by created_at into a unified timeline.
  */
 export default function RelationshipTimeline() {
-    const { data: characters = [], isLoading: charsLoading } = useCharacters();
-    const { data: chats = [], isLoading: chatsLoading } = useChats();
+    const { data: characters = [], isLoading: charsLoading, isError: charsError, error: charsErr, refetch: refetchChars } = useCharacters();
+    const { data: chats = [], isLoading: chatsLoading, isError: chatsError, error: chatsErr, refetch: refetchChats } = useChats();
 
     const [charAId, setCharAId] = useState(null);
     const [charBId, setCharBId] = useState(null);
@@ -92,6 +93,14 @@ export default function RelationshipTimeline() {
         return (
             <div className="flex h-full items-center justify-center text-gray-400">
                 Loading characters and chats…
+            </div>
+        );
+    }
+
+    if (charsError || chatsError) {
+        return (
+            <div className="flex h-full items-center justify-center p-8">
+                <QueryErrorState noun="characters" error={charsErr || chatsErr} onRetry={() => { refetchChars(); refetchChats(); }} />
             </div>
         );
     }

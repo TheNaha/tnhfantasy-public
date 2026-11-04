@@ -706,6 +706,32 @@ async def _run_reconciliation(
                         token = token_for(download_url) if callable(token_for) else None
                         await engine.download_file(download_url, storage_path, token)
                         stats["downloads_completed"] += 1
+                    except Exception as exc:
+                        stats["downloads_failed"] += 1
+                        logger.warning(
+                            "in_process_reconcile_download_failed",
+                            provider_id=provider_id,
+                            path=storage_path,
+                            error=str(exc),
+                        )
+                        def _mark_failed(_err: str = str(exc)) -> None:
+                            _write_provider_status(
+                                model_service,
+                                file_id=file_id,
+                                provider_id=provider_id,
+                                status="failed",
+                                error_message=_err,
+                                force_create=True,
+                            )
+
+                        await asyncio.to_thread(_mark_failed)
+                        await emit_model_status_update(
+                            provider_id=provider_id,
+                            file_id=file_id,
+                            status="failed",
+                            extra={"storage_path": storage_path, "error_message": str(exc)},
+                        )
+                        return
                     finally:
                         progress_stop.set()
                         try:

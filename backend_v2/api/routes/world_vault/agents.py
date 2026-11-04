@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import re
 import uuid
@@ -297,17 +298,31 @@ async def upload_agent_avatar(
     content = await read_upload_bounded(file, MAX_AVATAR_BYTES)
     inspect_image(content, field="file", label="Avatar")
 
-    os.makedirs(f"{app_config.settings.character_avatar_dir}/{profile.id}", exist_ok=True)
     avatar_path = f"{app_config.settings.character_avatar_dir}/{profile.id}/avatar.png"
+    profile_id = profile.id
+    # Preserve the route's resolution key for the slug fallback.
+    lookup_key = agent_id
 
-    with open(avatar_path, "wb") as buffer:
-        buffer.write(content)
+    def _save() -> None:
+        os.makedirs(f"{app_config.settings.character_avatar_dir}/{profile_id}", exist_ok=True)
+        with open(avatar_path, "wb") as buffer:
+            buffer.write(content)
+        fresh = session.get(AgentProfile, profile_id)
+        if fresh is None:
+            fresh = session.exec(
+                select(AgentProfile).where(AgentProfile.slug == lookup_key)
+            ).first()
+        if fresh is None:
+            return
+        fresh.avatar_path = avatar_path
+        fresh.updated_at = datetime.now(timezone.utc)
+        session.add(fresh)
+        session.commit()
+
+    await asyncio.to_thread(_save)
 
     profile.avatar_path = avatar_path
     profile.updated_at = datetime.now(timezone.utc)
-    session.add(profile)
-    session.commit()
-    session.refresh(profile)
 
     return {"message": "Avatar uploaded", "avatar_path": avatar_path, "has_avatar": True}
 
