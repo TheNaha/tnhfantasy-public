@@ -47,9 +47,12 @@ export default function WorldMap({ worldId }) {
         if (e.target.tagName === 'svg') {
             setEditingLocation(null);
             const rect = e.target.getBoundingClientRect();
-            const mx = (e.clientX - rect.left - mapOffset.x) / mapScale;
-            const my = (e.clientY - rect.top - mapOffset.y) / mapScale;
-            setForm({ name: '', description: '', map_x: fromSvgX(mx), map_y: fromSvgY(my) });
+            setForm({
+                name: '',
+                description: '',
+                map_x: Math.max(0, Math.min(1, fromSvgX(e.clientX - rect.left))),
+                map_y: Math.max(0, Math.min(1, fromSvgY(e.clientY - rect.top))),
+            });
             setEditingLocation({ id: null, isNew: true });
         }
     };
@@ -57,11 +60,10 @@ export default function WorldMap({ worldId }) {
     const handlePinDragEnd = async (e, location) => {
         if (!draggingLocationId) return;
         e.stopPropagation();
-        const rect = e.currentTarget.getBoundingClientRect();
-        const mx = (e.clientX - rect.left - mapOffset.x) / mapScale;
-        const my = (e.clientY - rect.top - mapOffset.y) / mapScale;
-        const nx = Math.max(0, Math.min(1, fromSvgX(mx)));
-        const ny = Math.max(0, Math.min(1, fromSvgY(my)));
+        const svg = e.currentTarget.closest('svg');
+        const rect = svg ? svg.getBoundingClientRect() : e.currentTarget.getBoundingClientRect();
+        const nx = Math.max(0, Math.min(1, fromSvgX(e.clientX - rect.left)));
+        const ny = Math.max(0, Math.min(1, fromSvgY(e.clientY - rect.top)));
 
         try {
             await updateLocation.mutateAsync({
