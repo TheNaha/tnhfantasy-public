@@ -2933,6 +2933,7 @@ async def export_chapter_comic(
         from infrastructure.database import get_session_sync
 
         task_session = get_session_sync()
+        task_job_service = JobService(task_session)
         try:
             result = await export_comic_chapter(
                 task_session,
@@ -2942,7 +2943,7 @@ async def export_chapter_comic(
             )
             # Mark the job complete with the download info.
             await asyncio.to_thread(
-                job_service.update_job,
+                task_job_service.update_job,
                 job.id,
                 status=JobStatus.COMPLETED,
                 message="Comic export complete",
@@ -2955,11 +2956,11 @@ async def export_chapter_comic(
                     "download_url": f"/api/files?directory=output&file=comics/{story_id}/chapter_{chapter.chapter_number}/story.cbz",
                 },
             )
-            await asyncio.to_thread(session.commit)
+            await asyncio.to_thread(task_session.commit)
             await emit_job_event(
                 EventType.JOB_COMPLETED,
                 {
-                    **job_service._job_to_dict(job),
+                    **task_job_service._job_to_dict(job),
                     "source": "comic_export",
                     "story_id": story_id,
                     "chapter_id": chapter_id,
@@ -2980,17 +2981,17 @@ async def export_chapter_comic(
             logger.exception("comic_export_failed", story_id=story_id, chapter_id=chapter_id, error=str(exc))
             try:
                 await asyncio.to_thread(
-                    job_service.update_job,
+                    task_job_service.update_job,
                     job.id,
                     status=JobStatus.FAILED,
                     error=str(exc),
                     message="Comic export failed",
                 )
-                await asyncio.to_thread(session.commit)
+                await asyncio.to_thread(task_session.commit)
                 await emit_job_event(
                     EventType.JOB_FAILED,
                     {
-                        **job_service._job_to_dict(job),
+                        **task_job_service._job_to_dict(job),
                         "source": "comic_export",
                         "story_id": story_id,
                         "chapter_id": chapter_id,

@@ -1057,24 +1057,23 @@ async def _run_targeted_downloads(
     from api import deps as api_deps
     from core.events import EventType
 
-    session = api_deps.get_session_sync()
-    try:
-        model_service = api_deps.get_model_service_v2(session)
-        concurrency = _max_concurrent_downloads(provider)
-        semaphore = asyncio.Semaphore(concurrency)
-        total = len(files_to_download)
-        token_for = getattr(engine, "download_token_for_url", None)
+    concurrency = _max_concurrent_downloads(provider)
+    semaphore = asyncio.Semaphore(concurrency)
+    total = len(files_to_download)
+    token_for = getattr(engine, "download_token_for_url", None)
 
-        async def _download_one(file_info: dict[str, Any], index: int) -> None:
-            file_id = file_info["file_id"]
-            display_name = f"{file_info.get('model_name', 'Unknown')} ({file_info.get('version_name', 'v1')})"
-            storage_path = file_info["storage_path"]
-            download_url = file_info["download_url"]
+    async def _download_one(file_info: dict[str, Any], index: int) -> None:
+        file_id = file_info["file_id"]
+        display_name = f"{file_info.get('model_name', 'Unknown')} ({file_info.get('version_name', 'v1')})"
+        storage_path = file_info["storage_path"]
+        download_url = file_info["download_url"]
 
-            async with semaphore:
-                def _mark_downloading() -> None:
+        async with semaphore:
+            def _mark_downloading() -> None:
+                with api_deps.get_session_sync() as worker_session:
+                    worker_model_service = api_deps.get_model_service_v2(worker_session)
                     _write_provider_status(
-                        model_service,
+                        worker_model_service,
                         file_id=file_id,
                         provider_id=provider_id,
                         status="downloading",
@@ -1082,31 +1081,33 @@ async def _run_targeted_downloads(
                         force_create=True,
                     )
 
-                await asyncio.to_thread(_mark_downloading)
-                await emit_model_status_update(
-                    provider_id=provider_id,
-                    file_id=file_id,
-                    status="downloading",
-                    extra={"storage_path": storage_path},
-                )
-                await emit_model_sync_event(
-                    EventType.MODEL_SYNC_STARTED,
-                    provider_id=provider_id,
-                    file_id=file_id,
-                    model_name=display_name,
-                    directory=file_info.get("directory"),
-                    size_bytes=int((file_info.get("size_kb") or 0) * 1024),
-                    progress=0,
-                )
+            await asyncio.to_thread(_mark_downloading)
+            await emit_model_status_update(
+                provider_id=provider_id,
+                file_id=file_id,
+                status="downloading",
+                extra={"storage_path": storage_path},
+            )
+            await emit_model_sync_event(
+                EventType.MODEL_SYNC_STARTED,
+                provider_id=provider_id,
+                file_id=file_id,
+                model_name=display_name,
+                directory=file_info.get("directory"),
+                size_bytes=int((file_info.get("size_kb") or 0) * 1024),
+                progress=0,
+            )
 
-                try:
-                    token = token_for(download_url) if callable(token_for) else None
-                    download_res = await engine.download_file(download_url, storage_path, token)
-                    if isinstance(download_res, dict) and (download_res.get("status") in ("failed", "error") or ("error" in download_res and not download_res.get("success", False))):
-                        raise RuntimeError(download_res.get("error") or download_res.get("message") or "Download failed")
-                    def _mark_ready() -> None:
+            try:
+                token = token_for(download_url) if callable(token_for) else None
+                download_res = await engine.download_file(download_url, storage_path, token)
+                if isinstance(download_res, dict) and (download_res.get("status") in ("failed", "error") or ("error" in download_res and not download_res.get("success", False))):
+                    raise RuntimeError(download_res.get("error") or download_res.get("message") or "Download failed")
+                def _mark_ready() -> None:
+                    with api_deps.get_session_sync() as worker_session:
+                        worker_model_service = api_deps.get_model_service_v2(worker_session)
                         _write_provider_status(
-                            model_service,
+                            worker_model_service,
                             file_id=file_id,
                             provider_id=provider_id,
                             status="ready",
@@ -1115,38 +1116,40 @@ async def _run_targeted_downloads(
                             force_create=True,
                         )
 
-                    await asyncio.to_thread(_mark_ready)
-                    await emit_model_status_update(
-                        provider_id=provider_id,
-                        file_id=file_id,
-                        status="ready",
-                        extra={
-                            "storage_path": storage_path,
-                            "size_bytes": int((file_info.get("size_kb") or 0) * 1024),
-                        },
-                    )
-                    await emit_model_sync_event(
-                        EventType.MODEL_SYNC_COMPLETED,
-                        provider_id=provider_id,
-                        file_id=file_id,
-                        model_name=display_name,
-                        directory=file_info.get("directory"),
-                        size_bytes=int((file_info.get("size_kb") or 0) * 1024),
-                        progress=100,
-                        completed=index + 1,
-                        total=total,
-                    )
-                except Exception as exc:
-                    logger.error(
-                        "targeted_download_failed",
-                        provider_id=provider_id,
-                        file_id=file_id,
-                        error=str(exc),
-                    )
+                await asyncio.to_thread(_mark_ready)
+                await emit_model_status_update(
+                    provider_id=provider_id,
+                    file_id=file_id,
+                    status="ready",
+                    extra={
+                        "storage_path": storage_path,
+                        "size_bytes": int((file_info.get("size_kb") or 0) * 1024),
+                    },
+                )
+                await emit_model_sync_event(
+                    EventType.MODEL_SYNC_COMPLETED,
+                    provider_id=provider_id,
+                    file_id=file_id,
+                    model_name=display_name,
+                    directory=file_info.get("directory"),
+                    size_bytes=int((file_info.get("size_kb") or 0) * 1024),
+                    progress=100,
+                    completed=index + 1,
+                    total=total,
+                )
+            except Exception as exc:
+                logger.error(
+                    "targeted_download_failed",
+                    provider_id=provider_id,
+                    file_id=file_id,
+                    error=str(exc),
+                )
 
-                    def _mark_failed(_err: str = str(exc)) -> None:
+                def _mark_failed(_err: str = str(exc)) -> None:
+                    with api_deps.get_session_sync() as worker_session:
+                        worker_model_service = api_deps.get_model_service_v2(worker_session)
                         _write_provider_status(
-                            model_service,
+                            worker_model_service,
                             file_id=file_id,
                             provider_id=provider_id,
                             status="failed",
@@ -1154,28 +1157,23 @@ async def _run_targeted_downloads(
                             force_create=True,
                         )
 
-                    await asyncio.to_thread(_mark_failed)
-                    await emit_model_status_update(
-                        provider_id=provider_id,
-                        file_id=file_id,
-                        status="failed",
-                        extra={"storage_path": storage_path, "error_message": str(exc)},
-                    )
-                    await emit_model_sync_event(
-                        EventType.MODEL_SYNC_FAILED,
-                        provider_id=provider_id,
-                        file_id=file_id,
-                        model_name=display_name,
-                        directory=file_info.get("directory"),
-                        error_message=str(exc),
-                    )
+                await asyncio.to_thread(_mark_failed)
+                await emit_model_status_update(
+                    provider_id=provider_id,
+                    file_id=file_id,
+                    status="failed",
+                    extra={"storage_path": storage_path, "error_message": str(exc)},
+                )
+                await emit_model_sync_event(
+                    EventType.MODEL_SYNC_FAILED,
+                    provider_id=provider_id,
+                    file_id=file_id,
+                    model_name=display_name,
+                    directory=file_info.get("directory"),
+                    error_message=str(exc),
+                )
 
-        await asyncio.gather(*[_download_one(f, idx) for idx, f in enumerate(files_to_download)])
-    finally:
-        try:
-            session.close()
-        except Exception as exc:
-            logger.warning("targeted_downloads_session_close_failed", error=str(exc))
+    await asyncio.gather(*[_download_one(f, idx) for idx, f in enumerate(files_to_download)])
 
 
 async def run_periodic_in_process_reconciliation() -> dict[str, Any]:
