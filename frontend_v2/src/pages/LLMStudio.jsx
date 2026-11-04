@@ -580,7 +580,13 @@ export default function LLMStudio() {
     };
 
     // System Prompts state
-    const { data: blocksData, isLoading: isLoadingPrompts } = useQuery({
+    const {
+        data: blocksData,
+        isLoading: isLoadingPrompts,
+        isError: isErrorPrompts,
+        error: errorPrompts,
+        refetch: refetchPrompts,
+    } = useQuery({
         queryKey: ['system_prompts_blocks'],
         queryFn: () => settingsApi.getSystemPrompts(),
         staleTime: 30000,
@@ -1842,6 +1848,25 @@ export default function LLMStudio() {
                                     </button>
                                 </div>
                             </div>
+
+                            {isErrorPrompts && (
+                                <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 flex items-center justify-between gap-3 text-amber-200">
+                                    <div className="flex items-center gap-2 text-xs">
+                                        <AlertCircle size={16} className="text-amber-400 shrink-0" />
+                                        <span>
+                                            Failed to load system prompt blocks from backend: {errorPrompts?.message || 'Unknown error'}. Showing local defaults.
+                                        </span>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={() => refetchPrompts()}
+                                        className="px-3 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 text-xs font-medium border border-amber-500/40 flex items-center gap-1.5 transition-all shrink-0"
+                                    >
+                                        <RefreshCw size={12} />
+                                        <span>Retry</span>
+                                    </button>
+                                </div>
+                            )}
 
                             {newPromptOpen && (
                                 <div className="rounded-xl border border-purple-500/30 bg-purple-500/5 p-3 space-y-2">
