@@ -396,6 +396,7 @@ class HybridRemoteEngine(InProcessEngine):
 
     async def cancel_job(self, job_id: str) -> bool:
         """Cancel an in-flight job on whichever engine holds it."""
+        self._cancelled_jobs.add(job_id)
         cancelled_image = await self.image_engine.cancel_job(job_id)
         cancelled_llm = await self.llm_engine.cancel_job(job_id)
         return cancelled_image or cancelled_llm

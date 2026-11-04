@@ -292,11 +292,10 @@ async def magic_prompt(
     """
     from core.entities import JobStatus
     from core.events import wait_for_job_completion
-    from services.job_queue import queue_manager
+    from services.job_submission_service import submit_llm_job
+    from services.job_processing import cancel_job as cancel_job_processing
     from services.job_service import JobService
-    
-    job_service = JobService(session)
-    
+
     from config import get_system_prompt_blocks
 
     default_magic = (
@@ -308,30 +307,39 @@ async def magic_prompt(
         "Return ONLY the expanded prompt text, nothing else. No conversational text."
     )
     system_prompt = (get_system_prompt_blocks() or {}).get("magic_prompt") or default_magic
-    
+
     workflow = {
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": request.prompt}
         ]
     }
-    
-    job = await job_service.create_job(
-        task_type="llm",
-        workflow=workflow,
-        metadata={"source": "magic_prompt"}
+
+    job = await submit_llm_job(
+        session,
+        workflow,
+        metadata={"source": "magic_prompt"},
     )
-    
-    await queue_manager.enqueue(job.id, task_type="llm")
-    
+
     # Wait for the LLM job to complete (enqueue + event-bus wait, no busy polling)
-    status, output = await wait_for_job_completion(job.id, timeout=60.0)
-    
+    try:
+        status, output = await wait_for_job_completion(job.id, timeout=60.0)
+    except Exception:
+        try:
+            await cancel_job_processing(job_service=JobService(session), job_id=job.id, reason="magic_prompt_timeout")
+        except Exception:
+            pass
+        raise
+
     if status == JobStatus.COMPLETED.value or status == "job.completed":
         if output:
             enriched_text = output.get("content") or output.get("text") or ""
             if enriched_text and enriched_text.strip():
                 return {"enriched_prompt": enriched_text.strip()}
         return {"enriched_prompt": request.prompt}
-    
+
+    try:
+        await cancel_job_processing(job_service=JobService(session), job_id=job.id, reason=f"magic_prompt_failed:{status}")
+    except Exception:
+        pass
     raise ComfyError(f"Magic prompt failed: {status}")
