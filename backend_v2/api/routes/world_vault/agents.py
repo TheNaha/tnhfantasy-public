@@ -280,7 +280,6 @@ def update_agent(
 async def upload_agent_avatar(
     agent_id: str,
     file: UploadFile = File(...),
-    session: Session = Depends(get_session),
 ):
     """Upload an avatar for an agent profile.
 
@@ -288,19 +287,13 @@ async def upload_agent_avatar(
     real image (an `.html` or `.svg` renamed to `.png` is rejected), and it is
     written to the avatar directory under the agent's own id.
     """
-    profile = session.get(AgentProfile, agent_id)
-    if not profile:
-        profile = session.exec(select(AgentProfile).where(AgentProfile.slug == agent_id)).first()
-    if not profile:
-        raise NotFoundError("AgentProfile", agent_id)
+    profile_id = await asyncio.to_thread(_require_agent_id, agent_id)
 
     require_declared_size(file, MAX_AVATAR_BYTES)
     content = await read_upload_bounded(file, MAX_AVATAR_BYTES)
     inspect_image(content, field="file", label="Avatar")
 
-    avatar_path = f"{app_config.settings.character_avatar_dir}/{profile.id}/avatar.png"
-    profile_id = profile.id
-    # Preserve the route's resolution key for the slug fallback.
+    avatar_path = f"{app_config.settings.character_avatar_dir}/{profile_id}/avatar.png"
     lookup_key = agent_id
 
     def _save() -> None:
@@ -322,11 +315,17 @@ async def upload_agent_avatar(
 
     await asyncio.to_thread(_save)
 
-    profile.avatar_path = avatar_path
-    profile.updated_at = datetime.now(timezone.utc)
-
     return {"message": "Avatar uploaded", "avatar_path": avatar_path, "has_avatar": True}
 
+
+def _require_agent_id(agent_id: str) -> str:
+    with get_session_sync() as db_session:
+        profile = db_session.get(AgentProfile, agent_id)
+        if not profile:
+            profile = db_session.exec(select(AgentProfile).where(AgentProfile.slug == agent_id)).first()
+        if not profile:
+            raise NotFoundError("AgentProfile", agent_id)
+        return profile.id
 
 @router.get("/{agent_id}/avatar")
 def get_agent_avatar(agent_id: str, session: Session = Depends(get_session)):

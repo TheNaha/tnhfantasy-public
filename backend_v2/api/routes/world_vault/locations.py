@@ -172,8 +172,7 @@ def delete_location(location_id: str, session: Session = Depends(get_session), l
 
 
 @router.post("/{location_id}/image")
-async def upload_location_image(location_id: str, file: UploadFile = File(...), session: Session = Depends(get_session), location_repo: LocationRepository = Depends(get_location_repo)):
-    # The upload read below is awaited, so the DB operations run in worker
+async def upload_location_image(location_id: str, file: UploadFile = File(...)):
     # threads with their own thread-local session.
     await asyncio.to_thread(_require_location, location_id)
 

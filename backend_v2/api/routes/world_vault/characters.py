@@ -1092,8 +1092,7 @@ def reorder_characters(
     return {"updated": len(ids)}
 
 @router.post("/{character_id}/avatar")
-async def upload_avatar(character_id: str, file: UploadFile = File(...), session: Session = Depends(get_session), character_repo: CharacterRepository = Depends(get_character_repo)):
-    # The upload read below is awaited, so the DB operations run in worker
+async def upload_avatar(character_id: str, file: UploadFile = File(...)):
     # threads with their own thread-local session.
     await asyncio.to_thread(_require_character, character_id)
 
