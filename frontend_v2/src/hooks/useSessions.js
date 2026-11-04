@@ -13,6 +13,7 @@ import {
     splitSession,
     updateSession,
 } from '../api/sessionsApi';
+import { reportError } from './useWorldVaultResource';
 
 export const SESSIONS_ROOT_KEY = ['sessions'];
 
@@ -81,6 +82,7 @@ export function useCreateSession() {
     return useMutation({
         mutationFn: (data) => createSession(data),
         onSuccess: () => invalidateSessions(queryClient),
+        onError: (error) => reportError('create session', error),
     });
 }
 
@@ -89,6 +91,7 @@ export function useRenameSession() {
     return useMutation({
         mutationFn: ({ id, name, description }) => updateSession(id, { name, description }),
         onSuccess: () => invalidateSessions(queryClient),
+        onError: (error) => reportError('rename session', error),
     });
 }
 
@@ -97,6 +100,7 @@ export function useDeleteSession() {
     return useMutation({
         mutationFn: (id) => deleteSession(id),
         onSuccess: () => invalidateSessions(queryClient),
+        onError: (error) => reportError('delete session', error),
     });
 }
 
@@ -105,6 +109,7 @@ export function useAddSessionAssets() {
     return useMutation({
         mutationFn: ({ id, assetIds }) => addSessionAssets(id, assetIds),
         onSuccess: () => invalidateSessions(queryClient),
+        onError: (error) => reportError('add session assets', error),
     });
 }
 
@@ -113,6 +118,7 @@ export function useRemoveSessionAsset() {
     return useMutation({
         mutationFn: ({ id, assetId }) => removeSessionAsset(id, assetId),
         onSuccess: () => invalidateSessions(queryClient),
+        onError: (error) => reportError('remove session asset', error),
     });
 }
 
@@ -121,6 +127,7 @@ export function useSplitSession() {
     return useMutation({
         mutationFn: ({ id, keepAssetIds }) => splitSession(id, keepAssetIds),
         onSuccess: () => invalidateSessions(queryClient),
+        onError: (error) => reportError('split session', error),
     });
 }
 
@@ -129,6 +136,7 @@ export function useMergeSession() {
     return useMutation({
         mutationFn: ({ id, targetSessionId }) => mergeSession(id, targetSessionId),
         onSuccess: () => invalidateSessions(queryClient),
+        onError: (error) => reportError('merge session', error),
     });
 }
 
@@ -142,5 +150,6 @@ export function useDetectSessions() {
     return useMutation({
         mutationFn: (params) => detectSessions(params),
         onSuccess: () => invalidateSessions(queryClient),
+        onError: (error) => reportError('detect sessions', error),
     });
 }

@@ -31,11 +31,11 @@ export default function BatchStory() {
                 premise,
                 count,
             });
-            return resp.data;
+            return resp?.data || resp;
         },
         onSuccess: (data) => {
-            setResults(data.variants || []);
-            toast.success(`Generated ${data.variants?.length || 0} chapter variants`, { id: 'batch-story' });
+            setResults(data?.variants || []);
+            toast.success(`Generated ${data?.variants?.length || 0} chapter variants`, { id: 'batch-story' });
         },
         onError: (err) => {
             toast.error(`Failed to generate variants: ${err.message}`, { id: 'batch-story-error' });
@@ -59,12 +59,20 @@ export default function BatchStory() {
         const variant = results.find((v) => v.id === selectedVariantId);
         if (!variant) return;
         try {
-            const resp = await api.post('/api/v2/stories/from-variant', {
-                variant_id: variant.id,
+            const story = await api.post('/api/v2/stories', {
                 title: variant.title || 'Untitled',
+                description: premise || variant.premise,
             });
+            const storyId = story.id || story.story_id;
+            if (variant.content) {
+                await api.post(`/api/v2/stories/${storyId}/chapters`, {
+                    title: 'Chapter 1',
+                    content: variant.content,
+                    sequence: 1,
+                });
+            }
             toast.success('Story created from variant', { id: 'batch-story-continue' });
-            navigate(`/story/${resp.data.story_id}`);
+            navigate(`/story/${storyId}`);
         } catch (err) {
             toast.error(`Failed to create story: ${err.message}`, { id: 'batch-story-continue-error' });
         }
