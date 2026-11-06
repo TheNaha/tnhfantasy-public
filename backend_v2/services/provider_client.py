@@ -121,6 +121,7 @@ class _ImageReducer:
         # would have seen.
         self._last_persist_at = 0.0
         self._pending_progress: dict | None = None
+        self._latest_preview: str | None = None
 
     async def _persist_progress(self, **fields) -> None:
         """Write progress to the row, coalescing bursts. Terminal states bypass."""
@@ -130,7 +131,8 @@ class _ImageReducer:
             return
         self._last_persist_at = now
         self._pending_progress = None
-        await self.job_service.update_job(self.job_id, **fields)
+        event_extra = {"preview": self._latest_preview} if self._latest_preview else None
+        await self.job_service.update_job(self.job_id, event_extra=event_extra, **fields)
 
     async def __call__(self, ev: dict) -> None:
         event = ev.get("event")
@@ -169,11 +171,24 @@ class _ImageReducer:
                 status=JobStatus.GENERATING, overall_progress=overall,
                 message=f"Cached {len(nodes)} nodes...",
             )
+        elif event == "preview":
+            preview = ev.get("preview")
+            if preview:
+                self._latest_preview = preview
+                now = time.perf_counter()
+                if now - self._last_persist_at >= PROGRESS_PERSIST_INTERVAL_SECONDS:
+                    self._last_persist_at = now
+                    await self.job_service.update_job(
+                        self.job_id,
+                        event_extra={"preview": preview},
+                        event_type=EventType.JOB_PROGRESS,
+                        include_full_metadata=False,
+                    )
         elif event == "completed":
             # Terminal: the last coalesced progress frame is now moot, because
             # the completion path overwrites status, progress and message
             # anyway. Flushing here would be a redundant write.
-            self._pending_progress = None
+            self._latest_preview = None
             try:
                 validate_image_outputs(ev)
             except ValueError as error:
@@ -209,7 +224,7 @@ class _ImageReducer:
             if ev.get("timings"):
                 self.final_result["timings"] = ev["timings"]
         elif event == "failed":
-            self._pending_progress = None
+            self._latest_preview = None
             message = ev.get("message", "Image generation failed")
             status_code = _extract_http_status(message)
             raise ProviderCallError(
@@ -218,7 +233,7 @@ class _ImageReducer:
                 status_code=status_code,
             )
         elif event == "cancelled":
-            self._pending_progress = None
+            self._latest_preview = None
             raise JobCancelledError(ev.get("message") or "Job cancelled by user", provider_id=self.provider_id)
 
     def finalize(self):

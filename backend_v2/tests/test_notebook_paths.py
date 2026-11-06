@@ -70,6 +70,7 @@ _EXTERNAL_PATHS = frozenset({
     "/api/v2/llm/catalog",
     "/api/v2/models/catalog",
     "/api/v2/providers/",
+    "/api/settings",
 })
 
 #: Filesystem path prefixes that look like URL paths but are NOT agent routes.

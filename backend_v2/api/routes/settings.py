@@ -416,6 +416,23 @@ def get_settings_schema() -> dict[str, Any]:
                         "availability checks)"
                     ),
                     "default": _default("generator.default_checkpoint")
+                },
+                "preview_method": {
+                    "type": "string",
+                    "description": (
+                        "Latent preview method passed to ComfyUI ('auto' for live progressive "
+                        "preview in job card, 'none' for maximum generation speed)"
+                    ),
+                    "options": ["auto", "none", "taesd"],
+                    "default": _default("generator.preview_method"),
+                },
+                "live_preview": {
+                    "type": "boolean",
+                    "description": (
+                        "Whether live latent preview is enabled. When false, equivalent to "
+                        "preview_method='none' for maximum generation speed."
+                    ),
+                    "default": _default("generator.live_preview"),
                 }
             }
         },

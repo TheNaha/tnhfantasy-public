@@ -23,7 +23,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import JobCard from './JobCard';
 
@@ -104,5 +104,59 @@ describe('JobCard renders both, labelled for what they measure', () => {
         // Only one bar, captioned Workflow, because nothing is sampling yet.
         expect(screen.getByText('Workflow')).toBeInTheDocument();
         expect(screen.queryByText('Nodes')).not.toBeInTheDocument();
+    });
+});
+
+describe('JobCard live latent preview rendering', () => {
+    it('renders live latent preview image when job.preview is present during processing', () => {
+        const dummyB64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+        renderCard(midRunJob({ progress: 50, preview: dummyB64 }));
+
+        const previewContainer = screen.getByTestId('job-preview-container');
+        expect(previewContainer).toBeInTheDocument();
+        const previewImg = screen.getByAltText('Live Latent Preview');
+        expect(previewImg).toBeInTheDocument();
+        expect(previewImg).toHaveAttribute('src', `data:image/jpeg;base64,${dummyB64}`);
+    });
+
+    it('does not render preview container when preview is absent', () => {
+        renderCard(midRunJob({ progress: 50, preview: undefined }));
+        expect(screen.queryByTestId('job-preview-container')).not.toBeInTheDocument();
+    });
+
+    it('renders Clear Preview button on failed job with preview and clears preview on click', () => {
+        const dummyB64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+        renderCard({
+            id: 'failed-job-1',
+            status: 'failed',
+            message: 'Out of memory',
+            preview: dummyB64,
+            created_at: new Date().toISOString(),
+        });
+
+        expect(screen.getByTestId('job-preview-container')).toBeInTheDocument();
+        const clearBtn = screen.getByRole('button', { name: /clear preview for job failed-job-1/i });
+        expect(clearBtn).toBeInTheDocument();
+
+        fireEvent.click(clearBtn);
+        expect(screen.queryByTestId('job-preview-container')).not.toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: /clear preview/i })).not.toBeInTheDocument();
+    });
+
+    it('renders Clear Preview button on cancelled job with preview and clears preview on click', () => {
+        const dummyB64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+        renderCard({
+            id: 'cancelled-job-1',
+            status: 'cancelled',
+            preview: dummyB64,
+            created_at: new Date().toISOString(),
+        });
+
+        expect(screen.getByTestId('job-preview-container')).toBeInTheDocument();
+        const clearBtn = screen.getByRole('button', { name: /clear preview for job cancelled-job-1/i });
+        expect(clearBtn).toBeInTheDocument();
+
+        fireEvent.click(clearBtn);
+        expect(screen.queryByTestId('job-preview-container')).not.toBeInTheDocument();
     });
 });

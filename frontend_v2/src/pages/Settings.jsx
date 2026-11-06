@@ -153,14 +153,29 @@ export default function Settings() {
     // mirrors in step here means any path that writes the category — including
     // the Generator tab's Reset — cannot leave them stale.
     const handleMirroredGeneratorSettings = useCallback((settings) => {
-        if (updateSetting) {
+        if (updateSetting && settings) {
             updateSetting('generator', 'defaultCheckpoint', settings.generator?.default_checkpoint || null);
             updateSetting('generator', 'prompt_shortcuts', settings.generator?.prompt_shortcuts || {});
+            const liveEnabled = settings.generator?.live_preview ?? (settings.generator?.preview_method !== 'none');
+            updateSetting('generator', 'live_preview_enabled', liveEnabled);
+            updateSetting('generator', 'preview_method', settings.generator?.preview_method || (liveEnabled ? 'auto' : 'none'));
         }
     }, [updateSetting]);
 
-    const handleUpdateSetting = (category, key, value) => {
+    const handleUpdateSetting = async (category, key, value) => {
         updateSetting(category, key, value);
+        if (category === 'generator' && (key === 'live_preview' || key === 'preview_method' || key === 'live_preview_enabled')) {
+            try {
+                const patch = key === 'live_preview_enabled'
+                    ? { live_preview: Boolean(value), preview_method: value ? 'auto' : 'none' }
+                    : { [key]: value };
+                await settingsApi.update({ generator: patch });
+                await queryClient.invalidateQueries({ queryKey: SETTINGS_CONFIG_QUERY_KEY });
+            } catch (err) {
+                toast.error(`Failed to update server setting: ${err?.message || err}`);
+                return;
+            }
+        }
         toast.success('Setting updated!');
     };
 
@@ -398,6 +413,15 @@ const BACKEND_GROUPS = [
             { key: 'thumbnail_quality', label: 'Thumbnail Quality', hint: 'Encoder quality for generated thumbnails' },
             { key: 'output_date_hierarchy', label: 'Date Folder Hierarchy', hint: 'Write outputs into YYYY/MM/DD folders instead of one flat directory' },
             { key: 'embed_metadata_in_png', label: 'Embed Generation Metadata', hint: 'Write generation parameters into the output file' },
+        ],
+    },
+    {
+        section: 'generator',
+        title: 'Image Generator Defaults',
+        description: 'Server defaults and live preview performance policy for image generation',
+        fields: [
+            { key: 'preview_method', label: 'Preview Method', hint: "'auto' for live progressive preview in job card, 'none' for maximum generation speed" },
+            { key: 'live_preview', label: 'Live Latent Preview Enabled', hint: 'Stream intermediate generation previews to the gallery' },
         ],
     },
     {
@@ -1226,7 +1250,7 @@ function ServerCheckpointSelect({ installed, loading, onMirror }) {
     };
 
     return (
-        <>
+        <div className="w-full lg:max-w-md flex flex-col items-start lg:items-end">
             <select
                 value={serverValue}
                 onChange={(e) => handleChange(e.target.value)}
@@ -1244,14 +1268,80 @@ function ServerCheckpointSelect({ installed, loading, onMirror }) {
                 ))}
             </select>
             {notInstalled && (
-                <p className="mt-2 text-xs text-amber-300">
+                <p className="mt-2 text-xs text-amber-300 text-left lg:text-right max-w-sm">
                     The configured checkpoint is not among the installed models, so generations fall back to it and will fail
                     until it is installed or a different one is selected.
                 </p>
             )}
-        </>
+        </div>
     );
 }
+
+function ServerLivePreviewToggle({ onUpdate, localSetting }) {
+    const queryClient = useQueryClient();
+    const { data: configResponse, isLoading } = useSettingsConfig();
+    const [saving, setSaving] = useState(false);
+
+    const gen = configResponse?.settings?.generator || {};
+    const previewMethod = gen.preview_method ?? (gen.live_preview === false ? 'none' : 'auto');
+    const isLivePreview = Boolean(localSetting ?? (previewMethod !== 'none'));
+
+    const handleToggle = async (e) => {
+        const nextEnabled = e.target.checked;
+        const nextMethod = nextEnabled ? 'auto' : 'none';
+        setSaving(true);
+        if (onUpdate) {
+            onUpdate('live_preview_enabled', nextEnabled);
+        }
+        try {
+            await settingsApi.update({
+                generator: {
+                    preview_method: nextMethod,
+                    live_preview: nextEnabled,
+                },
+            });
+            await queryClient.invalidateQueries({ queryKey: SETTINGS_CONFIG_QUERY_KEY });
+            toast.success(
+                nextEnabled
+                    ? 'Live Latent Preview enabled (workers will restart ComfyUI with preview flags)'
+                    : 'Max Speed enabled (workers will restart ComfyUI with --preview-method none)'
+            );
+        } catch (error) {
+            toast.error(error?.message ? `Failed: ${error.message}` : 'Failed to update preview setting');
+        } finally {
+            setSaving(false);
+        }
+    };
+
+
+    if (isLoading) {
+        return <div className="text-xs text-gray-500">Loading preview setting...</div>;
+    }
+
+    return (
+        <div className="space-y-2">
+            <label className="flex items-center gap-4 cursor-pointer group">
+                <div className="relative">
+                    <input
+                        type="checkbox"
+                        checked={isLivePreview}
+                        disabled={saving}
+                        onChange={handleToggle}
+                        className="sr-only peer"
+                    />
+                    <div className="w-11 h-6 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-500"></div>
+                </div>
+                <span className="text-sm font-bold uppercase tracking-widest text-gray-400 group-hover:text-white transition-colors">
+                    {saving ? 'Updating...' : isLivePreview ? 'Live Latent Preview (TAESD)' : 'Max Speed (Preview Disabled)'}
+                </span>
+            </label>
+            <p className="text-xs text-gray-500 max-w-xl">
+                When enabled, intermediate latent frames stream into the gallery job card during sampling. When disabled, latent decoding overhead is bypassed for maximum generation speed. Remote workers will automatically sync this setting and restart ComfyUI with matching launch flags.
+            </p>
+        </div>
+    );
+}
+
 
 // Generator Settings Component
 function GeneratorSettings({ settings, onUpdate, onReset, onMirrorDefaultCheckpoint }) {
@@ -1292,6 +1382,13 @@ function GeneratorSettings({ settings, onUpdate, onReset, onMirrorDefaultCheckpo
                 >
                     <ServerCheckpointSelect installed={checkpoints} loading={loading} onMirror={onMirrorDefaultCheckpoint} />
                 </SettingGroup>
+                <SettingGroup
+                    title="Live Latent Preview vs Max Speed"
+                    description="Toggle progressive latent preview rendering during generation or disable for peak generation speed"
+                >
+                    <ServerLivePreviewToggle onUpdate={onUpdate} localSetting={settings.live_preview_enabled} />
+                </SettingGroup>
+
 
                 <SettingGroup title="Auto-Randomize Seed" description="Automatically randomize seed after each generation">
                     <label className="flex items-center gap-4 cursor-pointer group">
@@ -1389,7 +1486,7 @@ function SettingGroup({ title, description, children, action }) {
                 </div>
                 <p className="text-sm font-medium text-gray-400 mt-1">{description}</p>
             </div>
-            <div className="lg:shrink-0 min-w-0 max-w-full w-full lg:w-auto">
+            <div className="lg:shrink-0 min-w-0 max-w-full w-full lg:w-auto lg:max-w-md">
                 {children}
             </div>
         </div>

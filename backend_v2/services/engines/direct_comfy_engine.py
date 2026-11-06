@@ -11,6 +11,7 @@ import copy
 import json
 import os
 import re
+import struct
 import time
 import unicodedata
 import urllib.parse
@@ -1448,7 +1449,7 @@ class DirectComfyEngine(InProcessEngine):
                 # Last node seen: the stall message names it, as the old
                 # workflow_executor did, so a hung graph is diagnosable.
                 last_node: Optional[str] = None
-
+                last_preview_time: float = 0.0
                 # Listen to WebSocket messages until execution completes or times out
                 async with asyncio.timeout(timeout):
                     while True:
@@ -1485,6 +1486,27 @@ class DirectComfyEngine(InProcessEngine):
                                 },
                             }
                             return
+
+                        if isinstance(msg, bytes):
+                            # ComfyUI binary WebSocket protocol:
+                            # 8-byte header: struct.unpack(">II", msg[:8]) -> (event_type, image_type)
+                            # event_type == 1: PREVIEW_IMAGE (JPEG/PNG)
+                            if len(msg) > 8:
+                                try:
+                                    event_type, _img_type = struct.unpack(">II", msg[:8])
+                                    if event_type == 1:
+                                        now = time.monotonic()
+                                        if now - last_preview_time >= 0.5:
+                                            last_preview_time = now
+                                            preview_b64 = base64.b64encode(msg[8:]).decode("ascii")
+                                            yield {
+                                                "event": "preview",
+                                                "job_id": job_id,
+                                                "preview": preview_b64,
+                                            }
+                                except Exception as exc:
+                                    logger.debug("direct_comfy_preview_frame_error", error=str(exc))
+                            continue
 
                         if not isinstance(msg, str):
                             continue

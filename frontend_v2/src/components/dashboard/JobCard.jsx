@@ -1,5 +1,6 @@
-import { memo, useCallback, useMemo } from 'react';
-import { Loader2, Server, Cpu, Layers, Box, Clock, X, Send, Zap, RefreshCw } from 'lucide-react';
+import { memo, useCallback, useMemo, useState } from 'react';
+import { Loader2, Server, Cpu, Layers, Box, Clock, X, Send, Zap, RefreshCw, EyeOff } from 'lucide-react';
+import { useQueryClient } from '@tanstack/react-query';
 import { getProviderDisplayName } from '../../utils/providerUtils';
 import { formatElapsed } from '../../utils/dateTime';
 import { useJobStatus } from '../../hooks/useJobStatus';
@@ -56,6 +57,21 @@ const ElapsedTime = memo(function ElapsedTime({ createdAt, isProcessing }) {
 const JobCard = memo(function JobCard({ job: initialJob, onClick, onDelete }) {
     const { data: realtimeJob } = useJobStatus(initialJob.id);
     const job = useMemo(() => realtimeJob ? { ...initialJob, ...realtimeJob } : initialJob, [initialJob, realtimeJob]);
+    const queryClient = useQueryClient();
+    const [previewCleared, setPreviewCleared] = useState(false);
+    const hasPreview = Boolean(job.preview && !previewCleared);
+
+    const handleClearPreview = useCallback((e) => {
+        e.stopPropagation();
+        setPreviewCleared(true);
+        if (job.id) {
+            queryClient.setQueryData(['jobs', job.id], (old) => old ? { ...old, preview: null } : old);
+            queryClient.setQueryData(['jobs', 'active'], (old = []) => {
+                if (!Array.isArray(old)) return old;
+                return old.map(j => j.id === job.id ? { ...j, preview: null } : j);
+            });
+        }
+    }, [job.id, queryClient]);
 
     const status = job.status || JOB_STATUS.PENDING;
     const phase = useMemo(() => getJobPhase(status), [status]);
@@ -117,6 +133,19 @@ const JobCard = memo(function JobCard({ job: initialJob, onClick, onDelete }) {
             onKeyDown={handleKeyDown}
             className="aspect-square bg-gray-800 rounded-xl overflow-hidden border border-gray-700 flex flex-col relative cursor-pointer hover:border-gray-500 transition-all card-elevated focus-visible:ring-2 focus-visible:ring-blue-500 outline-none group"
         >
+            {/* Live Latent Preview Background */}
+            {hasPreview && (isProcessing || isError || isCancelled) && (
+                <div className="absolute inset-0 z-0 overflow-hidden pointer-events-none" data-testid="job-preview-container">
+                    <img
+                        src={`data:image/jpeg;base64,${job.preview}`}
+                        alt="Live Latent Preview"
+                        className={`w-full h-full object-cover transition-opacity duration-300 ${
+                            isError ? 'opacity-25 grayscale' : isCancelled ? 'opacity-20 grayscale' : 'opacity-60'
+                        }`}
+                    />
+                    <div className="absolute inset-0 bg-gray-950/50 backdrop-blur-[1px]" />
+                </div>
+            )}
             {/* Top Row: Provider + Status */}
             <div className="absolute top-0 left-0 right-0 flex justify-between items-start p-1.5 sm:p-2 z-10">
                 {/* Provider Badge */}
@@ -147,7 +176,7 @@ const JobCard = memo(function JobCard({ job: initialJob, onClick, onDelete }) {
             </div>
 
             {/* Main Content Area */}
-            <div className="flex-1 flex flex-col items-center justify-center p-2 pt-10 sm:p-4 sm:pt-10 text-center">
+            <div className="flex-1 flex flex-col items-center justify-center p-2 pt-10 sm:p-4 sm:pt-10 text-center relative z-10">
                 {isProcessing && !isPending ? (
                     <>
                         <PhaseIcon className={`animate-pulse ${phase.color} mb-1`} size={22} />
@@ -290,6 +319,17 @@ const JobCard = memo(function JobCard({ job: initialJob, onClick, onDelete }) {
                             <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
                         </div>
                         <p className="text-xs text-red-400 break-words">{job.message || job.error || "Failed"}</p>
+                        {hasPreview && (
+                            <button
+                                onClick={handleClearPreview}
+                                className="mt-2.5 px-2.5 py-1 text-xs bg-red-950/60 hover:bg-red-900/80 border border-red-700/50 text-red-200 rounded-md transition-colors flex items-center gap-1.5 backdrop-blur-sm cursor-pointer pointer-events-auto"
+                                title="Clear stalled latent preview"
+                                aria-label={`Clear preview for job ${job.id || ''}`}
+                            >
+                                <EyeOff size={12} />
+                                Clear Preview
+                            </button>
+                        )}
                     </>
                 ) : isCancelled ? (
                     /* Cancelled State */
@@ -298,6 +338,17 @@ const JobCard = memo(function JobCard({ job: initialJob, onClick, onDelete }) {
                              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"></line></svg>
                         </div>
                         <p className="text-sm font-medium text-gray-400">Cancelled</p>
+                        {hasPreview && (
+                            <button
+                                onClick={handleClearPreview}
+                                className="mt-2.5 px-2.5 py-1 text-xs bg-gray-800/80 hover:bg-gray-700/80 border border-gray-600/50 text-gray-300 rounded-md transition-colors flex items-center gap-1.5 backdrop-blur-sm cursor-pointer pointer-events-auto"
+                                title="Clear stalled latent preview"
+                                aria-label={`Clear preview for job ${job.id || ''}`}
+                            >
+                                <EyeOff size={12} />
+                                Clear Preview
+                            </button>
+                        )}
                     </>
                 ) : (
                     /* Pending/Queued State */
@@ -336,7 +387,7 @@ const JobCard = memo(function JobCard({ job: initialJob, onClick, onDelete }) {
 
             {/* Bottom Row: Prompt Preview + Elapsed Time */}
             {promptPreview && (
-                <div className="absolute bottom-0 left-0 right-0 p-1.5 sm:p-2 bg-gradient-to-t from-gray-900/90 to-transparent">
+                <div className="absolute bottom-0 left-0 right-0 p-1.5 sm:p-2 bg-gradient-to-t from-gray-900/90 to-transparent z-10">
                     <div className="flex items-center justify-between gap-2">
                         <p className="text-xs text-gray-500 truncate flex-1" title={prompt}>
                             {promptPreview}

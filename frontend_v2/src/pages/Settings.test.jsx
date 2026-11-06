@@ -11,6 +11,7 @@ import Settings from './Settings';
 const mockApi = vi.hoisted(() => ({
     get: vi.fn(),
     put: vi.fn(),
+    update: vi.fn(),
     getSchema: vi.fn(),
     reset: vi.fn(),
     getSystemPrompts: vi.fn(),
@@ -119,6 +120,7 @@ beforeEach(() => {
     mockApi.getBranding.mockResolvedValue({ status: 'success' });
     mockApi.getFavorites.mockResolvedValue({ status: 'success', favorites: [] });
     mockApi.put.mockResolvedValue({ status: 'success' });
+    mockApi.update.mockResolvedValue({ status: 'success' });
     mockApi.reset.mockResolvedValue({ status: 'success' });
 });
 
@@ -215,5 +217,31 @@ describe('Settings - AI / LLM tab', () => {
         expect(screen.getByText('Model Cluster')).toBeInTheDocument();
         expect(screen.getByText('Inference & Runtime')).toBeInTheDocument();
         expect(screen.getByText('Simulator')).toBeInTheDocument();
+    });
+});
+
+describe('Settings - Generator live preview toggle', () => {
+    it('updates backend generator settings when live latent preview is toggled', async () => {
+        renderSettings();
+        const genTab = await screen.findByRole('button', { name: /generator/i });
+        fireEvent.click(genTab);
+
+        expect(await screen.findByText(/Live Latent Preview vs Max Speed/i)).toBeInTheDocument();
+        const previewLabel = await screen.findByText(/Live Latent Preview \(TAESD\)/i);
+        expect(previewLabel).toBeInTheDocument();
+        const checkbox = previewLabel.closest('label').querySelector('input[type="checkbox"]');
+        expect(checkbox).toBeChecked();
+
+        fireEvent.click(checkbox);
+        await waitFor(() => {
+            expect(mockApi.update).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    generator: expect.objectContaining({
+                        preview_method: 'none',
+                        live_preview: false,
+                    }),
+                })
+            );
+        });
     });
 });

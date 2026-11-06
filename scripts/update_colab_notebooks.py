@@ -141,6 +141,11 @@ try:
         ckpt_cnt = sum(len(files) for _, _, files in os.walk(ckpt_dir)) if os.path.exists(ckpt_dir) else 0
         lora_cnt = sum(len(files) for _, _, files in os.walk(lora_dir)) if os.path.exists(lora_dir) else 0
         print(f"   • Google Drive ComfyUI Library: {gdrive_comfy} (Found {ckpt_cnt} checkpoints, {lora_cnt} LoRAs)")
+        wheel_cache_path = os.path.join(PERSISTENT_ROOT, "wheel_cache")
+        if os.path.exists(wheel_cache_path):
+            whl_files = [f for f in os.listdir(wheel_cache_path) if f.endswith(".whl")]
+            whl_mb = sum(os.path.getsize(os.path.join(wheel_cache_path, f)) for f in whl_files) / (1024**2) if whl_files else 0.0
+            print(f"   • Persistent Wheel Cache: {len(whl_files)} wheels ({whl_mb:.1f} MB in {wheel_cache_path})")
 except Exception as e:
     print(f"   ⚠️ Telemetry notice: {e}")
 print("=" * 65 + "\\n")
@@ -555,13 +560,52 @@ def install_python_packages(req_files=None, packages=None):
         except Exception:
             sanitized_reqs.append(r)
 
+    wheel_cache_dir = f"{gdrive_root}/wheel_cache"
+    os.makedirs(wheel_cache_dir, exist_ok=True)
+    def _monitor_and_prune_wheel_cache(max_gb: float = 3.5):
+        if not os.path.exists(wheel_cache_dir):
+            return
+        try:
+            whls = []
+            total_b = 0
+            for it in os.scandir(wheel_cache_dir):
+                if it.is_file() and it.name.endswith(".whl"):
+                    st = it.stat()
+                    total_b += st.st_size
+                    whls.append((it.path, it.name, st.st_size, st.st_mtime))
+            count = len(whls)
+            total_mb = total_b / (1024 * 1024)
+            print(f"📦 Persistent Wheel Cache: {count} wheels ({total_mb:.1f} MB) in {wheel_cache_dir}")
+            max_bytes = int(max_gb * 1024 * 1024 * 1024)
+            if total_b > max_bytes:
+                print(f"🧹 Wheel cache exceeds {max_gb:.1f} GB ({total_mb/1024:.2f} GB). Pruning oldest wheels...")
+                whls.sort(key=lambda x: x[3])
+                pruned_b = 0
+                pruned_cnt = 0
+                target_b = int(max_gb * 0.75 * 1024 * 1024 * 1024)
+                for path, name, sz, _ in whls:
+                    if total_b - pruned_b <= target_b:
+                        break
+                    try:
+                        os.remove(path)
+                        pruned_b += sz
+                        pruned_cnt += 1
+                    except Exception:
+                        pass
+                print(f"✅ Pruned {pruned_cnt} stale wheels ({pruned_b / (1024*1024):.1f} MB freed). Current: {(total_b - pruned_b)/(1024*1024):.1f} MB.")
+        except Exception as exc:
+            print(f"⚠️ Notice: Wheel cache monitor error: {exc}")
+
+    _monitor_and_prune_wheel_cache()
+
     if USE_UV:
+        wheel_opt = ["--find-links", wheel_cache_dir]
         if isinstance(USE_UV, str) and " -m " in USE_UV:
-            uv_base = [sys.executable, "-m", "uv", "pip", "install", "--system", "--break-system-packages", "--index-strategy", "unsafe-best-match", "--extra-index-url", "https://download.pytorch.org/whl/cu124"]
+            uv_base = [sys.executable, "-m", "uv", "pip", "install", "--system", "--break-system-packages", "--index-strategy", "unsafe-best-match", *wheel_opt, "--extra-index-url", "https://download.pytorch.org/whl/cu124"]
         elif isinstance(USE_UV, str):
-            uv_base = [USE_UV, "pip", "install", "--system", "--break-system-packages", "--index-strategy", "unsafe-best-match", "--extra-index-url", "https://download.pytorch.org/whl/cu124"]
+            uv_base = [USE_UV, "pip", "install", "--system", "--break-system-packages", "--index-strategy", "unsafe-best-match", *wheel_opt, "--extra-index-url", "https://download.pytorch.org/whl/cu124"]
         else:
-            uv_base = ["uv", "pip", "install", "--system", "--break-system-packages", "--index-strategy", "unsafe-best-match", "--extra-index-url", "https://download.pytorch.org/whl/cu124"]
+            uv_base = ["uv", "pip", "install", "--system", "--break-system-packages", "--index-strategy", "unsafe-best-match", *wheel_opt, "--extra-index-url", "https://download.pytorch.org/whl/cu124"]
     else:
         uv_base = None
 
@@ -646,7 +690,7 @@ def install_python_packages(req_files=None, packages=None):
 
     # Fallback to standard pip in a single batched invocation
     print("⏳ Running pip fallback for remaining requirements...")
-    pip_cmd = [sys.executable, "-m", "pip", "install", "--break-system-packages", "--no-warn-script-location"]
+    pip_cmd = [sys.executable, "-m", "pip", "install", "--break-system-packages", "--no-warn-script-location", "--find-links", wheel_cache_dir]
     for r in sanitized_reqs:
         pip_cmd.extend(["-r", r])
     pip_cmd.extend(packages)
@@ -655,8 +699,18 @@ def install_python_packages(req_files=None, packages=None):
     except Exception as e:
         print(f"⚠️ pip installation error: {e}")
 
-    _install_git_packages()
-
+    try:
+        if packages:
+            subprocess.Popen([
+                sys.executable, "-m", "pip", "wheel",
+                "-w", wheel_cache_dir,
+                "--find-links", wheel_cache_dir,
+                "--no-deps",
+                *packages
+            ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            _monitor_and_prune_wheel_cache()
+    except Exception:
+        pass
 # 1. Install Networking Tool (NetBird or Cloudflared)
 
 if tunnel_key == "netbird":
@@ -747,18 +801,25 @@ elif mode_key in ("model", "hybrid", "tts"):
             safe_symlink(vol_sub, f"{comfy_dir}/models/{sub}")
     elif os.path.exists(gdrive_path):
         print(f"🎨 Found existing ComfyUI directory in Google Drive: {gdrive_path}")
-        if os.path.exists(os.path.join(gdrive_path, "main.py")):
-            safe_symlink(gdrive_path, comfy_dir)
-            print("🔗 Linked Google Drive ComfyUI to /content/ComfyUI")
-        elif os.path.exists(os.path.join(gdrive_path, "models")):
-            if not os.path.exists(comfy_dir) and not os.path.islink(comfy_dir):
-                print("📥 Cloning ComfyUI core...")
-                subprocess.run(["git", "clone", "--depth", "1", "https://github.com/comfyanonymous/ComfyUI.git", comfy_dir], check=True)
-            safe_symlink(os.path.join(gdrive_path, "models"), f"{comfy_dir}/models")
-            print("🔗 Linked Google Drive models directory!")
+        if os.path.islink(comfy_dir):
+            try:
+                os.unlink(comfy_dir)
+            except Exception:
+                pass
+        if not os.path.exists(comfy_dir):
+            print("📥 Cloning fresh ComfyUI core to local NVMe scratch...")
+            subprocess.run(["git", "clone", "--depth", "1", "https://github.com/comfyanonymous/ComfyUI.git", comfy_dir], check=True)
+        gdrive_models = os.path.join(gdrive_path, "models") if os.path.exists(os.path.join(gdrive_path, "models")) else gdrive_path
+        os.makedirs(gdrive_models, exist_ok=True)
+        safe_symlink(gdrive_models, f"{comfy_dir}/models")
+        print("🔗 Linked Google Drive models directory to local ComfyUI/models")
+        gdrive_output = os.path.join(gdrive_path, "output")
+        os.makedirs(gdrive_output, exist_ok=True)
+        safe_symlink(gdrive_output, f"{comfy_dir}/output")
+        print("🔗 Linked Google Drive output directory to local ComfyUI/output")
     else:
         if not os.path.exists(comfy_dir) and not os.path.islink(comfy_dir):
-            print("📥 Cloning fresh ComfyUI core...")
+            print("📥 Cloning fresh ComfyUI core to local scratch...")
             subprocess.run(["git", "clone", "--depth", "1", "https://github.com/comfyanonymous/ComfyUI.git", comfy_dir], check=True)
     
     # Collect ComfyUI requirements
@@ -2563,7 +2624,39 @@ def start_remote_agent():
     with open(log_agent, "w") as out:
         worker_procs["agent"] = subprocess.Popen([sys.executable, f"{agent_dir}/server.py"], cwd=agent_dir, env=env_agent, stdout=out, stderr=out)
 
-def launch_comfyui_track():
+comfy_active_preview_method = "auto"
+
+def fetch_backend_preview_method():
+    backend_val = (BACKEND_URL.strip() if "BACKEND_URL" in locals() and BACKEND_URL else "").rstrip("/")
+    if not backend_val:
+        return None
+    try:
+        req = urllib.request.Request(f"{backend_val}/api/settings", headers={"Accept": "application/json"})
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            gen_cfg = data.get("settings", {}).get("generator", {})
+            if "preview_method" in gen_cfg:
+                val = str(gen_cfg["preview_method"]).lower().strip()
+                if val in ("auto", "none", "taesd"):
+                    return val
+            if gen_cfg.get("live_preview") is False:
+                return "none"
+            if gen_cfg.get("live_preview") is True:
+                return "auto"
+            return "auto"
+    except Exception:
+        return None
+
+def launch_comfyui_track(preview_method=None):
+    global comfy_active_preview_method
+    if preview_method:
+        comfy_active_preview_method = preview_method
+    else:
+        fetched = fetch_backend_preview_method()
+        if fetched:
+            comfy_active_preview_method = fetched
+            print(f"📡 Synced preview setting from backend: {comfy_active_preview_method}")
+
     if active_ckpt_path:
         print(f"⚡ [ComfyUI Track] Pre-warming {os.path.basename(active_ckpt_path)} into RAM cache (/dev/shm)...")
         try:
@@ -2571,13 +2664,21 @@ def launch_comfyui_track():
             print("✅ [ComfyUI Track] Checkpoint cached in RAM!")
         except Exception as exc:
             print(f"⚠️ [ComfyUI Track] Pre-warming failed ({exc}); will stream from storage directly.")
-    print(f"🚀 [ComfyUI Track] Starting ComfyUI server on :{comfy_port}...")
+    print(f"🚀 [ComfyUI Track] Starting ComfyUI server on :{comfy_port} (--preview-method {comfy_active_preview_method})...")
     with open(log_comfy, "w") as out:
         env_comfy = dict(os.environ, PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True", PYTHONUNBUFFERED="1")
         cudnn_paths = glob.glob("/usr/local/lib/python*/dist-packages/nvidia/cudnn/lib") + glob.glob(f"{sys.prefix}/lib/python*/dist-packages/nvidia/cudnn/lib")
         if cudnn_paths:
             env_comfy["LD_LIBRARY_PATH"] = ":".join(cudnn_paths) + ":" + os.environ.get("LD_LIBRARY_PATH", "")
-        worker_procs["comfy"] = subprocess.Popen([sys.executable, f"{comfy_dir}/main.py", "--listen", "127.0.0.1", "--port", str(comfy_port), "--cuda-device", str(comfy_gpu_device)], env=env_comfy, stdout=out, stderr=out)
+        comfy_cmd = [
+            sys.executable, f"{comfy_dir}/main.py",
+            "--listen", "127.0.0.1",
+            "--port", str(comfy_port),
+            "--cuda-device", str(comfy_gpu_device),
+            "--preview-method", comfy_active_preview_method,
+            "--cuda-malloc",
+        ]
+        worker_procs["comfy"] = subprocess.Popen(comfy_cmd, env=env_comfy, stdout=out, stderr=out)
 
 def launch_llm_track():
     src_expected = resolved_weights.get(active_rp, "")
@@ -3219,6 +3320,7 @@ TAG_COLORS = {
 
 total_lines = 0
 last_watchdog = 0.0
+last_preview_sync = 0.0
 
 try:
     while True:
@@ -3282,6 +3384,31 @@ try:
                     pass
                 with open(log_llm, "a", buffering=1) as out:
                     worker_procs["llm"] = subprocess.Popen(spawn_cmd, env=env_llm, stdout=out, stderr=out)
+        # Check backend preview setting every 15s and restart ComfyUI if changed
+        if mode_key in ("hybrid", "model") and (now - last_preview_sync > 15.0):
+            last_preview_sync = now
+            backend_method = fetch_backend_preview_method()
+            if backend_method and backend_method != comfy_active_preview_method:
+                print(f"\\n🔄 [ComfyUI Track] Preview configuration changed on backend: {comfy_active_preview_method} -> {backend_method}. Restarting ComfyUI...", flush=True)
+                proc_comfy = worker_procs.get("comfy")
+                if proc_comfy and proc_comfy.poll() is None:
+                    try:
+                        req_free = urllib.request.Request(
+                            f"http://127.0.0.1:{comfy_port}/free",
+                            data=json.dumps({"unload_models": True, "free_memory": True}).encode("utf-8"),
+                            headers={"Content-Type": "application/json"}
+                        )
+                        with urllib.request.urlopen(req_free, timeout=2) as _:
+                            pass
+                    except Exception:
+                        pass
+                    proc_comfy.terminate()
+                    try:
+                        proc_comfy.wait(timeout=5)
+                    except Exception:
+                        proc_comfy.kill()
+                launch_comfyui_track(preview_method=backend_method)
+                print(f"✅ [ComfyUI Track] Restarted with --preview-method {backend_method}\\n", flush=True)
 
         if not activity:
             time.sleep(0.3)

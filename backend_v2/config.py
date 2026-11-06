@@ -196,7 +196,9 @@ DEFAULT_CONFIG = {
         # config.py is the lowest-level module (infrastructure.database imports
         # it), so importing anything from `core` at module scope is circular.
         # core.workflow_builder imports this constant instead.
-        "default_checkpoint": DEFAULT_CHECKPOINT
+        "default_checkpoint": DEFAULT_CHECKPOINT,
+        "preview_method": "auto",
+        "live_preview": True
     },
     "ai": {
         "maxContextTokens": 4096,
@@ -769,6 +771,17 @@ def resolve_default_checkpoint() -> str:
 
         return DEFAULT_CHECKPOINT
     return str(configured)
+def get_generator_preview_method() -> str:
+    """Get generator preview method ('auto' for live preview, 'none' for max speed)."""
+    try:
+        cfg = (get_config() or {}).get("generator", {})
+    except Exception:
+        return "auto"
+    if "preview_method" in cfg and cfg["preview_method"]:
+        return str(cfg["preview_method"]).lower()
+    if cfg.get("live_preview") is False:
+        return "none"
+    return "auto"
 
 
 def _deep_merge(base: dict, updates: dict) -> dict:
@@ -858,7 +871,7 @@ SECTION_LEAF_ALLOW_LISTS: dict[str, frozenset[str]] = {
         "idleSimEnabled",
         "idleSimIntervalSeconds",
     }),
-    "generator": frozenset({"default_checkpoint"}),
+    "generator": frozenset({"default_checkpoint", "preview_method", "live_preview"}),
     "system_prompts": SYSTEM_PROMPT_KEYS,
     # Nested per-task-type block merged over the top-level job settings by
     # `_job_config`; not a top-level DEFAULT_CONFIG section.
@@ -1110,6 +1123,12 @@ def _validate_config(config: dict[str, Any]) -> None:
         generator = _section_body(config, "generator")
         _reject_unknown_leaves("generator", generator)
         _check_str("generator", "default_checkpoint", generator.get("default_checkpoint"))
+        if "preview_method" in generator and generator["preview_method"] is not None:
+            _check_str("generator", "preview_method", generator.get("preview_method"))
+            if generator["preview_method"] not in ("auto", "none", "taesd"):
+                raise ValueError("generator.preview_method must be one of: 'auto', 'none', 'taesd'")
+        if "live_preview" in generator and generator["live_preview"] is not None:
+            _check_bool("generator", "live_preview", generator.get("live_preview"))
 
     if "system_prompts" in config:
         prompts = _section_body(config, "system_prompts")
