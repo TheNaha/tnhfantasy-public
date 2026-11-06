@@ -5,7 +5,7 @@ import pytest
 from sqlmodel import Session, SQLModel, create_engine
 from sqlmodel.pool import StaticPool
 
-from core.entities import ProviderVersionStatus
+from core.entities import ModelV2, ModelVersion, ProviderVersionStatus
 from infrastructure.repositories.model_repo_v2 import (
     ModelRepositoryV2,
     parse_civitai_datetime,
@@ -423,3 +423,29 @@ class TestModelRepositoryV2UnicodeNormalization:
         path_map = repo.get_file_ids_by_storage_paths([f"models/loras/{nfd_name}"])
         assert path_map.get(f"models/loras/{nfd_name}") == file.id
         assert path_map.get(f"models/loras/{nfc_name}") == file.id
+
+class TestModelRepositoryV2BaseModelMatching:
+    def test_base_model_ilike_matches_family_variants(self, repo, session):
+        m_sdxl = ModelV2(name="Animagine", type="Checkpoint", directory="checkpoints")
+        m_pony = ModelV2(name="PonyModel", type="LORA", directory="loras")
+        m_flux = ModelV2(name="FluxModel", type="Checkpoint", directory="checkpoints")
+        session.add_all([m_sdxl, m_pony, m_flux])
+        session.flush()
+
+        v_sdxl = ModelVersion(model_id=m_sdxl.id, name="v3.1", base_model="SDXL 1.0", is_default=True)
+        v_pony = ModelVersion(model_id=m_pony.id, name="v7", base_model="Pony V7", is_default=True)
+        v_flux = ModelVersion(model_id=m_flux.id, name="dev", base_model="Flux.1 D", is_default=True)
+        session.add_all([v_sdxl, v_pony, v_flux])
+        session.commit()
+
+        sdxl_results = repo.get_models_by_directory("checkpoints", base_model="SDXL")
+        assert any(m.id == m_sdxl.id for m in sdxl_results)
+
+        pony_results = repo.get_models_by_directory("loras", base_model="Pony")
+        assert any(m.id == m_pony.id for m in pony_results)
+
+        flux_results = repo.get_models_by_directory("checkpoints", base_model="Flux")
+        assert any(m.id == m_flux.id for m in flux_results)
+
+        sdxl_10_results = repo.get_models_by_directory("checkpoints", base_model="SDXL 1.0")
+        assert any(m.id == m_sdxl.id for m in sdxl_10_results)

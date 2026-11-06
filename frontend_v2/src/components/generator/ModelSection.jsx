@@ -1,7 +1,7 @@
 import { memo, useState, useEffect } from 'react';
 import { Settings2, Plus, Trash2, ChevronDown, Sparkles, Info, ImageIcon, Search, X } from 'lucide-react';
 import ModelSelector from '../../components/ModelSelector';
-import { isFluxModel, isAuraFlowModel, isPonyModel, isUnetModel } from '../../utils/modelType';
+import { isFluxModel, isAuraFlowModel, isPonyModel, isUnetModel, areModelsCompatible } from '../../utils/modelType';
 import { formatBytes } from '../../utils/bytes';
 import {
     getShortEmbeddingName,
@@ -529,20 +529,15 @@ Click to insert “${token}” into ${isActive ? "the prompt (already added)" : 
                                                     <span className="text-2xs text-gray-500">{lora.base_model}</span>
                                                 )}
                                                 {(() => {
-                                                    const ckptBase = selectedCheckpoint?.base_model || selectedCheckpoint?.baseModel || (isFluxModel(selectedCheckpoint) ? 'Flux' : (isPonyModel(selectedCheckpoint) ? 'Pony' : null));
+                                                    const ckptBase = selectedCheckpoint?.base_model || selectedCheckpoint?.baseModel;
                                                     const loraBase = lora.base_model || lora.baseModel;
                                                     if (!ckptBase || !loraBase) return null;
-                                                    const norm = (s) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
-                                                    const c = norm(ckptBase);
-                                                    const l = norm(loraBase);
-                                                    const isSdxlFam = (s) => s.includes('sdxl') || s.includes('pony') || s.includes('illustrious') || s.includes('noob');
-                                                    if (isSdxlFam(c) && isSdxlFam(l)) return null;
-                                                    if (c === l) return null;
+                                                    if (areModelsCompatible(selectedCheckpoint, lora)) return null;
 
                                                     return (
                                                         <span
                                                             className="text-3xs bg-amber-950/60 text-amber-300 border border-amber-800/80 px-1 py-0.2 rounded font-medium inline-flex items-center gap-0.5"
-                                                            title={`Architecture mismatch: LoRA is ${loraBase}, but checkpoint is ${ckptBase}`}
+                                                            title={`Architecture mismatch: LoRA was trained for ${loraBase}, but checkpoint is ${ckptBase}. It may produce unexpected results.`}
                                                         >
                                                             ⚠️ {loraBase} on {ckptBase}
                                                         </span>
@@ -701,6 +696,7 @@ Click to insert “${token}” into ${isActive ? "the prompt (already added)" : 
                             showAvailabilityBadge={true}
                             providers={providers}
                             providersLoading={providersLoading}
+                            activeCheckpoint={selectedCheckpoint}
                         />
                     )}
                 </div>

@@ -1,5 +1,6 @@
-import { Search, X } from 'lucide-react';
+import { Sparkles, Search, X } from 'lucide-react';
 import ModelTagFilter from './ModelTagFilter';
+import { getModelFamily } from '../../utils/modelType';
 
 export default function ModelFilterBar({
   search,
@@ -19,6 +20,7 @@ export default function ModelFilterBar({
   onClearFilters,
   tagsError,
   onRetryTags,
+  activeCheckpoint = null,
 }) {
   return (
     <>
@@ -112,15 +114,44 @@ export default function ModelFilterBar({
           <option value="all">All Base Models</option>
           <option value="SD 1.5">SD 1.5</option>
           <option value="SDXL 1.0">SDXL</option>
-          <option value="SD 3">SD 3</option>
           <option value="Pony">Pony</option>
-          {/* Without this the option, Illustrious models classified correctly
-              but could not be filtered at all — 98 of 200 LoRAs in the live
-              data carry it. The vocabulary already existed in
-              useCivitaiSearch's fallback list; only this hardcoded dropdown
-              was missing it. */}
           <option value="Illustrious">Illustrious</option>
+          <option value="NoobAI">NoobAI</option>
+          <option value="Flux">Flux</option>
+          <option value="SD 3">SD 3</option>
+          <option value="AuraFlow">AuraFlow</option>
         </select>
+        {activeCheckpoint && (
+          <button
+            type="button"
+            onClick={() => {
+              const fam = getModelFamily(activeCheckpoint);
+              let targetFilter = 'all';
+              if (fam === 'illustrious') targetFilter = 'Illustrious';
+              else if (fam === 'pony') targetFilter = 'Pony';
+              else if (fam === 'flux') targetFilter = 'Flux';
+              else if (fam === 'sdxl') targetFilter = 'SDXL 1.0';
+              else if (fam === 'sd15') targetFilter = 'SD 1.5';
+              else if (fam === 'sd3') targetFilter = 'SD 3';
+              else if (fam === 'auraflow') targetFilter = 'AuraFlow';
+              onFilterBaseModelChange(filterBaseModel === targetFilter ? 'all' : targetFilter);
+            }}
+            className={`px-2.5 py-1.5 rounded-lg text-xs font-medium border flex items-center gap-1.5 transition-colors shrink-0 ${
+              filterBaseModel !== 'all' && (
+                (getModelFamily(activeCheckpoint) === 'illustrious' && (filterBaseModel === 'Illustrious' || filterBaseModel === 'NoobAI')) ||
+                (getModelFamily(activeCheckpoint) === 'pony' && filterBaseModel === 'Pony') ||
+                (getModelFamily(activeCheckpoint) === 'flux' && filterBaseModel === 'Flux') ||
+                (getModelFamily(activeCheckpoint) === 'sdxl' && filterBaseModel === 'SDXL 1.0')
+              )
+                ? 'bg-purple-600/30 border-purple-500 text-purple-200'
+                : 'bg-gray-800 border-gray-700 text-gray-300 hover:bg-gray-700'
+            }`}
+            title="Quick-filter to models/LoRAs matching the active checkpoint family"
+          >
+            <Sparkles size={13} className="text-purple-400" />
+            <span>Match Model ({activeCheckpoint.base_model || activeCheckpoint.baseModel || getModelFamily(activeCheckpoint)})</span>
+          </button>
+        )}
 
         <select
           value={filterType}

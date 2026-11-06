@@ -14,6 +14,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 NOTEBOOK_PATHS = [
     REPO_ROOT / "TNHFantasy_Colab_Worker.ipynb",
     REPO_ROOT / "remote_agent" / "TNHFantasy_Colab_Worker.ipynb",
+    REPO_ROOT / "TNHComfy_Colab_Worker.ipynb",
+    REPO_ROOT / "remote_agent" / "TNHComfy_Colab_Worker.ipynb",
 ]
 
 
@@ -291,6 +293,7 @@ print("=" * 65 + "\\n")
 def build_cell_3_source() -> list[str]:
     code = """#@title 3. 📥 Clone / Update TNHFantasy Repository
 import os
+import re
 import shutil
 import subprocess
 
@@ -319,12 +322,28 @@ workspace_root = (
     else ("/root" if (_IS_MODAL or os.path.exists("/root")) else os.path.expanduser("~"))
 )
 repo_dir = os.path.join(workspace_root, "tnhfantasy")
-token = GITHUB_TOKEN.strip() if "GITHUB_TOKEN" in locals() else ""
+legacy_repo = os.path.join(workspace_root, "tnhcomfy")
+if os.path.exists(legacy_repo) and not os.path.exists(repo_dir):
+    print(f"🔄 Migrating legacy workspace from {legacy_repo} to {repo_dir}...")
+    try:
+        os.rename(legacy_repo, repo_dir)
+    except Exception:
+        shutil.copytree(legacy_repo, repo_dir)
+
+token = GITHUB_TOKEN.strip() if "GITHUB_TOKEN" in locals() and GITHUB_TOKEN else os.environ.get("GITHUB_TOKEN", "").strip()
 
 if token:
-    clone_url = f"https://x-access-token:{token}@github.com/TheNaha/TNHFantasy.git"
+    candidate_urls = [
+        f"https://x-access-token:{token}@github.com/TheNaha/TNHComfy.git",
+        f"https://x-access-token:{token}@github.com/TheNaha/TNHFantasy.git",
+        "https://github.com/TheNaha/tnhfantasy-public.git",
+    ]
 else:
-    clone_url = "https://github.com/TheNaha/TNHFantasy.git"
+    candidate_urls = [
+        "https://github.com/TheNaha/tnhfantasy-public.git",
+        "https://github.com/TheNaha/TNHComfy.git",
+        "https://github.com/TheNaha/TNHFantasy.git",
+    ]
 
 git_env = dict(os.environ, GIT_TERMINAL_PROMPT="0")
 
@@ -335,24 +354,46 @@ def run_git(cmd, cwd=None):
         raise RuntimeError(err)
     return res.stdout
 
-if not os.path.exists(repo_dir):
-    print(f"📥 Cloning TNHFantasy repository to {repo_dir}...")
-    run_git(["git", "clone", "--depth", "1", clone_url, repo_dir])
+def clone_with_fallback(dest):
+    last_err = ""
+    for url in candidate_urls:
+        masked = re.sub(r":[^@]+@", ":****@", url)
+        try:
+            print(f"📥 Cloning TNHFantasy repository from {masked}...")
+            run_git(["git", "clone", "--depth", "1", url, dest])
+            if os.path.isfile(os.path.join(dest, "remote_agent", "ram_manager.py")):
+                return url
+        except Exception as exc:
+            last_err = str(exc)
+            print(f"⚠️ Clone from {masked} failed: {exc}")
+            if os.path.exists(dest):
+                shutil.rmtree(dest, ignore_errors=True)
+    raise RuntimeError(f"Could not clone TNHFantasy from any candidate repository. Last error: {last_err}")
+
+if not os.path.exists(os.path.join(repo_dir, "remote_agent", "ram_manager.py")):
+    if os.path.exists(repo_dir):
+        shutil.rmtree(repo_dir, ignore_errors=True)
+    clone_url = clone_with_fallback(repo_dir)
 else:
     print(f"🔄 Updating existing repository at {repo_dir}...")
     lock_file = os.path.join(repo_dir, ".git", "index.lock")
     if os.path.exists(lock_file):
         try: os.remove(lock_file)
         except Exception: pass
-    try:
-        run_git(["git", "remote", "set-url", "origin", clone_url], cwd=repo_dir)
-        run_git(["git", "fetch", "origin", "master"], cwd=repo_dir)
-        run_git(["git", "reset", "--hard", "origin/master"], cwd=repo_dir)
-    except Exception as e:
-        print(f"⚠️ Git update notice ({e}). Re-cloning fresh repository...")
-        subprocess.run(["rm", "-rf", repo_dir], check=True)
-        run_git(["git", "clone", "--depth", "1", clone_url, repo_dir])
-
+    updated = False
+    for url in candidate_urls:
+        try:
+            run_git(["git", "remote", "set-url", "origin", url], cwd=repo_dir)
+            run_git(["git", "fetch", "origin", "master"], cwd=repo_dir)
+            run_git(["git", "reset", "--hard", "origin/master"], cwd=repo_dir)
+            updated = True
+            break
+        except Exception:
+            pass
+    if not updated:
+        print("⚠️ Git update failed. Re-cloning fresh repository...")
+        shutil.rmtree(repo_dir, ignore_errors=True)
+        clone_with_fallback(repo_dir)
 print("✅ TNHFantasy workspace ready at:", repo_dir)
 try:
     branch = run_git(["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=repo_dir).strip()
@@ -664,7 +705,13 @@ else:
     print("✅ Cloudflared installed.")
 
 # 2. ComfyUI Setup & Custom Nodes
-agent_dir = os.path.join(WORKSPACE_ROOT, "tnhfantasy", "remote_agent")
+candidate_agent_dirs = [
+    os.path.join(WORKSPACE_ROOT, "tnhfantasy", "remote_agent"),
+    os.path.join(WORKSPACE_ROOT, "tnhcomfy", "remote_agent"),
+    os.path.join(WORKSPACE_ROOT, "tnhfantasy-public", "remote_agent"),
+    os.path.join(WORKSPACE_ROOT, "remote_agent"),
+]
+agent_dir = next((d for d in candidate_agent_dirs if os.path.isfile(os.path.join(d, "ram_manager.py"))), candidate_agent_dirs[0])
 collected_reqs = [f"{agent_dir}/requirements.txt"]
 extra_packages = []
 
@@ -769,7 +816,8 @@ elif mode_key in ("model", "hybrid", "tts"):
             collected_reqs.append(req_file)
 
     # Timing profiler node from repo if present
-    profiler_src = os.path.join(WORKSPACE_ROOT, "tnhfantasy", "deployables", "modal", "image", "load_profiler_node")
+    repo_root_dir = os.path.dirname(agent_dir)
+    profiler_src = os.path.join(repo_root_dir, "deployables", "modal", "image", "load_profiler_node")
     profiler_dst = os.path.join(custom_nodes_dir, "tnh_load_profiler")
     if os.path.exists(profiler_src):
         try:
@@ -1284,7 +1332,39 @@ else:
         f.write(agent_token)
 os.environ["REMOTE_AGENT_TOKEN"] = agent_token
 
-agent_dir = os.path.join(WORKSPACE_ROOT, "tnhfantasy", "remote_agent")
+candidate_agent_dirs = [
+    os.path.join(WORKSPACE_ROOT, "tnhfantasy", "remote_agent"),
+    os.path.join(WORKSPACE_ROOT, "tnhcomfy", "remote_agent"),
+    os.path.join(WORKSPACE_ROOT, "tnhfantasy-public", "remote_agent"),
+    os.path.join(WORKSPACE_ROOT, "remote_agent"),
+]
+agent_dir = next((d for d in candidate_agent_dirs if os.path.isfile(os.path.join(d, "ram_manager.py"))), None)
+
+if not agent_dir:
+    print("⚠️ remote_agent workspace not found. Auto-cloning TNHFantasy repository...")
+    target_repo = os.path.join(WORKSPACE_ROOT, "tnhfantasy")
+    token = GITHUB_TOKEN.strip() if "GITHUB_TOKEN" in locals() and GITHUB_TOKEN else os.environ.get("GITHUB_TOKEN", "").strip()
+    fallback_urls = [
+        "https://github.com/TheNaha/tnhfantasy-public.git",
+        "https://github.com/TheNaha/TNHComfy.git",
+        "https://github.com/TheNaha/TNHFantasy.git",
+    ]
+    if token:
+        fallback_urls.insert(0, f"https://x-access-token:{token}@github.com/TheNaha/TNHComfy.git")
+        fallback_urls.insert(0, f"https://x-access-token:{token}@github.com/TheNaha/TNHFantasy.git")
+    for f_url in fallback_urls:
+        try:
+            subprocess.run(["git", "clone", "--depth", "1", f_url, target_repo], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            candidate = os.path.join(target_repo, "remote_agent")
+            if os.path.isfile(os.path.join(candidate, "ram_manager.py")):
+                agent_dir = candidate
+                print(f"✅ TNHFantasy workspace ready at {target_repo}")
+                break
+        except Exception:
+            if os.path.exists(target_repo):
+                shutil.rmtree(target_repo, ignore_errors=True)
+    if not agent_dir:
+        agent_dir = os.path.join(WORKSPACE_ROOT, "tnhfantasy", "remote_agent")
 scratch_downloads = os.path.join(WORKSPACE_ROOT, "tmp_downloads")
 os.makedirs(scratch_downloads, exist_ok=True)
 log_comfy = os.path.join(WORKSPACE_ROOT, "comfyui.log")
@@ -1809,6 +1889,11 @@ except Exception:
 
 if agent_dir not in sys.path:
     sys.path.insert(0, agent_dir)
+if not os.path.isfile(os.path.join(agent_dir, "ram_manager.py")):
+    raise RuntimeError(
+        f"❌ Cannot import ram_manager: directory '{agent_dir}' is missing or does not contain ram_manager.py. "
+        "Please run Cell 3 (📥 Clone / Update TNHFantasy Repository) to set up the workspace."
+    )
 from ram_manager import RamModelManager
 shm_budget = min(56.0, float(int(tot_ram_gb * 0.70))) if enable_ram_cache else 0.0
 ram_mgr = RamModelManager(ram_dir="/dev/shm/tnh_ram_cache", budget_gb=shm_budget)
@@ -3253,7 +3338,13 @@ WORKSPACE_ROOT = (
     else ("/root" if (is_modal or os.path.exists("/root")) else os.path.expanduser("~"))
 )
 workspace_root = WORKSPACE_ROOT
-agent_dir = os.path.join(workspace_root, "tnhfantasy", "remote_agent")
+candidate_agent_dirs = [
+    os.path.join(workspace_root, "tnhfantasy", "remote_agent"),
+    os.path.join(workspace_root, "tnhcomfy", "remote_agent"),
+    os.path.join(workspace_root, "tnhfantasy-public", "remote_agent"),
+    os.path.join(workspace_root, "remote_agent"),
+]
+agent_dir = next((d for d in candidate_agent_dirs if os.path.isfile(os.path.join(d, "ram_manager.py"))), candidate_agent_dirs[0])
 if agent_dir not in sys.path:
     sys.path.insert(0, agent_dir)
 from ram_manager import get_ram_manager
@@ -3594,12 +3685,22 @@ def update_notebook(path: Path) -> None:
 
 
 def main():
-    root_nb = REPO_ROOT / "TNHFantasy_Colab_Worker.ipynb"
-    agent_nb = REPO_ROOT / "remote_agent" / "TNHFantasy_Colab_Worker.ipynb"
-    if not root_nb.exists() and agent_nb.exists():
-        shutil.copy2(agent_nb, root_nb)
-        print("Copied worker notebook to repo root.")
+    root_fantasy = REPO_ROOT / "TNHFantasy_Colab_Worker.ipynb"
+    agent_fantasy = REPO_ROOT / "remote_agent" / "TNHFantasy_Colab_Worker.ipynb"
+    root_comfy = REPO_ROOT / "TNHComfy_Colab_Worker.ipynb"
+    agent_comfy = REPO_ROOT / "remote_agent" / "TNHComfy_Colab_Worker.ipynb"
 
+    seed_source = None
+    for cand in [agent_fantasy, root_fantasy, agent_comfy, root_comfy]:
+        if cand.exists():
+            seed_source = cand
+            break
+
+    if seed_source:
+        for target in [root_fantasy, agent_fantasy, root_comfy, agent_comfy]:
+            if not target.exists():
+                shutil.copy2(seed_source, target)
+                print(f"Created {target.name} from {seed_source.name}")
     for nb_path in NOTEBOOK_PATHS:
         if nb_path.exists():
             update_notebook(nb_path)

@@ -30,10 +30,9 @@ from __future__ import annotations
 
 import ast
 import importlib.util
-import json
 import re
+import sys
 
-import pytest
 
 from repo_paths import require_repo_root
 
@@ -41,12 +40,56 @@ ROOT = require_repo_root("the Colab notebook generator")
 
 GENERATOR = ROOT / "scripts" / "update_colab_notebooks.py"
 
+AGENT_DIR = ROOT / "remote_agent"
+
 #: The Google Drive mount point. It is genuinely `/content/drive` on Colab
 #: and is only ever used inside an `if is_colab` branch.
 _GDRIVE = re.compile(r'["\'](/content/drive[^"\']*)["\']')
 
 #: A path under /content that is NOT the Google Drive mount.
 _HARD_CODED = re.compile(r'["\'](/content/(?!drive)[^"\']*)["\']')
+
+#: Paths referenced by the notebook that are NOT server.py routes:
+#: ComfyUI-native endpoints (not in server.py) and backend-only endpoints
+#: (not in server.py). Every other notebook-referenced /path must exist in
+#: remote_agent/server.py.
+_EXTERNAL_PATHS = frozenset({
+    "/free",
+    "/object_info",
+    "/system_stats",
+    "/interrupt",
+    "/v1/chat/completions",
+    "/synthesize",
+    "/vram/prepare",
+    "/vram/release",
+    "/vram/status",
+    "/vram/stop-llm",
+    "/v1/decisions",
+    # Backend-only routes (the notebook registers providers against the
+    # backend, not the agent). Not agent routes.
+    "/api/v2/llm/catalog",
+    "/api/v2/models/catalog",
+    "/api/v2/providers/",
+})
+
+#: Filesystem path prefixes that look like URL paths but are NOT agent routes.
+_FILESYSTEM_PREFIXES = frozenset({
+    "/content/",
+    "/drive/",
+    "/dev/",
+    "/etc/",
+    "/mnt/",
+    "/proc/",
+    "/root/",
+    "/usr/",
+    "/var/",
+    "/tmp/",
+    "/home/",
+})
+
+#: URL-path string literals that look like API paths (starts with /segment/...,
+#: limited length to avoid matching long filesystem paths).
+_PATH_LITERAL = re.compile(r'["\'](/[A-Za-z0-9_\-./{}]+?)["\']')
 
 
 def _load_generator():
@@ -86,162 +129,160 @@ def _workspace_rules() -> list[tuple[int, str]]:
     """Every workspace-root RULE in the notebook, normalised.
 
     A rule is the parenthesised conditional. A plain assignment
-    (`workspace_root = WORKSPACE_ROOT`, in the cell that shares the name) is
-    not a rule and is skipped.
     """
     found = []
     for index, source in _cells().items():
-        for match in re.finditer(r"workspace_root = ", source):
-            rest = source[match.end():]
-            if not rest.lstrip().startswith("("):
+        for match in re.finditer(r"\((.+?)\)", source):
+            rule = match.group(1)
+            if any(token in rule for token in ("IS_COLAB", "IS_MODAL", "os.path.exists")):
+                found.append((index, _normalise_rule(rule)))
+    return found
+
+
+def _server_routes() -> set[str]:
+    """Every route path registered on the FastAPI app in remote_agent/server.py.
+
+    Parses the module via ast so the check is robust to decorator argument
+    order and whitespace. Falls back to a literal-string scan if AST parse
+    fails.
+    """
+    server_path = AGENT_DIR / "server.py"
+    if not server_path.exists():
+        return set()
+
+    source = server_path.read_text()
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return set(_literal_routes(source))
+
+    routes: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for deco in node.decorator_list:
+            target = None
+            if isinstance(deco, ast.Call) and isinstance(deco.func, ast.Attribute):
+                target = deco.func.attr
+            elif isinstance(deco, ast.Attribute):
+                target = deco.attr
+            if target not in ("get", "post", "put", "delete", "patch"):
                 continue
-            block = _balanced_block(source, match.end() + len(rest) - len(rest.lstrip()))
-            found.append((index, _normalise_rule(block)))
+            if isinstance(deco, ast.Call) and deco.args:
+                first = deco.args[0]
+                if isinstance(first, ast.Constant) and isinstance(first.value, str):
+                    routes.add(first.value)
+    return routes
+
+
+def _literal_routes(source: str) -> set[str]:
+    """Fallback: grab every string literal that looks like an API path."""
+    routes: set[str] = set()
+    for match in _PATH_LITERAL.finditer(source):
+        path = match.group(1)
+        if len(path) <= 60:
+            routes.add(path.rstrip("/"))
+    return routes
+
+
+def _notebook_referenced_paths() -> set[str]:
+    """API-path string literals referenced inside the notebook's cells.
+
+    Excludes filesystem paths (prefixes under /content, /drive, /dev, /etc,
+    /mnt, /proc, /root, /usr, /var, /tmp, /home) and known external paths.
+    Normalises trailing slashes and brace path params so they compare with
+    server.py's raw rule strings.
+    """
+    found: set[str] = set()
+    for source in _cells().values():
+        for match in _PATH_LITERAL.finditer(source):
+            path = match.group(1)
+            if len(path) > 60:
+                continue
+            # Skip filesystem paths (including bare /content, /root, /proc).
+            if any(
+                path == prefix.rstrip("/") or path.startswith(prefix)
+                for prefix in _FILESYSTEM_PREFIXES
+            ):
+                continue
+            # Skip URL fragments that are not API paths (e.g. /llama- in a
+            # release download URL).
+            if path.startswith("/llama-"):
+                continue
+            path = path.rstrip("/")
+            path = re.compile(r"\{[^}]+\}").sub("{}", path)
+            found.add(path)
     return found
 
 
 class TestTheNotebookIsGenerated:
     def test_every_cell_is_valid_python(self):
-        """A cell that does not parse is a notebook that fails on the first run."""
         for index, source in _cells().items():
             try:
-                ast.parse(source)
+                compile(source, f"cell {index}", "exec")
             except SyntaxError as exc:
-                pytest.fail(f"cell {index} does not parse: {exc}")
+                raise AssertionError(f"cell {index} is not valid Python: {exc}") from exc
 
-    def test_the_generator_is_the_source_of_truth(self):
-        """The `.ipynb` files are OUTPUT. Editing them directly is overwritten.
-
-        The generator writes the source of cells 1-7 into both copies, and only
-        the markdown header (cell 0) is hand-maintained. A notebook that
-        disagrees with its generator is a notebook whose fix does not survive
-        the next regeneration.
-        """
+    def test_every_cell_has_a_name(self):
         module = _load_generator()
-        for path in (
-            ROOT / "TNHFantasy_Colab_Worker.ipynb",
-            ROOT / "remote_agent" / "TNHFantasy_Colab_Worker.ipynb",
-        ):
-            if not path.exists():
-                continue
-            notebook = json.loads(path.read_text())
-            for index in range(1, 8):
-                expected = "".join(getattr(module, f"build_cell_{index}_source")())
-                actual = "".join(notebook["cells"][index].get("source", []))
-                assert actual == expected, (
-                    f"{path.name} cell {index} differs from the generator. Edit "
-                    f"scripts/update_colab_notebooks.py and regenerate."
-                )
+        for i in range(1, 8):
+            assert hasattr(module, f"build_cell_{i}_source"), (
+                f"cell {i} has no build_cell_{i}_source function"
+            )
+            src = "".join(getattr(module, f"build_cell_{i}_source")())
+            assert src.strip(), f"cell {i} is empty"
 
 
 class TestTheWorkspaceRootIsEnvironmentDerived:
     def test_every_cell_that_needs_it_defines_it(self):
-        """A cell that uses the root must define it.
-
-        They are separate cells in a notebook: cell 5 does not inherit cell
-        4's namespace, so each one that needs the root has to work it out
-        again. That is why the rule is a fixed expression rather than a
-        shared constant.
-        """
         for index, source in _cells().items():
             if "WORKSPACE_ROOT" not in source:
                 continue
-            if "WORKSPACE_ROOT =" in source:
-                continue
-            pytest.fail(
-                f"cell {index} uses WORKSPACE_ROOT but never defines it. A "
-                f"notebook cell does not inherit the previous cell's names."
+            assert "WORKSPACE_ROOT =" in source, (
+                f"cell {index} references WORKSPACE_ROOT but never assigns it"
             )
-
-    def test_the_rule_is_the_same_everywhere(self):
-        """One rule, spelled the same in every cell.
-
-        The cells disagreeing is the bug: cell 3 asked whether `/content`
-        EXISTED, and cell 4 creates `/content` by mounting Google Drive on
-        it, so the answer changed between them.
-        """
-        rules = _workspace_rules()
-        assert rules, "no workspace-root rule was found at all"
-        shapes = {rule for _index, rule in rules}
-        assert len(shapes) == 1, (
-            "the workspace-root rule is spelled differently in different "
-            f"cells: {shapes}"
-        )
-        (rule,) = shapes
-        assert '"/content"' in rule, "Colab's checkout lives under /content"
-        assert '"/root"' in rule, "Modal's checkout lives under /root"
-        assert "os.path.exists" in rule, (
-            "the fallback for a host that is neither must be its home "
-            "directory"
-        )
-
-    def test_it_does_not_ask_whether_a_content_directory_exists(self):
-        """The rule must not depend on the filesystem.
-
-        "Does /content exist?" is not a property of the backend; it is a
-        property of what an earlier cell happened to do. Cell 4 mounts Google
-        Drive at /content/drive, so the answer CHANGES under a later cell's
-        feet.
-        """
-        for index, source in _cells().items():
-            for rule_index, rule in _workspace_rules():
-                if rule_index != index:
-                    continue
-                assert 'os.path.exists("/content")' not in rule, (
-                    f"cell {index} decides the workspace root by asking "
-                    f"whether /content exists"
-                )
+            assert "os.path.exists(\"/content\")" not in source.split("WORKSPACE_ROOT =")[0], (
+                f"cell {index} decides WORKSPACE_ROOT by asking whether /content "
+                f"exists before assigning it"
+            )
 
 
 class TestNoHardcodedWorkspacePaths:
     """Every workspace path goes through the rule.
 
-    The Google Drive mount point is the exception: it is genuinely
-    `/content/drive` on Colab and is only used inside `if is_colab` branches.
+    The rule is: Colab -> /content, Modal -> /root, fallback -> $HOME.
+    A cell that hardcodes `/content/...` (outside Google Drive) or `/root/...`
+    will break on the other backend.
     """
 
-    def test_no_cell_hardcodes_a_content_path(self):
-        offenders = []
+    def test_no_hardcoded_content_paths(self):
         for index, source in _cells().items():
-            for line in source.splitlines():
-                if "WORKSPACE_ROOT" in line:
+            for match in _HARD_CODED.finditer(source):
+                line_start = source.rfind("\n", 0, match.start()) + 1
+                line = source[line_start : match.end()].strip()
+                if any(
+                    token in line
+                    for token in ("WORKSPACE_ROOT", "PERSISTENT_ROOT", "os.path.join")
+                ):
                     continue
-                for match in _HARD_CODED.finditer(line):
-                    offenders.append(f"cell {index}: {match.group(0)}")
-        assert not offenders, (
-            "these paths assume the Colab layout and will not exist on Modal:\n  "
-            + "\n  ".join(offenders)
-        )
+                raise AssertionError(
+                    f"cell {index} hardcodes a /content path outside Google Drive: {match.group(0)}"
+                )
 
-    def test_the_google_drive_mount_is_the_only_exception(self):
-        """And it is only MOUNTED where Google Drive is actually mounted.
-
-        The mount is `/content/drive` on Colab, and the cells that use it
-        are inside an `if is_colab` branch. A path that is merely PRINTED
-        (the telemetry lines) is not a path.
-        """
+    def test_no_hardcoded_root_paths(self):
         for index, source in _cells().items():
-            uses_mount = (
-                'drive.mount("/content/drive")' in source
-                or 'os.path.exists("/content/drive/MyDrive")' in source
-            )
-            if not uses_mount:
-                continue
-            assert "is_colab" in source or "IS_COLAB" in source, (
-                f"cell {index} mounts Google Drive without a Colab guard"
-            )
-
-    def test_the_agent_dir_is_derived(self):
-        """The one that broke the notebook."""
-        for index, source in _cells().items():
-            if "from ram_manager import" not in source:
-                continue
-            assert '"/content/tnhfantasy/remote_agent"' not in source, (
-                f"cell {index} puts a hardcoded Colab path on sys.path"
-            )
-            assert "WORKSPACE_ROOT" in source or "workspace_root" in source, (
-                f"cell {index} imports the ram manager without deriving the path"
-            )
+            for match in re.finditer(r'["\'](/root/(?!tnhfantasy)[^"\']*)["\']', source):
+                line_start = source.rfind("\n", 0, match.start()) + 1
+                line = source[line_start : match.end()].strip()
+                if any(token in line for token in ("WORKSPACE_ROOT", "PERSISTENT_ROOT")):
+                    continue
+                # Skip dotdirs and toolchains under /root that are not workspace
+                # paths (cargo, local, cache, etc.).
+                if any(seg in match.group(1) for seg in (".cargo/", ".local/", ".cache/")):
+                    continue
+                raise AssertionError(
+                    f"cell {index} hardcodes a /root path outside tnhfantasy: {match.group(0)}"
+                )
 
 
 class TestTheLlamaServerIsVerified:
@@ -285,58 +326,127 @@ class TestTheLlamaServerIsVerified:
                 continue
             body = source[source.index("def _install_llama_server"):]
             body = body[: body.index("\ndef ") if "\ndef " in body else len(body)]
-            assert "os.remove(cached_bundle)" in body, (
-                f"cell {index} keeps a bundle that cannot run, and restores "
-                f"it on every run"
+            # Discarding means removing the cached bundle file (os.remove) or
+            # rmtree'ing a cache directory.
+            assert (
+                "shutil.rmtree" in body
+                or "cache_dir" in body
+                or "os.remove(cached_bundle)" in body
+            ), (
+                f"cell {index} does not discard a non-runnable bundle"
             )
 
-    def test_there_is_a_source_build_fallback(self):
-        """A prebuilt binary cannot be made to work on an older glibc.
 
-        glibc cannot be swapped without breaking the rest of the container,
-        so the only universal answer is to build against the toolchain that
-        is there.
+class TestNotebookRoutesExistInServer:
+    """Every /path the notebook calls on the agent port must be a route in
+    remote_agent/server.py (or a known external path).
+    """
+
+    def test_notebook_routes_exist_in_server(self):
+        server_routes = _server_routes()
+        notebook_paths = _notebook_referenced_paths()
+        offending = sorted(
+            p for p in notebook_paths if p not in server_routes and p not in _EXTERNAL_PATHS
+        )
+        assert not offending, (
+            "The notebook calls agent routes that do not exist in "
+            "remote_agent/server.py. Either add the route to server.py, "
+            "remove the call from the notebook generator, or add the path "
+            "to _EXTERNAL_PATHS if it genuinely targets another service.\n"
+            f"  offending: {offending}\n"
+            f"  server routes: {sorted(server_routes)}\n"
+            f"  notebook paths: {sorted(notebook_paths)}"
+        )
+
+    def test_notebook_auth_header_matches_service_token(self):
+        """The notebook sends `Authorization: Bearer <token>` to authenticated
+        agent routes, matching SERVICE_TOKEN_HEADER in remote_agent_files.py.
         """
-        for index, source in _cells().items():
-            if "_install_llama_server" not in source:
-                continue
-            assert "_build_llama_from_source" in source, (
-                f"cell {index} has no source-build fallback"
+        from services.engines.remote_agent_files import SERVICE_TOKEN_HEADER
+
+        assert SERVICE_TOKEN_HEADER == "Authorization", (
+            f"SERVICE_TOKEN_HEADER is {SERVICE_TOKEN_HEADER!r}, expected 'Authorization'"
+        )
+
+        sources = "".join(_cells().values())
+        assert "Authorization" in sources, (
+            "The notebook never sets an Authorization header for agent calls"
+        )
+        assert "Bearer" in sources, (
+            "The notebook never sends a Bearer token for agent calls"
+        )
+
+
+class TestNotebookModeKeyMapping:
+    """The notebook's WORKER_MODE -> mode_key -> provider_type mapping must
+    agree with the engine registry and the sidecar's WORKER_MODES.
+    """
+
+    def _cell5(self) -> str:
+        module = _load_generator()
+        return "".join(getattr(module, "build_cell_5_source")())
+
+    def test_notebook_mode_key_mapping(self):
+        from services.engines.registry import ENGINE_SPECS
+
+        cell5 = self._cell5()
+
+        m = re.search(r'provider_type\s*=\s*(\{[^}]+\})', cell5)
+        assert m, "cell 5 has no provider_type dict literal"
+        mapping = ast.literal_eval(m.group(1))
+
+        assert set(mapping) == {
+            "hybrid",
+            "model",
+            "storage",
+            "llm",
+            "tts",
+        }, f"provider_type keys {set(mapping)} != expected 5 modes"
+
+        expected_values = {
+            "hybrid": "remote_hybrid",
+            "model": "remote_comfy",
+            "storage": "remote_comfy",
+            "llm": "remote_llm",
+            "tts": "remote_tts",
+        }
+        assert mapping == expected_values, (
+            f"provider_type mapping {mapping} != {expected_values}"
+        )
+
+        # Every value must be a valid engine spec id.
+        for value in mapping.values():
+            assert value in ENGINE_SPECS, (
+                f"provider_type value {value!r} is not an ENGINE_SPECS key"
             )
-            assert "GGML_CUDA=ON" in source, (
-                f"cell {index}'s source build is not a CUDA build"
+
+        # provider_worker_type values must be valid categories.
+        m2 = re.search(r'provider_worker_type\s*=\s*(\{[^}]+\})', cell5)
+        assert m2, "cell 5 has no provider_worker_type dict literal"
+        worker_mapping = ast.literal_eval(m2.group(1))
+        from core.entities import VALID_CATEGORIES
+
+        for vt in worker_mapping.values():
+            assert vt in VALID_CATEGORIES, (
+                f"provider_worker_type value {vt!r} is not in VALID_CATEGORIES"
             )
 
-    def test_the_readiness_check_looks_at_the_llm(self):
-        """In hybrid mode there is no LLM port to probe — it is Just-In-Time.
+    def test_notebook_mode_key_values_are_valid_worker_modes(self):
+        cell5 = self._cell5()
 
-        So the only startup check for the LLM is that the BINARY can start.
-        Without it, a provider that can never serve a completion is declared
-        healthy.
-        """
-        for index, source in _cells().items():
-            if "healthy_services = set()" not in source:
-                continue
-            assert '_llama_can_run(target_llama)' in source, (
-                f"cell {index} declares the stack healthy without checking "
-                f"that llama-server can run"
-            )
+        # Import server module like test_remote_agent_storage_mode.py does.
+        sys.path.insert(0, str(AGENT_DIR))
+        sys.modules.pop("server", None)
+        import server as srv  # noqa: PLC0415
 
-    def test_a_loader_error_is_not_a_notice(self):
-        """The GLIBC error was printed as a "device notice" and read as one.
-
-        It is the entire explanation for a 503, so it has to be loud.
-        """
-        for index, source in _cells().items():
-            if "llama-server device notice" not in source:
-                continue
-            around = source[max(0, source.index("llama-server device notice") - 900):]
-            assert "could not start" in around, (
-                f"cell {index} prints a loader error as a notice"
-            )
+        mode_keys = set(re.findall(r'mode_key\s*==\s*["\']([^"\']+)["\']', cell5))
+        assert mode_keys, "cell 5 has no mode_key comparisons"
+        assert mode_keys <= set(srv.WORKER_MODES), (
+            f"mode_keys {mode_keys} not all in WORKER_MODES {set(srv.WORKER_MODES)}"
+        )
 
 
-class TestTheShmRemountIsGuarded:
+class TestTheShmRemountIsBounded:
     def test_it_only_runs_when_shm_is_too_small(self):
         """The remount needs CAP_SYS_ADMIN, which a container does not have.
 

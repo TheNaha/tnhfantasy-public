@@ -51,7 +51,7 @@ build context has no repo root above it, and moving the registry out 500ed
 
 `backend_v2/services/engines/engine_factory.py` is the only routing table, and
 `backend_v2/services/engines/registry.py` owns provider *type* resolution.
-15 provider types are backed by 13 engine classes — several types share a class,
+16 provider types are backed by 14 engine classes — several types share a class,
 which is deliberate:
 
 - `direct_url` + `remote_comfy` → `DirectComfyEngine`

@@ -303,6 +303,46 @@ describe("ModelSelector tag discovery", () => {
       expect(screen.queryByText("Sunset Only")).not.toBeInTheDocument();
     });
   });
+
+  it("filters a preloaded list client-side by baseModel using family-aware matching", async () => {
+    renderWithProvider(
+      <ModelSelector
+        label="Checkpoints"
+        onChange={vi.fn()}
+        initialModels={[
+          { name: "animagine.safetensors", display_name: "Animagine XL", base_model: "SDXL 1.0" },
+          { name: "pony.safetensors", display_name: "Pony Diffusion", base_model: "Pony V7" },
+          { name: "flux.safetensors", display_name: "Flux Dev", base_model: "Flux.1 D" },
+          { name: "noob.safetensors", display_name: "NoobAI Checkpoint", base_model: "NoobAI" },
+        ]}
+        autoOpen={true}
+      />
+    );
+
+    const select = screen.getByDisplayValue("All Base Models");
+
+    // Filter by Illustrious should show NoobAI
+    fireEvent.change(select, { target: { value: "Illustrious" } });
+    await waitFor(() => {
+      expect(screen.getAllByText("NoobAI Checkpoint").length).toBeGreaterThan(0);
+      expect(screen.queryByText("Animagine XL")).not.toBeInTheDocument();
+      expect(screen.queryByText("Pony Diffusion")).not.toBeInTheDocument();
+    });
+
+    // Filter by Pony should show Pony V7
+    fireEvent.change(select, { target: { value: "Pony" } });
+    await waitFor(() => {
+      expect(screen.getAllByText("Pony Diffusion").length).toBeGreaterThan(0);
+      expect(screen.queryByText("NoobAI Checkpoint")).not.toBeInTheDocument();
+    });
+
+    // Filter by Flux should show Flux.1 D
+    fireEvent.change(select, { target: { value: "Flux" } });
+    await waitFor(() => {
+      expect(screen.getAllByText("Flux Dev").length).toBeGreaterThan(0);
+      expect(screen.queryByText("Pony Diffusion")).not.toBeInTheDocument();
+    });
+  });
 });
 
 describe("ModelSelector persistence across modal sessions and directory isolation", () => {

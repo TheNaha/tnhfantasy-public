@@ -547,6 +547,7 @@ def _topology() -> dict:
         vram_info = {}
 
     info: dict = {
+        "mode": WORKER_MODE,
         "worker_mode": WORKER_MODE,
         "storage_root": os.path.abspath(DATA_ROOT),
         "storage_root_env": DATA_ROOT_ENV,
@@ -598,6 +599,11 @@ async def info():
 
 @app.post("/setup", dependencies=[Depends(verify_token)])
 async def setup():
+    if WORKER_MODE == "storage":
+        raise HTTPException(
+            status_code=503,
+            detail="Worker is running in storage-only / model-manager mode on CPU. Switch Colab runtime to GPU hybrid mode for inference."
+        )
     _ensure_data_dir()
     # The first comprehension that used to sit here was dead: line 106 overwrote
     # it, and it would have produced "models/models/checkpoints" for any entry
@@ -792,6 +798,11 @@ async def _download_registry_model(model_id: str):
 
 @app.post("/download-model", dependencies=[Depends(verify_token)])
 async def download_model(req: DownloadRequest):
+    if WORKER_MODE == "storage":
+        raise HTTPException(
+            status_code=503,
+            detail="Worker is running in storage-only / model-manager mode on CPU. Switch Colab runtime to GPU hybrid mode for inference."
+        )
     async with _get_download_semaphore():
         if req.model_id:
             # The registry path: name a model from models.json, and the repo and the
@@ -2206,13 +2217,25 @@ async def reconcile_with_backend(req: ReconcileBackendRequest):
         return failed(f"Failed to reach backend: {exc}", code=502)
 
 
-if WORKER_MODE == "storage":
+if WORKER_MODE not in ("llm", "hybrid"):
+    @app.api_route("/chat/completions", methods=["POST", "GET"])
     @app.api_route("/v1/chat/completions", methods=["POST", "GET"])
     @app.api_route("/v1/models", methods=["GET"])
     @app.api_route("/synthesize", methods=["POST"])
     @app.api_route("/v1/voices", methods=["GET"])
     @app.api_route("/prompt", methods=["POST"])
     async def storage_mode_inference_unavailable():
+        """Inference endpoints are unavailable outside LLM/hybrid modes.
+
+        In storage-only / model-manager mode they return 503; in model/tts
+        modes they return 404 (route exists but is not served). The check is
+        done at request time so the route exists regardless of which
+        WORKER_MODE the module was first imported under — tests that import
+        `server` with a different mode and leave it cached in `sys.modules`
+        must not shadow storage-mode behaviour.
+        """
+        if WORKER_MODE != "storage":
+            raise HTTPException(status_code=404)
         raise HTTPException(
             status_code=503,
             detail="Worker is running in storage-only / model-manager mode on CPU. Switch Colab runtime to GPU hybrid mode for inference."

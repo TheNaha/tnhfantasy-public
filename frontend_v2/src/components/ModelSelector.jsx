@@ -74,6 +74,7 @@ const ModelSelector = memo(function ModelSelector({
   showAvailabilityBadge = false,
   providers = [],
   providersLoading = false,
+  activeCheckpoint = null,
 }) {
   const [isOpen, setIsOpen] = useState(autoOpen);
   const [search, setSearch] = useState(() => getSelectorSaved(directory, "search", ""));
@@ -308,7 +309,24 @@ const ModelSelector = memo(function ModelSelector({
     }
     if (filterBaseModel !== "all" || filterType !== "all" || !showNSFW) {
       result = result.filter((m) => {
-        if (filterBaseModel !== "all" && m.base_model !== filterBaseModel) return false;
+        if (filterBaseModel !== "all") {
+          const mBase = m.base_model || m.baseModel || "";
+          const target = filterBaseModel.toLowerCase().replace(/[^a-z0-9]/g, "");
+          const cleanM = mBase.toLowerCase().replace(/[^a-z0-9]/g, "");
+          if (filterBaseModel === "SDXL 1.0" || filterBaseModel === "SDXL") {
+            if (!cleanM.includes("sdxl")) return false;
+          } else if (filterBaseModel === "Pony") {
+            if (!cleanM.includes("pony")) return false;
+          } else if (filterBaseModel === "Flux") {
+            if (!cleanM.includes("flux")) return false;
+          } else if (filterBaseModel === "Illustrious") {
+            if (!cleanM.includes("illustrious") && !cleanM.includes("noob")) return false;
+          } else if (filterBaseModel === "NoobAI") {
+            if (!cleanM.includes("noob")) return false;
+          } else if (!cleanM.includes(target) && !target.includes(cleanM)) {
+            return false;
+          }
+        }
         if (filterType !== "all" && m.type !== filterType) return false;
         if (!showNSFW && m.nsfw) return false;
         return true;
@@ -449,6 +467,7 @@ const ModelSelector = memo(function ModelSelector({
                 onClearFilters={handleClearFilters}
                 tagsError={isError ? error : null}
                 onRetryTags={refetch}
+                activeCheckpoint={activeCheckpoint}
               />
             </div>
 

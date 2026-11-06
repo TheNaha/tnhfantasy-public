@@ -6,7 +6,7 @@ Context for any agent picking up this work. Written 2026-10-10 from a planning c
 
 TNHFantasy is a self-hosted, personal-use-only "Fantasy Engine" web app. It began as a containerized ComfyUI wrapper and now has three pillars sharing one data layer (the "World Vault": Characters, Chats, Lorebooks, Stories, Locations, Personas, Scenarios, Tags, Memories in PostgreSQL + pgvector):
 
-1. **Image generation**: ComfyUI workflows dispatched to serverless workers (Modal, Beam) or long-running provider containers; Postgres job queue, WebSocket progress, Civitai model discovery.
+1. **Image generation**: ComfyUI workflows dispatched to serverless workers (Modal, Beam) or a remote ComfyUI sidecar via the in-process engines; Postgres job queue, WebSocket progress, Civitai model discovery.
 2. **LLM roleplay**: SillyTavern-style chats and group chats, ST JSONL import/export, autonomous agentic tools (scene narration, image generation, memory recall), autobiographical memory (auto-extraction + `rag_pipeline` over pgvector), idle simulation (characters reply while the user is away), per-entity sampler overrides, `llm_config` routes.
 3. **Story Sandbox**: AI Dungeon-style editor with branches, sessions, tags, world graph/timeline.
 

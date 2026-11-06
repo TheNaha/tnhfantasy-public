@@ -484,18 +484,30 @@ class ModelRepositoryV2:
             # rather than nested `exists`, because a correlated `exists` inside a
             # `model_versions` subquery that is itself correlated to `models_v2`
             # makes the correlation ambiguous to read and to resolve.
+            base_clean = base_model.strip()
+            if base_clean.upper().startswith("SDXL"):
+                base_like = "%SDXL%"
+            elif base_clean.upper().startswith("PONY"):
+                base_like = "%Pony%"
+            elif base_clean.upper().startswith("FLUX"):
+                base_like = "%Flux%"
+            elif base_clean.upper().startswith("ILLUSTRIOUS"):
+                base_like = "%Illustrious%"
+            else:
+                base_like = like_contains(base_clean)
+
             has_default = ModelV2.id.in_(
                 select(ModelVersion.model_id).where(ModelVersion.is_default.is_(True))
             )
             default_matches = ModelV2.id.in_(
                 select(ModelVersion.model_id).where(
                     ModelVersion.is_default.is_(True),
-                    ModelVersion.base_model == base_model,
+                    ModelVersion.base_model.ilike(base_like),
                 )
             )
             any_version_matches = ModelV2.id.in_(
                 select(ModelVersion.model_id).where(
-                    ModelVersion.base_model == base_model
+                    ModelVersion.base_model.ilike(base_like)
                 )
             )
             # For the unflagged fallback the SQL accepts *any* version's base

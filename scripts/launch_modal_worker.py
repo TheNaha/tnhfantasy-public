@@ -17,6 +17,7 @@ Default Volume:
 import os
 import subprocess
 import sys
+
 import modal
 
 APP_NAME = os.getenv("MODAL_APP_NAME", "tnhfantasy-worker")
@@ -117,7 +118,23 @@ def worker(token: str = "", netbird_setup_key: str = "", backend_url: str = ""):
     print("⚡ Starting TNHFantasy Worker on Modal...")
     repo_dir = "/root/tnhfantasy"
     if not os.path.exists(repo_dir):
-        subprocess.run(["git", "clone", "--depth", "1", "https://github.com/TheNaha/TNHFantasy.git", repo_dir], check=True)
+        clone_urls = [
+            f"https://x-access-token:{token}@github.com/TheNaha/TNHComfy.git" if token else "",
+            f"https://x-access-token:{token}@github.com/TheNaha/TNHFantasy.git" if token else "",
+            "https://github.com/TheNaha/tnhfantasy-public.git",
+            "https://github.com/TheNaha/TNHFantasy.git",
+            "https://github.com/TheNaha/TNHComfy.git",
+        ]
+        cloned = False
+        for url in [u for u in clone_urls if u]:
+            try:
+                subprocess.run(["git", "clone", "--depth", "1", url, repo_dir], check=True)
+                cloned = True
+                break
+            except (subprocess.SubprocessError, OSError):
+                pass
+        if not cloned:
+            raise RuntimeError("Failed to clone TNHFantasy repository on Modal container.")
 
     sys.path.insert(0, f"{repo_dir}/remote_agent")
     env = dict(

@@ -328,9 +328,9 @@ async def magic_prompt(
         try:
             await cancel_job_processing(job_service=JobService(session), job_id=job.id, reason="magic_prompt_timeout")
         except Exception:
+            logger.exception("magic_prompt_cancel_failed", job_id=job.id, reason="magic_prompt_timeout")
             pass
         raise
-
     if status == JobStatus.COMPLETED.value or status == "job.completed":
         if output:
             enriched_text = output.get("content") or output.get("text") or ""
@@ -341,5 +341,6 @@ async def magic_prompt(
     try:
         await cancel_job_processing(job_service=JobService(session), job_id=job.id, reason=f"magic_prompt_failed:{status}")
     except Exception:
+        logger.exception("magic_prompt_cancel_failed", job_id=job.id, reason=f"magic_prompt_failed:{status}")
         pass
     raise ComfyError(f"Magic prompt failed: {status}")
