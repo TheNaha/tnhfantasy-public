@@ -1,4 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import toast from 'react-hot-toast';
 import { api } from '../api';
 import { buildQueryKey, QUERY_KEYS } from '../constants/queryKeys';
 import { invalidateVaultAggregates } from './useWorldVaultResource';
@@ -34,10 +35,11 @@ export const useEditMessage = () => {
             );
             return { previous };
         },
-        onError: (_, _vars, context) => {
+        onError: (error, _vars, context) => {
             if (context?.previous) {
                 context.previous.forEach(([key, data]) => queryClient.setQueryData(key, data));
             }
+            toast.error(error?.message || 'Failed to edit message');
         },
         onSuccess: (_, variables) => {
             queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.MESSAGES, variables.chatId) });
@@ -59,10 +61,11 @@ export const useDeleteMessage = () => {
             );
             return { previous };
         },
-        onError: (_, _vars, context) => {
+        onError: (error, _vars, context) => {
             if (context?.previous) {
                 context.previous.forEach(([key, data]) => queryClient.setQueryData(key, data));
             }
+            toast.error(error?.message || 'Failed to delete message');
         },
         onSuccess: (_, variables) => {
             queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.MESSAGES, variables.chatId) });

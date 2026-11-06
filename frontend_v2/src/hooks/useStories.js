@@ -2,7 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api';
 import { buildQueryKey, QUERY_KEYS } from '../constants/queryKeys';
 import { downloadJson, downloadText, triggerFile } from '../utils/download';
-import { useCreateResource, useDeleteResource, useUpdateResource, invalidateVaultAggregates } from './useWorldVaultResource';
+import { useCreateResource, useDeleteResource, useUpdateResource, invalidateVaultAggregates, reportError } from './useWorldVaultResource';
 
 const STORY_LIST_KEY = buildQueryKey(QUERY_KEYS.STORIES);
 const STORY_DETAIL_KEY = (storyId) => buildQueryKey(QUERY_KEYS.STORIES, storyId);
@@ -84,10 +84,11 @@ export const useContinueChapter = () => {
             });
             return { previous };
         },
-        onError: (_, { storyId }, context) => {
+        onError: (error, { storyId }, context) => {
             if (context?.previous) {
                 queryClient.setQueryData(STORY_CHAPTERS_KEY(storyId), context.previous);
             }
+            reportError('continue story', error);
         },
         onSuccess: (_, variables) => {
             queryClient.setQueryData(STORY_CHAPTERS_KEY(variables.storyId), (old) =>
@@ -162,10 +163,11 @@ export const useAddStoryBeat = () => {
             });
             return { previous };
         },
-        onError: (_, { storyId }, context) => {
+        onError: (error, { storyId }, context) => {
             if (context?.previous) {
                 queryClient.setQueryData(STORY_CHAPTERS_KEY(storyId), context.previous);
             }
+            reportError('continue chapter', error);
         },
         onSuccess: (_, variables) => {
             queryClient.invalidateQueries({ queryKey: STORY_CHAPTERS_KEY(variables.storyId) });
@@ -202,10 +204,11 @@ export const useUpdateStoryBeat = () => {
             });
             return { previous, key };
         },
-        onError: (_, __, context) => {
+        onError: (error, __, context) => {
             if (context?.previous) {
                 queryClient.setQueryData(context.key, context.previous);
             }
+            reportError('update story beat', error);
         },
         onSuccess: (_, variables) => {
             queryClient.invalidateQueries({ queryKey: STORY_CHAPTERS_KEY(variables.storyId) });
@@ -252,10 +255,11 @@ export const useSelectStoryBeatAlternate = () => {
             });
             return { previous };
         },
-        onError: (_err, _variables, context) => {
+        onError: (error, _variables, context) => {
             if (context?.previous) {
                 queryClient.setQueryData(STORY_CHAPTERS_KEY(_variables.storyId), context.previous);
             }
+            reportError('select story beat alternate', error);
         },
         onSettled: (_data, _err, variables) => {
             queryClient.invalidateQueries({ queryKey: STORY_CHAPTERS_KEY(variables.storyId) });
@@ -281,10 +285,11 @@ export const useDeleteStoryBeat = () => {
             });
             return { previous, key };
         },
-        onError: (_, __, context) => {
+        onError: (error, __, context) => {
             if (context?.previous) {
                 queryClient.setQueryData(context.key, context.previous);
             }
+            reportError('delete story beat', error);
         },
         onSuccess: (_, variables) => {
             queryClient.invalidateQueries({ queryKey: STORY_CHAPTERS_KEY(variables.storyId) });
@@ -407,10 +412,11 @@ export const useReorderChapters = () => {
             });
             return { previous, key };
         },
-        onError: (_, __, context) => {
+        onError: (error, __, context) => {
             if (context?.previous) {
                 queryClient.setQueryData(context.key, context.previous);
             }
+            reportError('reorder chapters', error);
         },
         onSettled: (_, __, variables) => {
             queryClient.invalidateQueries({ queryKey: STORY_CHAPTERS_KEY(variables.storyId) });

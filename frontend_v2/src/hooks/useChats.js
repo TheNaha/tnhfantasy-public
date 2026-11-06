@@ -297,9 +297,10 @@ export const useSendMessage = () => {
             );
             return { previous };
         },
-        onError: (_, { chatId }, context) => {
+        onError: (error, { chatId }, context) => {
             context?.previous?.forEach(([key, data]) => queryClient.setQueryData(key, data));
             queryClient.invalidateQueries({ queryKey: [...MESSAGES_ROOT_KEY, chatId] });
+            toast.error(error?.message || 'Failed to send message');
         },
         onSuccess: (_, variables) => {
             queryClient.invalidateQueries({ queryKey: CHAT_LIST_KEY });
