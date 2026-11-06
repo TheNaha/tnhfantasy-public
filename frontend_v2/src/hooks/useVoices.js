@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api';
 import { buildQueryKey, QUERY_KEYS } from '../constants/queryKeys';
-import { useCreateResource, useDeleteResource, useUpdateResource } from './useWorldVaultResource';
+import { useCreateResource, useDeleteResource, useUpdateResource, reportError } from './useWorldVaultResource';
 
 const VOICES_KEY = buildQueryKey(QUERY_KEYS.VOICES);
 
@@ -33,7 +33,8 @@ export const useVoicePreview = () => {
         mutationFn: ({ voiceId }) => api.post(`/api/v2/voices/${voiceId}/preview`),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: VOICES_KEY });
-        }
+        },
+        onError: (error) => reportError('voice preview', error),
     });
 };
 
@@ -44,6 +45,7 @@ export const useDesignVoice = () => {
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: VOICES_KEY });
         },
+        onError: (error) => reportError('design voice', error),
     });
 };
 

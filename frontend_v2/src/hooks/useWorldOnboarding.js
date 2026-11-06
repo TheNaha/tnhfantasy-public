@@ -1,7 +1,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 import { QUERY_KEYS, buildQueryKey } from '../constants/queryKeys';
-import { invalidateVaultAggregates } from './useWorldVaultResource';
+import { invalidateVaultAggregates, reportError } from './useWorldVaultResource';
 import { CHAT_LIST_KEY, CHAT_DETAIL_KEY } from './useChats';
 
 export const useAnalyzeCardOnboarding = () => {
@@ -12,6 +12,7 @@ export const useAnalyzeCardOnboarding = () => {
             formData.append('use_vision', String(useVision));
             return api.post('/api/v2/world-vault/onboarding/analyze-card', formData);
         },
+        onError: (error) => reportError('analyze card onboarding', error),
     });
 };
 
@@ -21,6 +22,7 @@ export const useAnalyzeExistingCharacterOnboarding = () => {
             api.post(`/api/v2/world-vault/onboarding/analyze-character/${characterId}`, {
                 use_vision: useVision,
             }),
+        onError: (error) => reportError('analyze existing character onboarding', error),
     });
 };
 
@@ -39,6 +41,7 @@ export const useAnalyzeDocumentOnboarding = () => {
                 title: title || null,
             });
         },
+        onError: (error) => reportError('analyze document onboarding', error),
     });
 };
 
@@ -54,6 +57,7 @@ export const useCrossoverPreview = () => {
                 invalidateVaultAggregates(queryClient);
             }
         },
+        onError: (error) => reportError('crossover preview', error),
     });
 };
 
@@ -73,6 +77,7 @@ export const useCommitWorldBlueprint = () => {
             queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.STORIES) });
             invalidateVaultAggregates(queryClient);
         },
+        onError: (error) => reportError('commit world blueprint', error),
     });
 };
 
@@ -88,6 +93,7 @@ export const useCommitChatToCanon = () => {
             queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.LOCATIONS) });
             invalidateVaultAggregates(queryClient);
         },
+        onError: (error) => reportError('commit chat to canon', error),
     });
 };
 
@@ -100,6 +106,7 @@ export const useCompileChatToStory = () => {
             queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.STORIES) });
             invalidateVaultAggregates(queryClient);
         },
+        onError: (error) => reportError('compile chat to story', error),
     });
 };
 
@@ -119,6 +126,7 @@ export const useRunWorldTick = () => {
             queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.CHARACTERS) });
             invalidateVaultAggregates(queryClient);
         },
+        onError: (error) => reportError('run world tick', error),
     });
 };
 
@@ -133,6 +141,7 @@ export const useReverseVisionSync = () => {
         onSuccess: (_, variables) => {
             queryClient.invalidateQueries({ queryKey: CHAT_DETAIL_KEY(variables.chatId) });
         },
+        onError: (error) => reportError('reverse vision sync', error),
     });
 };
 
@@ -150,6 +159,7 @@ export const useFastTravelChat = () => {
             queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.MESSAGES, variables.chatId) });
             queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.LOCATIONS) });
         },
+        onError: (error) => reportError('fast travel chat', error),
     });
 };
 
@@ -164,6 +174,7 @@ export const useVisualizeInventoryItem = () => {
         onSuccess: (_, variables) => {
             queryClient.invalidateQueries({ queryKey: CHAT_DETAIL_KEY(variables.chatId) });
         },
+        onError: (error) => reportError('visualize inventory item', error),
     });
 };
 
@@ -171,6 +182,7 @@ export const useExtractScenarios = () => {
     return useMutation({
         mutationFn: (payload) =>
             api.post('/api/v2/world-vault/onboarding/extract-scenarios', payload),
+        onError: (error) => reportError('extract scenarios', error),
     });
 };
 
@@ -178,6 +190,7 @@ export const useExtractVisualTags = () => {
     return useMutation({
         mutationFn: (payload) =>
             api.post('/api/v2/world-vault/onboarding/extract-visual-tags', payload),
+        onError: (error) => reportError('extract visual tags', error),
     });
 };
 
@@ -185,6 +198,7 @@ export const useExtractStatekeeper = () => {
     return useMutation({
         mutationFn: (payload) =>
             api.post('/api/v2/world-vault/onboarding/extract-statekeeper', payload),
+        onError: (error) => reportError('extract statekeeper', error),
     });
 };
 
@@ -192,6 +206,7 @@ export const useExtractWorldLore = () => {
     return useMutation({
         mutationFn: (payload) =>
             api.post('/api/v2/world-vault/onboarding/extract-world-lore', payload),
+        onError: (error) => reportError('extract world lore', error),
     });
 };
 
@@ -199,6 +214,7 @@ export const useEnrichField = () => {
     return useMutation({
         mutationFn: (payload) =>
             api.post('/api/v2/world-vault/onboarding/enrich-field', payload),
+        onError: (error) => reportError('enrich field', error),
     });
 };
 
@@ -206,6 +222,7 @@ export const useIngestStoryChained = () => {
     return useMutation({
         mutationFn: (payload) =>
             api.post('/api/v2/world-vault/onboarding/ingest-story-chained', payload),
+        onError: (error) => reportError('ingest story chained', error),
     });
 };
 
