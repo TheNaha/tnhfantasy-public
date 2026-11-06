@@ -134,3 +134,48 @@ describe('useRemoveImagesFromCollection', () => {
         expect(invalidate).not.toHaveBeenCalled();
     });
 });
+
+describe('useDeleteCollection', () => {
+    let queryClient;
+    let useDeleteCollection;
+    let useStore;
+
+    beforeEach(async () => {
+        vi.clearAllMocks();
+        queryClient = makeClient();
+        const mod = await import('./useCollections');
+        useDeleteCollection = mod.useDeleteCollection;
+        const storeMod = await import('../store/useStore');
+        useStore = storeMod.default;
+    });
+
+    it('clears activeCollection when deleted collection matches', async () => {
+        useStore.getState().setActiveCollection('col-1');
+        expect(useStore.getState().activeCollection).toBe('col-1');
+
+        const { result } = renderHook(() => useDeleteCollection(), {
+            wrapper: makeWrapper(queryClient),
+        });
+
+        await act(async () => {
+            await result.current.mutateAsync('col-1');
+        });
+
+        expect(useStore.getState().activeCollection).toBeNull();
+    });
+
+    it('retains activeCollection when a different collection is deleted', async () => {
+        useStore.getState().setActiveCollection('col-2');
+        expect(useStore.getState().activeCollection).toBe('col-2');
+
+        const { result } = renderHook(() => useDeleteCollection(), {
+            wrapper: makeWrapper(queryClient),
+        });
+
+        await act(async () => {
+            await result.current.mutateAsync('col-1');
+        });
+
+        expect(useStore.getState().activeCollection).toBe('col-2');
+    });
+});

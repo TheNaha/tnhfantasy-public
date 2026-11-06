@@ -134,7 +134,9 @@ export default function CredentialsTab({ providerId, credentialSummary }) {
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['provider-credentials', providerId] });
             queryClient.invalidateQueries({ queryKey: PROVIDERS_PAGE_QUERY_KEYS.providers });
+            setSetError(null);
         },
+        onError: (e) => setSetError(e?.message ?? 'Failed to delete credential'),
     });
 
     if (isLoading && !credData) {

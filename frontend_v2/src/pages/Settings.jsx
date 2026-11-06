@@ -1422,8 +1422,8 @@ function AISettings({ settings, onUpdate, onSync, onReset }) {
         try {
             await setDefaultMutation.mutateAsync({ provider_id: providerId, model_id: modelId });
             toast.success('Default LLM provider updated');
-        } catch {
-            toast.error('Failed to update LLM provider');
+        } catch (err) {
+            toast.error(err?.message ? `Failed to update LLM provider: ${err.message}` : 'Failed to update LLM provider');
         }
     };
 
@@ -1477,8 +1477,8 @@ function AISettings({ settings, onUpdate, onSync, onReset }) {
             });
             toast.success('AI settings saved to backend');
             setAiSyncState('saved');
-        } catch {
-            toast.error('Failed to save AI settings');
+        } catch (err) {
+            toast.error(err?.message ? `Failed to save AI settings: ${err.message}` : 'Failed to save AI settings');
             setAiSyncState('idle');
         }
     };

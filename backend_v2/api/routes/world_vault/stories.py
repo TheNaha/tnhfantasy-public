@@ -2980,6 +2980,7 @@ async def export_chapter_comic(
         except Exception as exc:
             logger.exception("comic_export_failed", story_id=story_id, chapter_id=chapter_id, error=str(exc))
             try:
+                await asyncio.to_thread(task_session.rollback)
                 await asyncio.to_thread(
                     task_job_service.update_job,
                     job.id,

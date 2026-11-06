@@ -268,8 +268,7 @@ def _run_asset_migration() -> None:
         from services.asset_reconciler import move_existing_assets
 
         output_dir = settings.output_dir
-        with get_session_sync():
-            moved = move_existing_assets(output_dir, lambda: get_session_sync(), user_id=settings.default_user_id)
+        moved = move_existing_assets(output_dir, get_session_sync, user_id=settings.default_user_id)
         logger.info("asset_migration_complete", moved=moved)
     except Exception as exc:
         logger.warning("asset_migration_failed", error=str(exc))

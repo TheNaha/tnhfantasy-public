@@ -6,6 +6,7 @@ import {
     importCollections, moveImagesBetweenCollections
 } from '../api/collectionsApi';
 import { buildQueryKey, QUERY_KEYS } from '../constants/queryKeys';
+import useStore from '../store/useStore';
 
 const MIGRATION_KEY = 'comfy-collections-migrated';
 const OLD_STORAGE_KEY = 'comfy-storage';
@@ -117,7 +118,11 @@ export function useDeleteCollection() {
         mutationFn: async (id) => {
             return deleteCollection(id);
         },
-        onSuccess: () => {
+        onSuccess: (_data, id) => {
+            const currentActive = useStore.getState().activeCollection;
+            if (currentActive === id) {
+                useStore.getState().setActiveCollection(null);
+            }
             invalidateAllCollections(queryClient);
         }
     });

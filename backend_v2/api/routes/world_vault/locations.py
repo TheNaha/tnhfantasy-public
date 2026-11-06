@@ -80,6 +80,8 @@ def create_location(location_in: LocationCreate, session: Session = Depends(get_
         atmosphere=location_in.atmosphere,
         tags=location_in.tags or [],
         image_path=location_in.image_path,
+        map_x=location_in.map_x,
+        map_y=location_in.map_y,
         world_id=location_in.world_id,
     )
     location.created_at = datetime.now(timezone.utc)
@@ -120,23 +122,7 @@ def get_location(location_id: str, session: Session = Depends(get_session), loca
 
 @router.put("/{location_id}", response_model=Location)
 def update_location(location_id: str, update_data: LocationUpdate, session: Session = Depends(get_session), location_repo: LocationRepository = Depends(get_location_repo)):
-    location = location_repo.get(location_id)
-    if not location:
-        raise NotFoundError("Location", location_id)
-
-    update_dict = update_data.model_dump(exclude_unset=True)
-    if update_dict.get("image_path"):
-        raise ValidationError("Use the image upload endpoint to set image_path")
-    apply_world_id(session, location, update_dict)
-    update_dict.pop("world_id", None)
-    for key, value in update_dict.items():
-        setattr(location, key, value)
-
-    location.updated_at = datetime.now(timezone.utc)
-    session.add(location)
-    session.commit()
-    session.refresh(location)
-    return location
+    return patch_location(location_id, update_data, session, location_repo)
 
 
 @router.patch("/{location_id}", response_model=Location)
