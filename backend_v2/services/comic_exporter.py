@@ -449,13 +449,14 @@ def _write_html_reader(
     manifest: dict[str, Any],
 ) -> str:
     """Write a self-contained HTML comic reader."""
+    manifest_pages = manifest.get("pages") or []
     pages_json = json.dumps(
         [
             {
                 "image": os.path.basename(p),
-                "panel_index": manifest["pages"][i].get("panel_index"),
-                "panel_content": manifest["pages"][i].get("panel_content", ""),
-                "panel_type": manifest["pages"][i].get("panel_type"),
+                "panel_index": manifest_pages[i].get("panel_index") if i < len(manifest_pages) else i,
+                "panel_content": manifest_pages[i].get("panel_content", "") if i < len(manifest_pages) else "",
+                "panel_type": manifest_pages[i].get("panel_type") if i < len(manifest_pages) else None,
             }
             for i, p in enumerate(page_paths)
         ],
@@ -539,7 +540,7 @@ def _write_html_reader(
 <div id="progress"><span id="pageNum">1</span> / <span id="pageTotal">{len(page_paths)}</span></div>
 <div id="reader">
   <div id="page-container">
-    <img id="page-img" src="pages/{os.path.basename(page_paths[0])}" alt="Page 1">
+    <img id="page-img" src="{('pages/' + os.path.basename(page_paths[0])) if page_paths else ''}" alt="Page 1">
   </div>
   <div id="caption"></div>
   <div id="controls">
@@ -578,7 +579,7 @@ render();
 </html>"""
 
     html_path = os.path.join(output_dir, "reader.html")
-    with open(html_path, "w") as f:
+    with open(html_path, "w", encoding="utf-8") as f:
         f.write(html)
     return html_path
 
@@ -605,6 +606,23 @@ async def _register_comic_assets(
             job_id=None,
             output_dir=output_dir,
         )
+
+def _assemble_and_write_outputs(
+    panels: list[dict[str, Any]],
+    output_dir: str,
+    chapter: StoryChapter,
+    story_id: str,
+    user_id: str,
+) -> tuple[list[str], dict[str, Any], str, str]:
+    """Assemble panel pages, manifest, CBZ archive and HTML reader on worker thread."""
+    page_paths = _assemble_pages(panels, output_dir, chapter)
+    manifest = _build_manifest(story_id, chapter, panels, page_paths, user_id)
+    manifest_path = os.path.join(output_dir, "comic.yaml")
+    with open(manifest_path, "w", encoding="utf-8") as f:
+        json.dump(manifest, f, indent=2)
+    cbz_path = _write_cbz(output_dir, page_paths, manifest)
+    html_path = _write_html_reader(output_dir, page_paths, manifest)
+    return page_paths, manifest, cbz_path, html_path
 
 
 async def export_comic_chapter(
@@ -648,10 +666,9 @@ async def export_comic_chapter(
     # Resolve checkpoint: story characters > scenario default > fallback.
     checkpoint = None
     if story and story.character_ids:
-        char = session.get(
-            __import__("core.entities", fromlist=["Character"]).Character,
-            story.character_ids[0],
-        )
+        from core.entities import Character
+
+        char = session.get(Character, story.character_ids[0])
         if char and getattr(char, "checkpoint", None):
             checkpoint = char.checkpoint
     if not checkpoint and story:
@@ -700,18 +717,15 @@ async def export_comic_chapter(
         user_id=user_id,
     )
 
-    # Step 3: Assemble pages (1 panel per page).
-    page_paths = _assemble_pages(panels, out, chapter)
-
-    # Step 4: Build manifest.
-    manifest = _build_manifest(story_id, chapter, panels, page_paths, user_id)
-    manifest_path = os.path.join(out, "comic.yaml")
-    with open(manifest_path, "w") as f:
-        json.dump(manifest, f, indent=2)
-
-    # Step 5: Write CBZ + HTML reader.
-    cbz_path = _write_cbz(out, page_paths, manifest)
-    html_path = _write_html_reader(out, page_paths, manifest)
+    # Step 3-5: Assemble pages, write manifest and CBZ + HTML reader (offloaded to thread).
+    page_paths, manifest, cbz_path, html_path = await asyncio.to_thread(
+        _assemble_and_write_outputs,
+        panels,
+        out,
+        chapter,
+        story_id,
+        user_id,
+    )
 
     # Step 6: Register page images as assets.
     await _register_comic_assets(
@@ -723,7 +737,7 @@ async def export_comic_chapter(
         chapter=chapter,
     )
 
-    session.commit()
+    await asyncio.to_thread(session.commit)
 
     logger.info(
         "comic_export_complete",
