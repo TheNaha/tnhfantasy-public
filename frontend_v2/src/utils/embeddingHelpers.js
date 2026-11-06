@@ -75,7 +75,8 @@ export function getShortEmbeddingName(filename = '') {
 
     // 3. Strip redundant pack prefixes ending with embeddings or embeddings_for_..._
     // e.g. _lazy_embeddings_for_all_illus_lazypos -> lazypos
-    name = name.replace(/^[_a-z0-9-]*?embeddings?(?:[_-](?:for[_-])?[a-z0-9]+)*[_-]+/i, '');
+    // Avoid greedy matching that consumes base model / embedding names (e.g. lazyup_pony, lazyneg_v3)
+    name = name.replace(/^.*?[_-]embeddings?(?:[_-]for(?:[_-]all)?[_-][a-z0-9]+)?[_-]+/i, '');
 
     // 4. Clean leading/trailing underscores and dashes
     name = name.replace(/^[_-\s]+|[_-\s]+$/g, '');

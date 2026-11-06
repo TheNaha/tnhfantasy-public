@@ -183,10 +183,13 @@ const ModelSection = memo(function ModelSection({
 
             {embeddingModels.length > 0 && (() => {
                 const filteredEmbeddings = embeddingSearch.trim()
-                    ? embeddingModels.filter((emb) =>
-                          emb.name.toLowerCase().includes(embeddingSearch.toLowerCase()) ||
-                          getShortEmbeddingName(emb.name).toLowerCase().includes(embeddingSearch.toLowerCase())
-                      )
+                    ? embeddingModels.filter((emb) => {
+                          const short = emb.display_name || getShortEmbeddingName(emb.name);
+                          return (
+                              emb.name.toLowerCase().includes(embeddingSearch.toLowerCase()) ||
+                              short.toLowerCase().includes(embeddingSearch.toLowerCase())
+                          );
+                      })
                     : embeddingModels;
 
                 return (
@@ -230,7 +233,7 @@ const ModelSection = memo(function ModelSection({
                                 <p className="text-2xs text-gray-500 py-1">No embeddings match &ldquo;{embeddingSearch}&rdquo;</p>
                             ) : (
                                 filteredEmbeddings.map((emb) => {
-                                    const shortName = getShortEmbeddingName(emb.name);
+                                    const shortName = emb.display_name || getShortEmbeddingName(emb.name);
                                     const posWeight = getEmbeddingWeight(prompt, emb.name);
                                     const negWeight = getEmbeddingWeight(negativePrompt, emb.name);
                                     const isInPos = posWeight !== null;

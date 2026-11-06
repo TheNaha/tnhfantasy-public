@@ -1418,9 +1418,9 @@ function DirectorStatekeeperSection({ chat, onSave }) {
                         onChange={(e) => onSave({ director_autonomy_level: e.target.value })}
                         className="bg-gray-800 border border-white/10 rounded px-2 py-1 text-2xs text-gray-200 focus:outline-none focus:border-emerald-500/50"
                     >
-                        <option value="strict">Strict (1 turn / User reply)</option>
-                        <option value="balanced">Balanced (Up to {chat.max_autonomous_turns || 4} turns, prob ≥ 0.65)</option>
-                        <option value="cinematic">Cinematic (Up to {chat.max_autonomous_turns || 4} turns, prob ≥ 0.50)</option>
+                        <option value="strict">Strict (1 turn)</option>
+                        <option value="balanced">Balanced (≤ {chat.max_autonomous_turns || 4} turns)</option>
+                        <option value="cinematic">Cinematic (≤ {chat.max_autonomous_turns || 4} turns)</option>
                     </select>
                 </div>
 
@@ -1443,10 +1443,10 @@ function DirectorStatekeeperSection({ chat, onSave }) {
                         }}
                         className="bg-gray-800 border border-white/10 rounded px-2 py-1 text-2xs text-purple-200 focus:outline-none focus:border-purple-500/50"
                     >
-                        <option value="0.35">Sensitive (35% threshold — triggers frequently)</option>
-                        <option value="0.55">Standard (55% threshold — balanced)</option>
-                        <option value="0.75">Strict (75% threshold — major changes only)</option>
-                        <option value="wild">Wild (Always trigger on every turn)</option>
+                        <option value="0.35">Sensitive (35%)</option>
+                        <option value="0.55">Standard (55%)</option>
+                        <option value="0.75">Strict (75%)</option>
+                        <option value="wild">Wild (Always)</option>
                     </select>
                 </div>
 
@@ -1461,9 +1461,9 @@ function DirectorStatekeeperSection({ chat, onSave }) {
                         onChange={(e) => handleFieldSave('image_threshold', parseFloat(e.target.value))}
                         className="bg-gray-800 border border-white/10 rounded px-2 py-1 text-2xs text-amber-200 focus:outline-none focus:border-amber-500/50"
                     >
-                        <option value="0.45">Eager (45% threshold — illustrates more beats)</option>
-                        <option value="0.65">Standard (65% threshold — balanced)</option>
-                        <option value="0.85">Sparing (85% threshold — only striking moments)</option>
+                        <option value="0.45">Eager (45%)</option>
+                        <option value="0.65">Standard (65%)</option>
+                        <option value="0.85">Sparing (85%)</option>
                     </select>
                 </div>
 

@@ -462,7 +462,7 @@ export default function Layout({ children }) {
                     scrollable — at 900px tall there are more items below. */}
                 <nav
                     className={clsx(
-                        "flex-1 min-h-0 pt-4 pb-1 space-y-1 overflow-y-auto custom-scrollbar transition-all",
+                        "flex-1 min-h-0 pt-4 pb-8 space-y-1 overflow-y-auto custom-scrollbar transition-all",
                         isSidebarCollapsed ? "lg:px-2 px-4" : "px-4"
                     )}
                     // A 16px fade left the last item looking greyed-out — people read
@@ -518,7 +518,6 @@ export default function Layout({ children }) {
                     <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/llm-studio" icon={Cpu} label="LLM Studio" isCollapsed={isSidebarCollapsed} />
                     <div className={clsx("mt-4 mb-1.5 px-4 text-2xs font-semibold text-gray-500 uppercase tracking-wider", isSidebarCollapsed && "lg:hidden")}>System</div>
                     <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/statistics" icon={BarChart3} label="Statistics" isCollapsed={isSidebarCollapsed} />
-                    <NavItem onNavigate={() => setIsMobileMenuOpen(false)} to="/settings" icon={Settings2} label="Settings" isCollapsed={isSidebarCollapsed} />
                 </nav>
 
                 <ProviderStatusPanel isCollapsed={isSidebarCollapsed} />
@@ -528,18 +527,30 @@ export default function Layout({ children }) {
                         onClick={() => setShowCommandPalette(true)}
                         className={clsx(
                             "flex items-center rounded-xl text-gray-400 hover:text-gray-200 hover:bg-white/5 transition-colors text-xs font-medium",
-                            isSidebarCollapsed ? "lg:justify-center lg:p-2 lg:w-10 lg:h-10 gap-2 px-3 py-2 w-full" : "gap-2 px-3 py-2 w-full"
+                            isSidebarCollapsed ? "lg:justify-center lg:p-2 lg:w-10 lg:h-10 gap-2 px-3 py-2 w-full" : "gap-2 px-3 py-2 flex-1 min-w-0"
                         )}
                         aria-label="Open command palette"
                         title="Quick search (Cmd/Ctrl+K)"
                     >
-                        <Command size={15} aria-hidden="true" />
-                        <span className={clsx(isSidebarCollapsed && "lg:hidden")}>Quick search</span>
-                        <kbd className={clsx("kbd ml-auto", isSidebarCollapsed && "lg:hidden")}>⌘K</kbd>
+                        <Command size={15} aria-hidden="true" className="shrink-0" />
+                        <span className={clsx("truncate", isSidebarCollapsed && "lg:hidden")}>Quick search</span>
+                        <kbd className={clsx("kbd ml-auto shrink-0", isSidebarCollapsed && "lg:hidden")}>⌘K</kbd>
                     </button>
+                    <Link
+                        to="/settings"
+                        onClick={() => setIsMobileMenuOpen(false)}
+                        className={clsx(
+                            "p-2 rounded-xl text-gray-400 hover:text-gray-200 hover:bg-white/5 transition-colors shrink-0",
+                            location.pathname === '/settings' && "text-blue-400 bg-blue-500/10"
+                        )}
+                        aria-label="Settings"
+                        title="Settings"
+                    >
+                        <Settings2 size={16} aria-hidden="true" />
+                    </Link>
                     <button
                         onClick={() => setShowShortcutsModal(true)}
-                        className="p-2 rounded-xl text-gray-400 hover:text-gray-200 hover:bg-white/5 transition-colors"
+                        className="p-2 rounded-xl text-gray-400 hover:text-gray-200 hover:bg-white/5 transition-colors shrink-0"
                         aria-label="Keyboard shortcuts"
                         title="Keyboard shortcuts (?)"
                     >

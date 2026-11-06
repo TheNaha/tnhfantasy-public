@@ -1118,9 +1118,9 @@ export default function LLMStudio() {
                                                         <span className="font-mono text-gray-300 truncate max-w-[150px]">{agent.model_override}</span>
                                                     </div>
                                                 )}
-                                                <div className="flex justify-between items-center">
-                                                    <span>Sampling:</span>
-                                                    <span className="font-mono text-gray-400">
+                                                <div className="grid grid-cols-[auto_1fr] items-center gap-2">
+                                                    <span className="shrink-0">Sampling:</span>
+                                                    <span className="font-mono text-gray-400 text-right whitespace-nowrap overflow-hidden text-ellipsis">
                                                         T: {agent.temperature ?? 'def'} · P: {agent.top_p ?? 'def'} · Max: {agent.max_tokens ?? 'def'}
                                                     </span>
                                                 </div>

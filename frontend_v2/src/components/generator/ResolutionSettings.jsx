@@ -88,10 +88,10 @@ const ResolutionSettings = memo(function ResolutionSettings() {
                         >
                             <div className="w-5 h-5 flex items-center justify-center">
                                 <div
-                                    className="border-2 border-current rounded-sm transition-all"
+                                    className="border border-current/80 bg-current/20 rounded-[2px] transition-all"
                                     style={{
-                                        width: p.w >= p.h ? '16px' : `${(p.w / p.h) * 16}px`,
-                                        height: p.h >= p.w ? '16px' : `${(p.h / p.w) * 16}px`
+                                        width: p.w >= p.h ? '16px' : `${Math.max(6, Math.round((p.w / p.h) * 16))}px`,
+                                        height: p.h >= p.w ? '16px' : `${Math.max(6, Math.round((p.h / p.w) * 16))}px`
                                     }}
                                 />
                             </div>

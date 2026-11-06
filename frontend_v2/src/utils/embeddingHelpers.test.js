@@ -57,6 +57,14 @@ describe('embeddingHelpers', () => {
             expect(getShortEmbeddingName('_lazy_embeddings_for_all_illus_lazyhand_1833157.safetensors')).toBe('lazyhand');
         });
 
+        it('preserves multi-word model names without stripping base words', () => {
+            expect(getShortEmbeddingName('_lazy_embeddings_for_all_illus_lazyup_pony_1473187.safetensors')).toBe('lazyup_pony');
+            expect(getShortEmbeddingName('_lazy_embeddings_for_all_illus_lazydn_pony_1473204.safetensors')).toBe('lazydn_pony');
+            expect(getShortEmbeddingName('_lazy_embeddings_for_all_illus_lazypos_v1_1470451.safetensors')).toBe('lazypos_v1');
+            expect(getShortEmbeddingName('_lazy_embeddings_for_all_illus_lazyneg_v3_1860747.safetensors')).toBe('lazyneg_v3');
+            expect(getShortEmbeddingName('_lazy_embeddings_for_all_illus_lazyhand_v10_1550840.safetensors')).toBe('lazyhand_v10');
+        });
+
         it('shortens standalone models and strips version IDs and extensions', () => {
             expect(getShortEmbeddingName('badhandv4.safetensors')).toBe('badhandv4');
             expect(getShortEmbeddingName('easynegative.pt')).toBe('easynegative');

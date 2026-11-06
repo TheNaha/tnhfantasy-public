@@ -158,10 +158,14 @@ export default function SimpleGenerator() {
                     aria-checked={!isSimpleMode}
                     aria-label={`Switch to ${isSimpleMode ? 'advanced' : 'simple'} mode`}
                     onClick={() => setIsSimpleMode(prev => !prev)}
-                    className="relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+                    className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 ${
+                        !isSimpleMode ? 'bg-blue-600' : 'bg-gray-700'
+                    }`}
                 >
                     <span
-                        className={`inline-block h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${isSimpleMode ? 'translate-x-0' : 'translate-x-6'}`}
+                        className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-md ring-0 transition duration-200 ease-in-out ${
+                            !isSimpleMode ? 'translate-x-5' : 'translate-x-0'
+                        }`}
                         aria-hidden="true"
                     />
                 </button>

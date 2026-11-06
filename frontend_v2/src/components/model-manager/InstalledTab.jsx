@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, memo } from 'react';
-import { Search, Loader2, RotateCw, Trash2, HardDrive, Globe, Wand2, Check, CheckSquare, Download, X } from 'lucide-react';
+import { Search, Loader2, RotateCw, Trash2, HardDrive, Globe, Wand2, Check, CheckSquare, Download, X, Database } from 'lucide-react';
 import ProgressiveImage from '../ProgressiveImage';
 import { modelListKey } from '../../constants/queryKeys';
 import { getOptimizedImageUrl } from '../../utils/imageOptimization';
@@ -586,7 +586,7 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
                         title="Resync All Metadata"
                         aria-label="Resync All Metadata"
                     >
-                        <RotateCw size={20} className="text-blue-400 hover:text-blue-300 drop-shadow-md" />
+                        <Database size={20} className="text-blue-400 hover:text-blue-300 drop-shadow-md" />
                     </button>
 
                     <button
