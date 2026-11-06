@@ -44,9 +44,13 @@ _model_availability_cache = TTLCache(
     ttl=MODEL_AVAILABILITY_CACHE_TTL_SECONDS
 )
 
+_HEALTH_CACHE_TTL_SECONDS = parse_positive_float(
+    os.getenv("COMFY_LB_HEALTH_CACHE_TTL_SECONDS"),
+    45.0,
+)
 _provider_health_cache = TTLCache(
     maxsize=100,
-    ttl=15.0
+    ttl=_HEALTH_CACHE_TTL_SECONDS,
 )
 
 # Capability dicts per provider, fetched lazily from the engine's object_info
@@ -99,10 +103,10 @@ def streak_threshold_for(task_type: str) -> int:
     return _FAILURE_STREAK_THRESHOLD
 
 # Bound for the in-process engine health probe in `_check_provider_health`.
-# The 15s health cache means this only applies to the first caller to miss.
+# The health cache means this only applies to the first caller to miss.
 _ENGINE_HEALTH_PROBE_TIMEOUT_SECONDS = parse_positive_float(
     os.getenv("COMFY_LB_ENGINE_HEALTH_TIMEOUT_SECONDS"),
-    5.0,
+    1.5,
 )
 
 
