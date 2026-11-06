@@ -128,8 +128,8 @@ function MemoriesPanelBody({ characterId }) {
             const count = res?.reindexed ?? 0;
             const remaining = res?.remaining ?? 0;
             toast.success(`Reindexed ${count} embeddings (${remaining} remaining)`);
-        } catch {
-            toast.error('Failed to reindex memory embeddings');
+        } catch (err) {
+            toast.error(err?.message ? `Failed to reindex memory embeddings: ${err.message}` : 'Failed to reindex memory embeddings');
         }
     };
 
