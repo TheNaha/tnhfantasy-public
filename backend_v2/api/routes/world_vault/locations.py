@@ -80,6 +80,8 @@ def create_location(location_in: LocationCreate, session: Session = Depends(get_
         atmosphere=location_in.atmosphere,
         tags=location_in.tags or [],
         image_path=location_in.image_path,
+        map_x=location_in.map_x,
+        map_y=location_in.map_y,
         world_id=location_in.world_id,
     )
     location.created_at = datetime.now(timezone.utc)

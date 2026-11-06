@@ -15,7 +15,14 @@ class TestLocationCRUD:
     def test_create_and_get_location(self, client, session):
         resp = client.post(
             "/api/v2/locations",
-            json={"name": "Mistvale", "description": "A foggy valley", "atmosphere": "gloomy", "tags": ["forest"]},
+            json={
+                "name": "Mistvale",
+                "description": "A foggy valley",
+                "atmosphere": "gloomy",
+                "tags": ["forest"],
+                "map_x": 12.5,
+                "map_y": 45.0,
+            },
         )
         assert resp.status_code == 200, resp.text
         body = resp.json()
@@ -23,10 +30,14 @@ class TestLocationCRUD:
         assert body["atmosphere"] == "gloomy"
         assert body["tags"] == ["forest"]
         assert body["id"]
+        assert body["map_x"] == 12.5
+        assert body["map_y"] == 45.0
 
         got = client.get(f"/api/v2/locations/{body['id']}")
         assert got.status_code == 200
         assert got.json()["name"] == "Mistvale"
+        assert got.json()["map_x"] == 12.5
+        assert got.json()["map_y"] == 45.0
 
     def test_list_locations_ordered(self, client, session):
         client.post("/api/v2/locations", json={"name": "Zion"})
