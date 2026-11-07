@@ -116,7 +116,9 @@ class _ImageReducer:
         fields.setdefault("progress", self._current_progress)
         fields.setdefault("overall_progress", self._current_overall)
         fields.setdefault("message", self._current_message or f"Rendering: {int(self._current_progress)}%")
-        event_extra = fields.pop("event_extra", None) or ({"preview": self._latest_preview} if self._latest_preview else None)
+        from config import get_generator_preview_method
+        allow_preview = get_generator_preview_method() != "none"
+        event_extra = fields.pop("event_extra", None) or ({"preview": self._latest_preview} if (self._latest_preview and allow_preview) else None)
         await self.job_service.update_job(self.job_id, event_extra=event_extra, **fields)
 
     async def __call__(self, ev: dict) -> None:
@@ -157,18 +159,20 @@ class _ImageReducer:
                 message=f"Cached {len(nodes)} nodes...",
             )
         elif event == "preview":
-            preview = ev.get("preview")
-            if preview:
-                self._latest_preview = preview
-                now = time.perf_counter()
-                if now - self._last_preview_persist_at >= PREVIEW_THROTTLE_SECONDS:
-                    self._last_preview_persist_at = now
-                    await self._persist_progress(
-                        status=JobStatus.GENERATING,
-                        event_type=EventType.JOB_PROGRESS,
-                        include_full_metadata=False,
-                        event_extra={"preview": preview},
-                    )
+            from config import get_generator_preview_method
+            if get_generator_preview_method() != "none":
+                preview = ev.get("preview")
+                if preview:
+                    self._latest_preview = preview
+                    now = time.perf_counter()
+                    if now - self._last_preview_persist_at >= PREVIEW_THROTTLE_SECONDS:
+                        self._last_preview_persist_at = now
+                        await self._persist_progress(
+                            status=JobStatus.GENERATING,
+                            event_type=EventType.JOB_PROGRESS,
+                            include_full_metadata=False,
+                            event_extra={"preview": preview},
+                        )
         elif event == "completed":
             # Terminal: clear preview and finalise
             self._latest_preview = None
