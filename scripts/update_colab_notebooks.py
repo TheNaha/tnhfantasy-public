@@ -1397,12 +1397,22 @@ else:
     is_multi_gpu = False
     print("⚡ Single GPU Mode: Dynamic cooperative VRAM Arbiter active.")
 
+def drop_page_cache():
+    try:
+        subprocess.run(["sync"], check=False)
+        with open("/proc/sys/vm/drop_caches", "w") as f:
+            f.write("3\\n")
+    except Exception:
+        pass
+
 # 0c. RAM Caching Policy
 ram_strat = CACHE_IN_RAM_SETTING.lower() if "CACHE_IN_RAM_SETTING" in locals() else "auto"
 tot_ram_gb = 16.0
+ram_avail_gb = float("inf")
 try:
     import psutil
     tot_ram_gb = psutil.virtual_memory().total / (1024**3)
+    ram_avail_gb = psutil.virtual_memory().available / (1024**3)
 except Exception:
     pass
 
@@ -1411,9 +1421,9 @@ if "disabled" in ram_strat:
 elif "always" in ram_strat:
     enable_ram_cache = True
 else:
-    enable_ram_cache = tot_ram_gb >= 20.0
+    enable_ram_cache = (tot_ram_gb >= 20.0) and (ram_avail_gb >= 4.0)
 
-print(f"🧠 Host RAM: {tot_ram_gb:.1f} GB | Models-in-RAM Cache: {'ENABLED (/dev/shm)' if enable_ram_cache else 'DISABLED (Direct Volume Streaming)'}")
+print(f"🧠 Host RAM: {tot_ram_gb:.1f} GB ({ram_avail_gb:.1f} GB avail) | Models-in-RAM Cache: {'ENABLED (/dev/shm)' if enable_ram_cache else 'DISABLED (Direct Volume Streaming)'}")
 
 # 0d. Expand /dev/shm capacity early for Direct-to-RAM streaming on High-RAM hosts
 #
@@ -2390,8 +2400,8 @@ def sync_tier2_warm_cache():
             print(f"⚠️ [Tier 2 LoRA Sync] Error scanning LoRAs: {exc}")
 
     if synced_count > 0:
+        drop_page_cache()
         print(f"✨ [Tier 2 Background Sync] Warm cache synchronization finished ({synced_count} models/LoRAs cached on NVMe).")
-
 def sync_output_to_drive():
     \"\"\"Replicate finished ComfyUI output images from local NVMe to Google Drive asynchronously.\"\"\"
     if not (is_colab and os.path.exists(gdrive_path)):
@@ -2813,6 +2823,7 @@ def launch_comfyui_track(preview_method=None):
             "--cuda-device", str(comfy_gpu_device),
             "--preview-method", comfy_active_preview_method,
             "--cuda-malloc",
+            "--disable-pinned-memory",
         ]
         worker_procs["comfy"] = subprocess.Popen(comfy_cmd, env=env_comfy, stdout=out, stderr=out)
 
@@ -3031,6 +3042,7 @@ if mode_key in ("hybrid", "model"):
     threading.Thread(target=sync_tier2_warm_cache, name="Tier2WarmSync", daemon=True).start()
     threading.Thread(target=sync_output_to_drive, name="OutputDriveSync", daemon=True).start()
 # 3. Unified Health Check Loop
+drop_page_cache()
 print("⏳ Waiting for services to become healthy...")
 services_to_check = [("agent", agent_port, "/health", "Remote Agent")]
 if mode_key in ("hybrid", "model"):
