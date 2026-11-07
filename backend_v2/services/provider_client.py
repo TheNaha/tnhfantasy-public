@@ -369,6 +369,7 @@ async def call_in_process_image_provider(
     timeout: float,
     use_snapshot: bool = False,
     provider_id: str = "",
+    metadata: dict | None = None,
 ) -> dict:
     reducer = _ImageReducer(job_id, job_service, total_nodes, provider_id)
     await job_service.update_job(job_id, status=JobStatus.CONNECTED, message=f"Connected to {provider_id}...")
@@ -379,6 +380,7 @@ async def call_in_process_image_provider(
                 job_id=job_id,
                 use_snapshot=use_snapshot,
                 timeout=timeout,
+                metadata=metadata,
             ):
                 result = await reducer(event)
                 if result is not None:

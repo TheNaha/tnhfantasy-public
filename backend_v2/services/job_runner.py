@@ -517,6 +517,7 @@ async def execute_job(
                                 timeout=timeout,
                                 use_snapshot=use_snapshot,
                                 provider_id=current_provider.id,
+                                metadata=job.metadata_,
                             )
                     elif runtime.mode == "external_worker":
                         from infrastructure.worker_registry import dispatch_job_to_worker
