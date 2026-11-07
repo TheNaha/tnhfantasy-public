@@ -104,6 +104,7 @@ class _ImageReducer:
         self._current_message: str | None = None
         self._latest_preview: str | None = None
         self._last_preview_persist_at: float = 0.0
+        self._last_preview_progress: float = 0.0
 
     async def _persist_progress(self, **fields) -> None:
         """Write progress and emit event immediately with zero progress throttling."""
@@ -165,8 +166,12 @@ class _ImageReducer:
                 if preview:
                     self._latest_preview = preview
                     now = time.perf_counter()
-                    if now - self._last_preview_persist_at >= PREVIEW_THROTTLE_SECONDS:
+                    progress_diff = abs(self._current_progress - self._last_preview_progress)
+                    if (now - self._last_preview_persist_at >= PREVIEW_THROTTLE_SECONDS) and (
+                        progress_diff >= 1.0 or self._last_preview_persist_at == 0.0
+                    ):
                         self._last_preview_persist_at = now
+                        self._last_preview_progress = self._current_progress
                         await self._persist_progress(
                             status=JobStatus.GENERATING,
                             event_type=EventType.JOB_PROGRESS,
