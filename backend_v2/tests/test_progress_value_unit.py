@@ -234,3 +234,31 @@ class TestBothHalvesAgree:
         assert "coerce_worker_percent" in source
         assert 'value_unit' in source
         assert "val * 100" not in source, "the local heuristic must be gone"
+
+
+@pytest.mark.asyncio
+async def test_preview_timer_decoupled_from_progress(reducer):
+    """Progress frames must emit immediately while preview frames are rate-bounded."""
+    # Progress frames arrive rapidly
+    for i in range(1, 6):
+        await reducer({"event": "progress", "value": i * 10, "value_unit": "percent"})
+    assert len(reducer.job_service.calls) == 5
+    assert reducer.job_service.calls[-1]["progress"] == 50
+
+    # First preview frame emits
+    await reducer({"event": "preview", "preview": "frame_1"})
+    assert len(reducer.job_service.calls) == 6
+    assert reducer.job_service.calls[-1]["event_extra"]["preview"] == "frame_1"
+
+    # Immediate second preview frame (within 0.5s throttle) is absorbed without dropping progress
+    await reducer({"event": "preview", "preview": "frame_2"})
+    assert len(reducer.job_service.calls) == 6
+
+    # Progress continues immediately
+    await reducer({"event": "progress", "value": 60, "value_unit": "percent"})
+    assert len(reducer.job_service.calls) == 7
+    assert reducer.job_service.calls[-1]["progress"] == 60
+
+    # Completion immediately clears the latest preview reference
+    await reducer({"event": "completed", "outputs": [{"filename": "out.png"}]})
+    assert reducer._latest_preview is None

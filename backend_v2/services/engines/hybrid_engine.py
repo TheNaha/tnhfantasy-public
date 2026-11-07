@@ -189,7 +189,7 @@ class HybridRemoteEngine(InProcessEngine):
         # Auto-detect from agent /info
         try:
             client = self.image_engine.get_agent_client()
-            resp = await client.get("/info", timeout=5.0)
+            resp = await client.get("/info", timeout=1.5)
             if resp.status_code == 200:
                 data = resp.json() or {}
                 gpu = data.get("gpu") or {}
@@ -408,9 +408,17 @@ class HybridRemoteEngine(InProcessEngine):
     async def check_health(self) -> Dict[str, Any]:
         """Aggregate health probing ComfyUI, Agent, LLM, and TTS."""
         t0 = time.monotonic()
-        policy = await self._resolve_policy()
-        image_health = await self.image_engine.check_health()
-        llm_health = await self.llm_engine.check_health()
+        policy_coro = self._resolve_policy()
+        image_coro = self.image_engine.check_health()
+        llm_coro = self.llm_engine.check_health()
+
+        results = await asyncio.gather(policy_coro, image_coro, llm_coro, return_exceptions=True)
+
+        policy = results[0] if isinstance(results[0], str) else (
+            self.concurrency_policy if self.concurrency_policy in ("exclusive", "semi_concurrent", "concurrent") else "exclusive"
+        )
+        image_health = results[1] if isinstance(results[1], dict) else {"status": "unhealthy", "error": str(results[1])}
+        llm_health = results[2] if isinstance(results[2], dict) else {"status": "unhealthy", "error": str(results[2])}
 
         comfy_ok = image_health.get("comfy_reachable", False) or (image_health.get("status") in ("healthy", "ok"))
         agent_ok = image_health.get("agent_reachable", True) if ("agent_reachable" in image_health) else (image_health.get("status") in ("healthy", "ok"))

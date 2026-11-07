@@ -168,7 +168,7 @@ export function useJobsRealtime() {
             });
 
             queryClient.setQueryData(['jobs', job.id], (old) =>
-                old ? { ...old, ...job } : job
+                old ? { ...old, ...job, preview: null } : { ...job, preview: null }
             );
             queryClient.invalidateQueries({ queryKey: ['jobs', 'queue'] });
 

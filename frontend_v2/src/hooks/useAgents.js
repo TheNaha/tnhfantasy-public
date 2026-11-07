@@ -102,6 +102,7 @@ export function useUploadAgentAvatar() {
             queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.AGENTS, variables.agentId) });
             queryClient.invalidateQueries({ queryKey: AGENTS_WITH_VARIANTS_KEY });
         },
+        onError: (error) => toast.error(`Failed to upload agent avatar: ${error?.message || 'Unknown error'}`),
     });
 }
 

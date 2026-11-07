@@ -532,8 +532,9 @@ def install_python_packages(req_files=None, packages=None):
     os.environ["PIP_BREAK_SYSTEM_PACKAGES"] = "1"
     os.environ["UV_INDEX_STRATEGY"] = "unsafe-best-match"
     os.environ["UV_EXTRA_INDEX_URL"] = "https://download.pytorch.org/whl/cu124"
-
-    # Separate git dependencies (e.g. sam2) so git clones don't block instant wheel resolution
+    uv_cache_dir = f"{gdrive_root}/uv_cache"
+    os.makedirs(uv_cache_dir, exist_ok=True)
+    os.environ["UV_CACHE_DIR"] = uv_cache_dir
     sanitized_reqs = []
     git_packages = []
 
@@ -599,14 +600,13 @@ def install_python_packages(req_files=None, packages=None):
     _monitor_and_prune_wheel_cache()
 
     if USE_UV:
-        wheel_opt = ["--find-links", wheel_cache_dir]
+        wheel_opt = ["--find-links", wheel_cache_dir, "--cache-dir", uv_cache_dir]
         if isinstance(USE_UV, str) and " -m " in USE_UV:
             uv_base = [sys.executable, "-m", "uv", "pip", "install", "--system", "--break-system-packages", "--index-strategy", "unsafe-best-match", *wheel_opt, "--extra-index-url", "https://download.pytorch.org/whl/cu124"]
         elif isinstance(USE_UV, str):
             uv_base = [USE_UV, "pip", "install", "--system", "--break-system-packages", "--index-strategy", "unsafe-best-match", *wheel_opt, "--extra-index-url", "https://download.pytorch.org/whl/cu124"]
         else:
             uv_base = ["uv", "pip", "install", "--system", "--break-system-packages", "--index-strategy", "unsafe-best-match", *wheel_opt, "--extra-index-url", "https://download.pytorch.org/whl/cu124"]
-    else:
         uv_base = None
 
     def _install_git_packages():
@@ -647,6 +647,23 @@ def install_python_packages(req_files=None, packages=None):
                 except Exception as e:
                     print(f"  ⚠️ Warning: Error installing {pkg_name}: {e}")
 
+    def _populate_wheel_cache():
+        try:
+            whl_cmd = [
+                sys.executable, "-m", "pip", "wheel",
+                "-w", wheel_cache_dir,
+                "--find-links", wheel_cache_dir,
+                "--no-deps",
+            ]
+            for r in sanitized_reqs:
+                whl_cmd.extend(["-r", r])
+            whl_cmd.extend(packages)
+            print("📦 Caching wheels to Google Drive for instantaneous future boots...")
+            subprocess.run(whl_cmd, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            _monitor_and_prune_wheel_cache()
+        except Exception:
+            pass
+
     if USE_UV and uv_base:
         cmd = list(uv_base)
         for r in sanitized_reqs:
@@ -657,6 +674,7 @@ def install_python_packages(req_files=None, packages=None):
             res = subprocess.run(cmd, capture_output=True, text=True)
             if res.returncode == 0:
                 _install_git_packages()
+                _populate_wheel_cache()
                 return
             err_output = (res.stderr or res.stdout or "").strip()
             first_err = next((line for line in err_output.splitlines() if "error:" in line.lower() or "exception" in line.lower()), "")
@@ -683,6 +701,7 @@ def install_python_packages(req_files=None, packages=None):
 
         if not failed_reqs and not failed_pkgs:
             _install_git_packages()
+            _populate_wheel_cache()
             return
 
         sanitized_reqs = failed_reqs
@@ -699,18 +718,7 @@ def install_python_packages(req_files=None, packages=None):
     except Exception as e:
         print(f"⚠️ pip installation error: {e}")
 
-    try:
-        if packages:
-            subprocess.Popen([
-                sys.executable, "-m", "pip", "wheel",
-                "-w", wheel_cache_dir,
-                "--find-links", wheel_cache_dir,
-                "--no-deps",
-                *packages
-            ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            _monitor_and_prune_wheel_cache()
-    except Exception:
-        pass
+    _populate_wheel_cache()
 # 1. Install Networking Tool (NetBird or Cloudflared)
 
 if tunnel_key == "netbird":
@@ -1130,19 +1138,20 @@ def _install_llama_server(llama_dir: str, target_llama: str, cached_bundle: str)
         _link_llama_bundle(llama_dir, target_llama)
     except Exception as exc:
         print(f"⚠️ Could not fetch the llama.cpp release: {exc}")
+    if _llama_can_run(target_llama):
+        try:
+            os.makedirs(os.path.dirname(cached_bundle), exist_ok=True)
+            if os.path.exists(llama_tar):
+                shutil.copy(llama_tar, cached_bundle)
+                print("💾 Cached complete llama.cpp bundle to Google Drive for future sessions.")
+        except Exception as e:
+            print(f"⚠️ Could not cache bundle to Drive: {e}")
     if os.path.exists(llama_tar):
         try:
             os.remove(llama_tar)
         except Exception:
             pass
-
     if _llama_can_run(target_llama):
-        try:
-            os.makedirs(os.path.dirname(cached_bundle), exist_ok=True)
-            shutil.copy(llama_tar, cached_bundle)
-            print("💾 Cached complete llama.cpp bundle to Google Drive for future sessions.")
-        except Exception as e:
-            print(f"⚠️ Could not cache bundle to Drive: {e}")
         return True
 
     print("⚠️ The prebuilt bundle cannot run on this image either. Building from source.")
@@ -2445,19 +2454,20 @@ def _install_llama_server(llama_dir: str, target_llama: str, cached_bundle: str)
         _link_llama_bundle(llama_dir, target_llama)
     except Exception as exc:
         print(f"⚠️ Could not fetch the llama.cpp release: {exc}")
+    if _llama_can_run(target_llama):
+        try:
+            os.makedirs(os.path.dirname(cached_bundle), exist_ok=True)
+            if os.path.exists(llama_tar):
+                shutil.copy(llama_tar, cached_bundle)
+                print("💾 Cached complete llama.cpp bundle to Google Drive for future sessions.")
+        except Exception as e:
+            print(f"⚠️ Could not cache bundle to Drive: {e}")
     if os.path.exists(llama_tar):
         try:
             os.remove(llama_tar)
         except Exception:
             pass
-
     if _llama_can_run(target_llama):
-        try:
-            os.makedirs(os.path.dirname(cached_bundle), exist_ok=True)
-            shutil.copy(llama_tar, cached_bundle)
-            print("💾 Cached complete llama.cpp bundle to Google Drive for future sessions.")
-        except Exception as e:
-            print(f"⚠️ Could not cache bundle to Drive: {e}")
         return True
 
     print("⚠️ The prebuilt bundle cannot run on this image either. Building from source.")
@@ -2596,11 +2606,11 @@ def start_remote_agent():
         WORKER_MODE=agent_work_mode,
         PORT=str(agent_port),
         HOST="127.0.0.1",
-        BACKEND_URL=BACKEND_URL.strip() if ("BACKEND_URL" in locals() and BACKEND_URL) else "",
-        PROVIDER_ID=PROVIDER_ID.strip() if ("PROVIDER_ID" in locals() and PROVIDER_ID) else "colab_worker",
-        CIVITAI_TOKEN=CIVITAI_TOKEN.strip() if ("CIVITAI_TOKEN" in locals() and CIVITAI_TOKEN) else os.environ.get("CIVITAI_TOKEN", ""),
-        HF_TOKEN=HF_TOKEN.strip() if ("HF_TOKEN" in locals() and HF_TOKEN) else os.environ.get("HF_TOKEN", ""),
-        LLM_DATA_DIR=GDRIVE_LLM_PATH.strip() if ("GDRIVE_LLM_PATH" in locals() and GDRIVE_LLM_PATH) else "/content/drive/MyDrive/tnhfantasy/llm_models",
+        BACKEND_URL=str(globals().get("BACKEND_URL") or os.environ.get("BACKEND_URL", "")).strip(),
+        PROVIDER_ID=str(globals().get("PROVIDER_ID") or os.environ.get("PROVIDER_ID", "colab_worker")).strip(),
+        CIVITAI_TOKEN=str(globals().get("CIVITAI_TOKEN") or os.environ.get("CIVITAI_TOKEN", "")).strip(),
+        HF_TOKEN=str(globals().get("HF_TOKEN") or os.environ.get("HF_TOKEN", "")).strip(),
+        LLM_DATA_DIR=str(globals().get("GDRIVE_LLM_PATH") or os.environ.get("GDRIVE_LLM_PATH", "/content/drive/MyDrive/tnhfantasy/llm_models")).strip(),
         LLM_UPSTREAM_BASE=f"http://127.0.0.1:{llm_port}/v1",
         RAM_CACHE_DIR="/dev/shm/tnh_ram_cache",
         RAM_CACHE_BUDGET_GB="40" if enable_ram_cache else "0",
@@ -2627,7 +2637,8 @@ def start_remote_agent():
 comfy_active_preview_method = "auto"
 
 def fetch_backend_preview_method():
-    backend_val = (BACKEND_URL.strip() if "BACKEND_URL" in locals() and BACKEND_URL else "").rstrip("/")
+    raw_url = globals().get("BACKEND_URL") or locals().get("BACKEND_URL") or os.environ.get("BACKEND_URL", "")
+    backend_val = (str(raw_url).strip() if raw_url else "").rstrip("/")
     if not backend_val:
         return None
     try:
@@ -3627,11 +3638,11 @@ elif OPERATION == "📥 Download Model from URL":
         print("Please enter a valid DOWNLOAD_URL.")
 
 elif OPERATION == "🔄 Trigger Backend Reconciliation (Bulk Download to Provider)":
-    api_base = (BACKEND_URL.strip() if "BACKEND_URL" in locals() and BACKEND_URL else "").rstrip("/")
+    api_base = str(globals().get("BACKEND_URL") or locals().get("BACKEND_URL") or os.environ.get("BACKEND_URL", "")).strip().rstrip("/")
     if not api_base:
         print("⚠️ BACKEND_URL is not set. Please configure BACKEND_URL in Cell 2 to trigger reconciliation.")
     else:
-        pid = (PROVIDER_ID.strip() if "PROVIDER_ID" in locals() and PROVIDER_ID.strip() else locals().get("provider_id", "colab_worker"))
+        pid = str(globals().get("PROVIDER_ID") or locals().get("PROVIDER_ID") or "colab_worker").strip()
         print(f"🔄 Triggering model reconciliation on backend ({api_base}) for provider '{pid}'...")
         reconcile_url = f"{api_base}/api/v2/providers/{pid}/reconcile?force=true&quick_sync=false"
         try:
@@ -3670,11 +3681,11 @@ elif OPERATION == "🔄 Trigger Backend Reconciliation (Bulk Download to Provide
             print(f"❌ Failed to trigger reconciliation: {exc}")
 
 elif OPERATION == "📥 Direct Bulk Download from Backend Manifest to Drive":
-    api_base = (BACKEND_URL.strip() if "BACKEND_URL" in locals() and BACKEND_URL else "").rstrip("/")
+    api_base = str(globals().get("BACKEND_URL") or locals().get("BACKEND_URL") or os.environ.get("BACKEND_URL", "")).strip().rstrip("/")
     if not api_base:
         print("⚠️ BACKEND_URL is not set. Please configure BACKEND_URL in Cell 2 to sync from backend.")
     else:
-        pid = (PROVIDER_ID.strip() if "PROVIDER_ID" in locals() and PROVIDER_ID.strip() else locals().get("provider_id", "colab_worker"))
+        pid = str(globals().get("PROVIDER_ID") or locals().get("PROVIDER_ID") or "colab_worker").strip()
         manifest_url = f"{api_base}/api/v2/models/sync-manifest?provider_id={pid}"
         print(f"🔍 Fetching sync manifest from {manifest_url}...")
         try:

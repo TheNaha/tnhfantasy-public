@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import promptsApi from '../api/promptsApi';
 import { DEFAULT_PROMPT_CATEGORIES } from '../constants/prompts';
+import { reportError } from './useWorldVaultResource';
 
 const MIGRATION_KEY = 'prompt-library-migrated';
 const OLD_STORAGE_KEY = 'prompt-library-storage';
@@ -79,7 +80,8 @@ export function useCreatePrompt() {
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['prompts'] });
-        }
+        },
+        onError: (error) => reportError('create prompt', error),
     });
 }
 
@@ -91,7 +93,8 @@ export function useUpdatePrompt() {
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['prompts'] });
-        }
+        },
+        onError: (error) => reportError('update prompt', error),
     });
 }
 
@@ -103,7 +106,8 @@ export function useDeletePrompt() {
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['prompts'] });
-        }
+        },
+        onError: (error) => reportError('delete prompt', error),
     });
 }
 
@@ -120,7 +124,8 @@ export function useImportPrompts() {
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['prompts'] });
-        }
+        },
+        onError: (error) => reportError('import prompts', error),
     });
 }
 
@@ -132,6 +137,7 @@ export function useIncrementPromptUsage() {
         },
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['prompts'] });
-        }
+        },
+        onError: (error) => reportError('increment prompt usage', error),
     });
 }

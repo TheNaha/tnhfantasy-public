@@ -333,8 +333,8 @@ class ActiveDeploy:
         for q in list(self.subscribers):
             try:
                 q.put_nowait(raw_chunk)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("deploy broadcast dropped chunk", subscriber=len(self.subscribers), error=str(exc))
 
     def finish(self, result: dict[str, Any]) -> None:
         self.done = True
@@ -345,8 +345,8 @@ class ActiveDeploy:
             try:
                 q.put_nowait(msg)
                 q.put_nowait(None)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("deploy finish dropped", error=str(exc))
 
     def fail(self, err_msg: str) -> None:
         self.done = True
@@ -357,8 +357,8 @@ class ActiveDeploy:
             try:
                 q.put_nowait(msg)
                 q.put_nowait(None)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("deploy fail dropped", error=str(exc))
 
 
 _active_deploy: ActiveDeploy | None = None

@@ -44,9 +44,13 @@ _model_availability_cache = TTLCache(
     ttl=MODEL_AVAILABILITY_CACHE_TTL_SECONDS
 )
 
+_HEALTH_CACHE_TTL_SECONDS = parse_positive_float(
+    os.getenv("COMFY_LB_HEALTH_CACHE_TTL_SECONDS"),
+    45.0,
+)
 _provider_health_cache = TTLCache(
     maxsize=100,
-    ttl=15.0
+    ttl=_HEALTH_CACHE_TTL_SECONDS,
 )
 
 # Capability dicts per provider, fetched lazily from the engine's object_info
@@ -56,7 +60,7 @@ _provider_health_cache = TTLCache(
 # deleted without going through `engine_factory.invalidate_engine`, and the
 # size is bounded by configuration rather than provider churn.
 _CAPABILITY_CACHE_TTL_SECONDS = parse_positive_float(
-    os.getenv("COMFY_PROVIDER_CAPABILITY_CACHE_TTL_SECONDS"), 60.0
+    os.getenv("COMFY_PROVIDER_CAPABILITY_CACHE_TTL_SECONDS"), 1800.0
 )
 _CAPABILITY_CACHE_MAX_ENTRIES = parse_positive_int(
     os.getenv("COMFY_PROVIDER_CAPABILITY_CACHE_MAX_ENTRIES"), 128
@@ -99,10 +103,10 @@ def streak_threshold_for(task_type: str) -> int:
     return _FAILURE_STREAK_THRESHOLD
 
 # Bound for the in-process engine health probe in `_check_provider_health`.
-# The 15s health cache means this only applies to the first caller to miss.
+# The health cache means this only applies to the first caller to miss.
 _ENGINE_HEALTH_PROBE_TIMEOUT_SECONDS = parse_positive_float(
     os.getenv("COMFY_LB_ENGINE_HEALTH_TIMEOUT_SECONDS"),
-    5.0,
+    1.5,
 )
 
 
@@ -530,22 +534,32 @@ class LoadBalancer:
 
         try:
             from services.engines.engine_factory import get_engine
+            from core.provider_capabilities import derive_capabilities
 
             engine = get_engine(provider.id, provider)
             if engine is None:
                 _capability_cache[provider.id] = (now, None)
                 return None
 
+            # Fast path: check if in-process engine has its own cached object_info
+            oi_cache = getattr(engine, "_object_info_cache", None)
+            if oi_cache and isinstance(oi_cache, tuple) and len(oi_cache) >= 2:
+                oi_ts, oi_doc = oi_cache[0], oi_cache[1]
+                oi_ttl = getattr(engine, "_object_info_ttl", 600.0)
+                if (now - oi_ts) < oi_ttl and isinstance(oi_doc, dict) and oi_doc:
+                    caps = derive_capabilities(oi_doc, provider.id)
+                    _capability_cache[provider.id] = (now, caps)
+                    return caps
+
             get_object_info = getattr(engine, "get_object_info", None)
             if get_object_info is None:
                 _capability_cache[provider.id] = (now, None)
                 return None
 
-            graph = await asyncio.wait_for(get_object_info(), timeout=10.0)
+            graph = await asyncio.wait_for(get_object_info(), timeout=1.5)
         except Exception:
             _capability_cache[provider.id] = (now, None)
             return None
-
         if not isinstance(graph, dict) or not graph:
             _capability_cache[provider.id] = (now, None)
             return None
