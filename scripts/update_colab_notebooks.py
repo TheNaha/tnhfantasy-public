@@ -1740,6 +1740,13 @@ if backend_url_clean:
         peer_connected = False
         for _ in range(25):
             try:
+                subprocess.run(
+                    ["curl", "-s", "--connect-timeout", "1", "-m", "1", "--socks5-hostname", "127.0.0.1:1080", f"http://{target_host}:8002/api/health"],
+                    capture_output=True, timeout=2
+                )
+            except Exception:
+                pass
+            try:
                 res_st = subprocess.run(["netbird", "status", "--detail"], capture_output=True, text=True, timeout=5)
                 out_st = res_st.stdout or ""
                 if target_host in out_st:
@@ -1760,7 +1767,6 @@ if backend_url_clean:
             print(f"✅ NetBird peer ({target_host}) is Connected!")
         else:
             print("⏳ Peer handshake taking longer than usual; proceeding with catalog retry loop...")
-
     def fetch_backend_json(url, timeout=4):
         # 1. SOCKS5 proxy via curl (essential for userspace Netstack mode where wt0 is not in kernel routing table)
         for socks_port in ("1080", None):
@@ -2355,6 +2361,7 @@ def sync_tier2_warm_cache():
                 shutil.copyfileobj(fsrc, fdst, length=16 * 1024 * 1024)
             os.replace(tmp_file, dest_file)
             synced_count += 1
+            drop_page_cache()
             print(f"✅ [Tier 2 Background Sync] Cached {fn} to local NVMe SSD!")
         except Exception as exc:
             print(f"⚠️ [Tier 2 Background Sync] Notice while caching {fn}: {exc}")
@@ -2395,6 +2402,8 @@ def sync_tier2_warm_cache():
                         shutil.copyfileobj(fsrc, fdst, length=8 * 1024 * 1024)
                     os.replace(tmp_file, dest_file)
                     synced_count += 1
+                    if synced_count % 4 == 0:
+                        drop_page_cache()
                     print(f"📦 [Tier 2 LoRA Sync] Cached LoRA {rel_name} ({src_sz / (1024*1024):.1f} MB) to NVMe!")
                 except Exception as exc:
                     if os.path.exists(dest_file + ".syncing"):
@@ -2805,6 +2814,7 @@ def launch_comfyui_track(preview_method=None):
         print(f"⚡ [ComfyUI Track] Pre-warming {os.path.basename(active_ckpt_path)} into RAM cache (/dev/shm)...")
         try:
             ram_mgr.ensure_in_ram(active_ckpt_path, model_id=img_id, role="image", is_anchor=True)
+            drop_page_cache()
             print("✅ [ComfyUI Track] Checkpoint cached in RAM!")
         except Exception as exc:
             print(f"⚠️ [ComfyUI Track] Pre-warming failed ({exc}); will stream from storage directly.")
@@ -2828,6 +2838,8 @@ def launch_comfyui_track(preview_method=None):
             "--preview-method", comfy_active_preview_method,
             "--cuda-malloc",
             "--disable-pinned-memory",
+            "--disable-async-offload",
+            "--cache-ram", "4", "8",
         ]
         worker_procs["comfy"] = subprocess.Popen(comfy_cmd, env=env_comfy, stdout=out, stderr=out)
 
@@ -3475,10 +3487,10 @@ for label, p in log_files.items():
         handles[label] = f
 
 TAG_COLORS = {
-    "Agent": "[92m[Agent][0m",
-    "ComfyUI": "[94m[ComfyUI][0m",
-    "LLM": "[93m[LLM][0m",
-    "Status": "[95m[Status][0m",
+    "Agent": "\x1b[92m[Agent]\x1b[0m",
+    "ComfyUI": "\x1b[94m[ComfyUI]\x1b[0m",
+    "LLM": "\x1b[93m[LLM]\x1b[0m",
+    "Status": "\x1b[95m[Status]\x1b[0m",
 }
 
 total_lines = 0
