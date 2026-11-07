@@ -43,7 +43,7 @@ def _extract_http_status(message: str) -> int | None:
 LLM_PROGRESS_THROTTLE_SECONDS = 1.0 / 60.0
 
 PREVIEW_THROTTLE_SECONDS = 0.5
-
+MIN_PREVIEW_PROGRESS_DELTA = 1.0
 
 class ProviderCallError(Exception):
     """Raised when a provider call fails and may be retried."""
@@ -168,7 +168,7 @@ class _ImageReducer:
                     now = time.perf_counter()
                     progress_diff = abs(self._current_progress - self._last_preview_progress)
                     if (now - self._last_preview_persist_at >= PREVIEW_THROTTLE_SECONDS) and (
-                        progress_diff >= 1.0 or self._last_preview_persist_at == 0.0
+                        progress_diff >= MIN_PREVIEW_PROGRESS_DELTA or self._last_preview_persist_at == 0.0
                     ):
                         self._last_preview_persist_at = now
                         self._last_preview_progress = self._current_progress
