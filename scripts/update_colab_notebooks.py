@@ -569,6 +569,7 @@ def install_python_packages(req_files=None, packages=None):
         else:
             clean_packages.append(pkg)
     packages = clean_packages
+    wheel_cache_dir = f"{gdrive_root}/wheel_cache"
     os.makedirs(wheel_cache_dir, exist_ok=True)
     def _monitor_and_prune_wheel_cache(max_gb: float = 3.5):
         if not os.path.exists(wheel_cache_dir):
