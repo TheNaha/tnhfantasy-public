@@ -1397,13 +1397,37 @@ else:
     is_multi_gpu = False
     print("⚡ Single GPU Mode: Dynamic cooperative VRAM Arbiter active.")
 
-def drop_page_cache():
+def evict_file_from_page_cache(path):
+    if not hasattr(os, "posix_fadvise") or not hasattr(os, "POSIX_FADV_DONTNEED"):
+        return
+    try:
+        if isinstance(path, (str, Path)):
+            p = str(path)
+            if not os.path.exists(p) or os.path.isdir(p):
+                return
+            fd = os.open(p, os.O_RDONLY)
+            try:
+                os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
+            finally:
+                os.close(fd)
+        elif isinstance(path, int):
+            os.posix_fadvise(path, 0, 0, os.POSIX_FADV_DONTNEED)
+    except Exception:
+        pass
+
+def drop_page_cache(paths=None):
     try:
         subprocess.run(["sync"], check=False)
+    except Exception:
+        pass
+    try:
         with open("/proc/sys/vm/drop_caches", "w") as f:
             f.write("3\\n")
     except Exception:
         pass
+    if paths:
+        for p in paths:
+            evict_file_from_page_cache(p)
 
 # 0c. RAM Caching Policy
 ram_strat = CACHE_IN_RAM_SETTING.lower() if "CACHE_IN_RAM_SETTING" in locals() else "auto"
@@ -2052,6 +2076,7 @@ for m_id, w_path in resolved_weights.items():
             role_m = "rp" if m_id == active_rp else "util"
             try:
                 ram_mgr.ensure_in_ram(w_path, model_id=m_id, role=role_m, is_anchor=True)
+                drop_page_cache([w_path])
                 ram_mgr.aliases[w_fn] = m_id
                 ram_mgr.aliases["default"] = active_rp
                 ram_mgr.aliases["rp"] = active_rp
@@ -2361,6 +2386,8 @@ def sync_tier2_warm_cache():
                 shutil.copyfileobj(fsrc, fdst, length=16 * 1024 * 1024)
             os.replace(tmp_file, dest_file)
             synced_count += 1
+            evict_file_from_page_cache(src_file)
+            evict_file_from_page_cache(dest_file)
             drop_page_cache()
             print(f"✅ [Tier 2 Background Sync] Cached {fn} to local NVMe SSD!")
         except Exception as exc:
@@ -2402,6 +2429,8 @@ def sync_tier2_warm_cache():
                         shutil.copyfileobj(fsrc, fdst, length=8 * 1024 * 1024)
                     os.replace(tmp_file, dest_file)
                     synced_count += 1
+                    evict_file_from_page_cache(src_file)
+                    evict_file_from_page_cache(dest_file)
                     if synced_count % 4 == 0:
                         drop_page_cache()
                     print(f"📦 [Tier 2 LoRA Sync] Cached LoRA {rel_name} ({src_sz / (1024*1024):.1f} MB) to NVMe!")
@@ -2814,7 +2843,7 @@ def launch_comfyui_track(preview_method=None):
         print(f"⚡ [ComfyUI Track] Pre-warming {os.path.basename(active_ckpt_path)} into RAM cache (/dev/shm)...")
         try:
             ram_mgr.ensure_in_ram(active_ckpt_path, model_id=img_id, role="image", is_anchor=True)
-            drop_page_cache()
+            drop_page_cache([active_ckpt_path])
             print("✅ [ComfyUI Track] Checkpoint cached in RAM!")
         except Exception as exc:
             print(f"⚠️ [ComfyUI Track] Pre-warming failed ({exc}); will stream from storage directly.")
@@ -2849,7 +2878,7 @@ def launch_llm_track():
         print(f"⚡ [LLM Track] Pre-warming {os.path.basename(src_expected)} into RAM cache (/dev/shm)...")
         try:
             ram_mgr.ensure_in_ram(src_expected, model_id=active_rp, role="rp", is_anchor=True)
-            drop_page_cache()
+            drop_page_cache([src_expected])
             ram_mgr.aliases["default"] = active_rp
             ram_mgr.aliases["rp"] = active_rp
         except Exception as exc:
@@ -2861,7 +2890,7 @@ def launch_llm_track():
             print(f"⚡ [LLM Track] Pre-warming Util model {os.path.basename(src_util)} into RAM cache (/dev/shm)...")
             try:
                 ram_mgr.ensure_in_ram(src_util, model_id=active_util, role="util", is_anchor=True)
-                drop_page_cache()
+                drop_page_cache([src_util])
                 ram_mgr.aliases["util"] = active_util
                 print("✅ [LLM Track] Util GGUF weights cached in RAM!")
             except Exception as exc:
@@ -3059,7 +3088,16 @@ if mode_key in ("hybrid", "model"):
     threading.Thread(target=sync_tier2_warm_cache, name="Tier2WarmSync", daemon=True).start()
     threading.Thread(target=sync_output_to_drive, name="OutputDriveSync", daemon=True).start()
 # 3. Unified Health Check Loop
+if "ram_mgr" in locals():
+    try:
+        for _entry in list(ram_mgr.entries.values()):
+            if _entry.source_path:
+                evict_file_from_page_cache(_entry.source_path)
+    except Exception:
+        pass
 drop_page_cache()
+import gc
+gc.collect()
 print("⏳ Waiting for services to become healthy...")
 services_to_check = [("agent", agent_port, "/health", "Remote Agent")]
 if mode_key in ("hybrid", "model"):

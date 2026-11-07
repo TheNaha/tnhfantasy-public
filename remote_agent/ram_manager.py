@@ -21,15 +21,47 @@ from typing import Any, Dict, Iterable, List, Optional, Set
 logger = logging.getLogger("ram_manager")
 
 
-def drop_page_cache() -> None:
-    """Flush and drop kernel page cache after large I/O to restore available system RAM."""
+def evict_file_from_page_cache(path: Any) -> None:
+    """Evict a file's read pages from Linux kernel page cache without root or CAP_SYS_ADMIN.
+
+    Works inside standard Docker containers and Google Colab using POSIX fadvise.
+    """
+    if not hasattr(os, "posix_fadvise") or not hasattr(os, "POSIX_FADV_DONTNEED"):
+        return
+    try:
+        if isinstance(path, (str, Path)):
+            p = str(path)
+            if not os.path.exists(p) or os.path.isdir(p):
+                return
+            fd = os.open(p, os.O_RDONLY)
+            try:
+                os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
+            finally:
+                os.close(fd)
+        elif isinstance(path, int):
+            os.posix_fadvise(path, 0, 0, os.POSIX_FADV_DONTNEED)
+    except Exception:
+        pass
+
+
+def drop_page_cache(paths: Iterable[Any] | None = None) -> None:
+    """Flush and drop kernel page cache after large I/O to restore available system RAM.
+
+    Tries /proc/sys/vm/drop_caches (works when privileged), and uses POSIX fadvise
+    on given or tracked file paths (works in unprivileged containers / Google Colab).
+    """
     try:
         subprocess.run(["sync"], check=False)
+    except Exception:
+        pass
+    try:
         with open("/proc/sys/vm/drop_caches", "w") as f:
             f.write("3\n")
     except Exception:
         pass
-
+    if paths:
+        for p in paths:
+            evict_file_from_page_cache(p)
 
 def ensure_shm_capacity(needed_bytes: int = 0) -> None:
     """Expand /dev/shm filesystem capacity beyond Linux 50% default if running with privileges."""
@@ -591,6 +623,11 @@ class RamModelManager:
             if pbar is not None:
                 pbar.close()
 
+            # Evict source model file from Linux page cache immediately
+            evict_file_from_page_cache(src)
+            import gc
+            gc.collect()
+
             os.replace(tmp_path, dest_path)
         except Exception as exc:
             if tmp_path.exists():
@@ -712,6 +749,12 @@ class RamModelManager:
                 os.replace(dest_dir, stale)
                 shutil.rmtree(stale, ignore_errors=True)
             os.replace(staging, dest_dir)
+            # Evict source directory files from Linux page cache
+            for sf in src.rglob("*"):
+                if sf.is_file():
+                    evict_file_from_page_cache(sf)
+            import gc
+            gc.collect()
         except Exception:
             shutil.rmtree(staging, ignore_errors=True)
             raise
