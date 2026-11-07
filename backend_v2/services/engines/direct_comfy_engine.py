@@ -1450,6 +1450,9 @@ class DirectComfyEngine(InProcessEngine):
                 # workflow_executor did, so a hung graph is diagnosable.
                 last_node: Optional[str] = None
                 last_preview_time: float = 0.0
+                last_preview_step: int = -1
+                current_step: int = 0
+                total_steps: int = 0
                 # Listen to WebSocket messages until execution completes or times out
                 async with asyncio.timeout(timeout):
                     while True:
@@ -1498,8 +1501,22 @@ class DirectComfyEngine(InProcessEngine):
                                         from config import get_generator_preview_method
                                         if get_generator_preview_method() != "none":
                                             now = time.monotonic()
-                                            if now - last_preview_time >= 0.5:
+                                            # Adaptive skip & anti-drift strategy:
+                                            # 1. Near-completion cutoff: don't waste bandwidth emitting a low-res
+                                            # preview when the final output is 1-2 steps away.
+                                            near_end = total_steps > 3 and current_step >= (total_steps - 2)
+
+                                            # 2. Adaptive step stride: on fast GPUs (A100/L4 doing 10+ steps/sec),
+                                            # skip intermediate frames and emit only at key milestones (~5 frames max).
+                                            step_stride = max(3, total_steps // 5) if total_steps > 0 else 3
+                                            step_ok = (last_preview_step < 0) or (current_step - last_preview_step >= step_stride)
+
+                                            # 3. Minimum time gate: enforce >= 0.8s between preview frames to prevent buffer bloat
+                                            time_ok = (now - last_preview_time) >= 0.8
+
+                                            if not near_end and step_ok and time_ok:
                                                 last_preview_time = now
+                                                last_preview_step = current_step
                                                 preview_b64 = base64.b64encode(msg[8:]).decode("ascii")
                                                 yield {
                                                     "event": "preview",
@@ -1563,9 +1580,12 @@ class DirectComfyEngine(InProcessEngine):
                             if msg_prompt_id is None or msg_prompt_id == prompt_id:
                                 val = msg_data.get("value")
                                 max_val = msg_data.get("max") or 0
+                                if isinstance(val, (int, float)):
+                                    current_step = int(val)
+                                if isinstance(max_val, (int, float)):
+                                    total_steps = int(max_val)
                                 pct = round(val / max_val * 100) if (val is not None and max_val) else val
                                 yield {"event": "progress", "job_id": job_id, "value": pct, "value_unit": "percent"}
-
                         elif msg_type == "execution_cached":
                             if msg_prompt_id == prompt_id:
                                 nodes = msg_data.get("nodes", [])
