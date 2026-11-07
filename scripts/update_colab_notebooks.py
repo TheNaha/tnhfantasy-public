@@ -2867,6 +2867,7 @@ def launch_comfyui_track(preview_method=None):
             "--preview-method", comfy_active_preview_method,
             "--cuda-malloc",
             "--disable-pinned-memory",
+            "--disable-dynamic-vram",
             "--disable-async-offload",
             "--cache-ram", "4", "8",
         ]
