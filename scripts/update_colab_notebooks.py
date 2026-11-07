@@ -2634,7 +2634,7 @@ def start_remote_agent():
     with open(log_agent, "w") as out:
         worker_procs["agent"] = subprocess.Popen([sys.executable, f"{agent_dir}/server.py"], cwd=agent_dir, env=env_agent, stdout=out, stderr=out)
 
-comfy_active_preview_method = "auto"
+comfy_active_preview_method = "none"
 
 def fetch_backend_preview_method():
     raw_url = globals().get("BACKEND_URL") or locals().get("BACKEND_URL") or os.environ.get("BACKEND_URL", "")
@@ -2642,19 +2642,26 @@ def fetch_backend_preview_method():
     if not backend_val:
         return None
     try:
-        req = urllib.request.Request(f"{backend_val}/api/settings", headers={"Accept": "application/json"})
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-            gen_cfg = data.get("settings", {}).get("generator", {})
-            if "preview_method" in gen_cfg:
-                val = str(gen_cfg["preview_method"]).lower().strip()
-                if val in ("auto", "none", "taesd"):
-                    return val
-            if gen_cfg.get("live_preview") is False:
-                return "none"
-            if gen_cfg.get("live_preview") is True:
-                return "auto"
+        data = None
+        fn = globals().get("fetch_backend_json") or locals().get("fetch_backend_json")
+        if callable(fn):
+            data = fn(f"{backend_val}/api/settings", timeout=4)
+        if not data or not isinstance(data, dict):
+            req = urllib.request.Request(f"{backend_val}/api/settings", headers={"Accept": "application/json"})
+            with urllib.request.urlopen(req, timeout=4) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+        if not isinstance(data, dict):
+            return None
+        gen_cfg = data.get("settings", {}).get("generator", {})
+        if "preview_method" in gen_cfg:
+            val = str(gen_cfg["preview_method"]).lower().strip()
+            if val in ("auto", "none", "taesd"):
+                return val
+        if gen_cfg.get("live_preview") is False:
+            return "none"
+        if gen_cfg.get("live_preview") is True:
             return "auto"
+        return "none"
     except Exception:
         return None
 
@@ -2667,7 +2674,8 @@ def launch_comfyui_track(preview_method=None):
         if fetched:
             comfy_active_preview_method = fetched
             print(f"📡 Synced preview setting from backend: {comfy_active_preview_method}")
-
+        else:
+            print(f"📡 Backend preview setting unreachable, using default: {comfy_active_preview_method}")
     if active_ckpt_path:
         print(f"⚡ [ComfyUI Track] Pre-warming {os.path.basename(active_ckpt_path)} into RAM cache (/dev/shm)...")
         try:
@@ -3183,8 +3191,18 @@ def _register_provider():
                 continue  # does not exist yet -> create it
             return exc.code, exc.read().decode("utf-8", errors="replace")
         except Exception as exc:
+            try:
+                for socks_port in ("1080", None):
+                    curl_cmd = ["curl", "-fsSL", "-X", method, "-H", "Content-Type: application/json", "-d", json.dumps(payload), "-k", "-m", "15"]
+                    if socks_port:
+                        curl_cmd.extend(["--socks5-hostname", f"127.0.0.1:{socks_port}"])
+                    curl_cmd.append(url)
+                    res = subprocess.run(curl_cmd, capture_output=True, text=True, timeout=20)
+                    if res.returncode == 0:
+                        return 200, res.stdout
+            except Exception:
+                pass
             return None, str(exc)
-    return None, "unreachable"
 
 _reg_status, _reg_body = _register_provider()
 print()

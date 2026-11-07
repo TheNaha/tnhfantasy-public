@@ -1495,15 +1495,17 @@ class DirectComfyEngine(InProcessEngine):
                                 try:
                                     event_type, _img_type = struct.unpack(">II", msg[:8])
                                     if event_type == 1:
-                                        now = time.monotonic()
-                                        if now - last_preview_time >= 0.5:
-                                            last_preview_time = now
-                                            preview_b64 = base64.b64encode(msg[8:]).decode("ascii")
-                                            yield {
-                                                "event": "preview",
-                                                "job_id": job_id,
-                                                "preview": preview_b64,
-                                            }
+                                        from config import get_generator_preview_method
+                                        if get_generator_preview_method() != "none":
+                                            now = time.monotonic()
+                                            if now - last_preview_time >= 0.5:
+                                                last_preview_time = now
+                                                preview_b64 = base64.b64encode(msg[8:]).decode("ascii")
+                                                yield {
+                                                    "event": "preview",
+                                                    "job_id": job_id,
+                                                    "preview": preview_b64,
+                                                }
                                 except Exception as exc:
                                     logger.debug("direct_comfy_preview_frame_error", error=str(exc))
                             continue
