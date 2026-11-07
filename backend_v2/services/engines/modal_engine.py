@@ -198,6 +198,7 @@ class ModalEngine(InProcessEngine):
         job_id: Optional[str] = None,
         use_snapshot: Optional[bool] = None,
         timeout: float = 3600.0,
+        **kwargs: Any,
     ) -> AsyncIterator[Dict[str, Any]]:
         """
         Execute inference directly against Modal's ComfyUI class and stream TaskEvents.

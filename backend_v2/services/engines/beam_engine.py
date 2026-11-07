@@ -159,6 +159,7 @@ class BeamEngine(InProcessEngine):
         job_id: Optional[str] = None,
         use_snapshot: bool = True,
         timeout: float = 3600.0,
+        **kwargs: Any,
     ) -> AsyncIterator[Dict[str, Any]]:
         """Execute a workflow against the Beam GPU realtime endpoint.
 

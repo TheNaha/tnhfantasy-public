@@ -417,6 +417,7 @@ class ModalTTSEngine(InProcessEngine):
         job_id: Optional[str] = None,
         use_snapshot: bool = True,
         timeout: float = 1800.0,
+        **kwargs: Any,
     ) -> AsyncIterator[Dict[str, Any]]:
         """
         Execute TTS workflow directly against Modal's TTSWorker class and stream TaskEvents.
