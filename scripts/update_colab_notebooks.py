@@ -823,8 +823,14 @@ elif mode_key in ("model", "hybrid", "tts"):
         print("🔗 Linked Google Drive models directory to local ComfyUI/models")
         gdrive_output = os.path.join(gdrive_path, "output")
         os.makedirs(gdrive_output, exist_ok=True)
-        safe_symlink(gdrive_output, f"{comfy_dir}/output")
-        print("🔗 Linked Google Drive output directory to local ComfyUI/output")
+        comfy_output = os.path.join(comfy_dir, "output")
+        if os.path.islink(comfy_output):
+            try:
+                os.unlink(comfy_output)
+            except Exception:
+                pass
+        os.makedirs(comfy_output, exist_ok=True)
+        print(f"⚡ Staging ComfyUI output on local NVMe SSD ({comfy_output})")
     else:
         if not os.path.exists(comfy_dir) and not os.path.islink(comfy_dir):
             print("📥 Cloning fresh ComfyUI core to local scratch...")
@@ -895,6 +901,28 @@ elif mode_key in ("model", "hybrid", "tts"):
         except Exception:
             pass
 
+    # Fast lossless PNG save patch (compress_level=1 cuts CPU save time from ~700ms to ~60ms)
+    fast_save_node = os.path.join(custom_nodes_dir, "tnh_fast_save.py")
+    try:
+        with open(fast_save_node, "w", encoding="utf-8") as f:
+            f.write(
+                "import logging\\n"
+                "logger = logging.getLogger('tnh_fast_save')\\n"
+                "try:\\n"
+                "    import nodes\\n"
+                "    if hasattr(nodes, 'SaveImage'):\\n"
+                "        _orig_init = nodes.SaveImage.__init__\\n"
+                "        def _fast_init(self, *args, **kwargs):\\n"
+                "            _orig_init(self, *args, **kwargs)\\n"
+                "            self.compress_level = 1\\n"
+                "        nodes.SaveImage.__init__ = _fast_init\\n"
+                "        logger.info('Patched SaveImage.compress_level = 1 for fast lossless encoding')\\n"
+                "except Exception as e:\\n"
+                "    logger.warning(f'Could not patch SaveImage: {e}')\\n"
+                "NODE_CLASS_MAPPINGS = {}\\n"
+            )
+    except Exception:
+        pass
     # Extra packages required by nodes (ADetailer, IPAdapter, QwenTTS, etc.)
     extra_packages = [
         "accelerate", "scipy", "ultralytics", "dill", "einops", "timm",
@@ -2012,7 +2040,8 @@ elif os.path.exists(os.path.join(gdrive_path, "checkpoints")):
     gdrive_base = gdrive_path
 
 gdrive_ckpt_dir = os.path.join(gdrive_base, gdrive_ckpt_rel)
-
+gdrive_lora_dir = os.path.join(gdrive_base, gdrive_lora_rel)
+nvme_lora_dir = os.path.join(nvme_cache_base, "loras")
 # ----------------------------------------------------------------------------
 # 3-Tier ComfyUI Storage Model:
 # Tier 1: Ultra-Hot RAM Cache (/dev/shm) — #1 most used in 7 days (or active_image)
@@ -2297,10 +2326,71 @@ def sync_tier2_warm_cache():
             if os.path.exists(dest_file + ".syncing"):
                 try: os.remove(dest_file + ".syncing")
                 except Exception: pass
+    # LoRA Tier 2 Warm Cache Mirroring:
+    # Pre-copy recently modified LoRAs from Drive to local NVMe to eliminate FUSE read pauses
+    if os.path.exists(gdrive_lora_dir):
+        try:
+            lora_candidates = []
+            for root, _, files in os.walk(gdrive_lora_dir):
+                for f in files:
+                    if f.endswith((".safetensors", ".pt", ".ckpt")):
+                        fp = os.path.join(root, f)
+                        try:
+                            st = os.stat(fp)
+                            rel_name = os.path.relpath(fp, gdrive_lora_dir)
+                            lora_candidates.append((fp, rel_name, st.st_size, st.st_mtime))
+                        except Exception:
+                            pass
+            lora_candidates.sort(key=lambda x: x[3], reverse=True)
+            lora_candidates = lora_candidates[:16]
+            for src_file, rel_name, src_sz, _ in lora_candidates:
+                try:
+                    free_gb = shutil.disk_usage(WORKSPACE_ROOT).free / (1024**3)
+                    if free_gb < 15.0:
+                        break
+                except Exception:
+                    pass
+                dest_file = os.path.join(nvme_lora_dir, rel_name)
+                os.makedirs(os.path.dirname(dest_file), exist_ok=True)
+                if os.path.exists(dest_file) and os.path.getsize(dest_file) == src_sz:
+                    continue
+                try:
+                    tmp_file = dest_file + ".syncing"
+                    with open(src_file, "rb") as fsrc, open(tmp_file, "wb") as fdst:
+                        shutil.copyfileobj(fsrc, fdst, length=8 * 1024 * 1024)
+                    os.replace(tmp_file, dest_file)
+                    synced_count += 1
+                    print(f"📦 [Tier 2 LoRA Sync] Cached LoRA {rel_name} ({src_sz / (1024*1024):.1f} MB) to NVMe!")
+                except Exception as exc:
+                    if os.path.exists(dest_file + ".syncing"):
+                        try: os.remove(dest_file + ".syncing")
+                        except Exception: pass
+        except Exception as exc:
+            print(f"⚠️ [Tier 2 LoRA Sync] Error scanning LoRAs: {exc}")
 
     if synced_count > 0:
-        print(f"✨ [Tier 2 Background Sync] Warm cache synchronization finished ({synced_count} models cached on NVMe).")
+        print(f"✨ [Tier 2 Background Sync] Warm cache synchronization finished ({synced_count} models/LoRAs cached on NVMe).")
 
+def sync_output_to_drive():
+    \"\"\"Replicate finished ComfyUI output images from local NVMe to Google Drive asynchronously.\"\"\"
+    if not (is_colab and os.path.exists(gdrive_path)):
+        return
+    gdrive_output = os.path.join(gdrive_path, "output")
+    os.makedirs(gdrive_output, exist_ok=True)
+    comfy_output = os.path.join(comfy_dir, "output")
+    synced_names = set()
+    while True:
+        try:
+            if os.path.exists(comfy_output):
+                for entry in os.scandir(comfy_output):
+                    if entry.is_file() and entry.name not in synced_names:
+                        dest = os.path.join(gdrive_output, entry.name)
+                        if not os.path.exists(dest) or os.path.getsize(dest) != entry.stat().st_size:
+                            shutil.copy2(entry.path, dest)
+                        synced_names.add(entry.name)
+        except Exception:
+            pass
+        time.sleep(5)
 # ── llama-server: install, LINK and VERIFY ─────────────────────────────────
 # The CUDA release is built for a specific Ubuntu and needs a glibc the
 # container may not have: the b11647 CUDA 12.8 bundle wants GLIBC 2.38, and
@@ -2685,7 +2775,13 @@ def launch_comfyui_track(preview_method=None):
             print(f"⚠️ [ComfyUI Track] Pre-warming failed ({exc}); will stream from storage directly.")
     print(f"🚀 [ComfyUI Track] Starting ComfyUI server on :{comfy_port} (--preview-method {comfy_active_preview_method})...")
     with open(log_comfy, "w") as out:
-        env_comfy = dict(os.environ, PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True", PYTHONUNBUFFERED="1")
+        env_comfy = dict(
+            os.environ,
+            PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True",
+            PYTHONUNBUFFERED="1",
+            TORCH_CUDNN_V8_API_ENABLED="1",
+            TORCH_CUDNN_BENCHMARK="1",
+        )
         cudnn_paths = glob.glob("/usr/local/lib/python*/dist-packages/nvidia/cudnn/lib") + glob.glob(f"{sys.prefix}/lib/python*/dist-packages/nvidia/cudnn/lib")
         if cudnn_paths:
             env_comfy["LD_LIBRARY_PATH"] = ":".join(cudnn_paths) + ":" + os.environ.get("LD_LIBRARY_PATH", "")
@@ -2912,7 +3008,7 @@ if mode_key != "storage":
 # Asynchronous Tier 2 Background Sync (populates local NVMe cache while ComfyUI is live)
 if mode_key in ("hybrid", "model"):
     threading.Thread(target=sync_tier2_warm_cache, name="Tier2WarmSync", daemon=True).start()
-
+    threading.Thread(target=sync_output_to_drive, name="OutputDriveSync", daemon=True).start()
 # 3. Unified Health Check Loop
 print("⏳ Waiting for services to become healthy...")
 services_to_check = [("agent", agent_port, "/health", "Remote Agent")]

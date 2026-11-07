@@ -17,8 +17,8 @@
 #   - POST /api/generate and POST /api/generate/batch accept `Idempotency-Key`
 #     to deduplicate duplicate submissions within a short server-side window.
 import asyncio
+import time
 from typing import Any, Literal
-
 from fastapi import APIRouter, Depends, Header
 from pydantic import BaseModel
 from sqlmodel import Session
@@ -142,7 +142,7 @@ async def generate(
 
         workflow = request.workflow
         metadata = dict(request.metadata or {})
-
+        metadata.setdefault("api_received_at", time.time())
         if kind == "guided":
             if not request.options:
                 raise ValidationError("options is required for a guided request", field="options")
@@ -287,6 +287,7 @@ async def generate_batch(
                     **entry_metadata,
                     "batch_index": i,
                     "batch_total": len(workflows),
+                    "api_received_at": time.time(),
                 }
                 try:
                     job = await submission_service.create_and_enqueue_job(

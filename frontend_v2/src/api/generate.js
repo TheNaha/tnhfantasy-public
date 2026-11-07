@@ -79,7 +79,13 @@ export const generateApi = {
      */
     submit: (payload, params = {}, options = {}) => {
         const metadata = params?.metadata ?? params ?? {};
-        const body = { ...payload, metadata };
+        const now = Date.now();
+        const perfTiming = {
+            client_submitted_at: now,
+            client_perf_start: typeof performance !== 'undefined' ? performance.now() : now,
+        };
+        const mergedMetadata = { ...metadata, ...perfTiming };
+        const body = { ...payload, metadata: mergedMetadata };
         if (options.preferredProviderId) {
             body.preferred_provider_id = options.preferredProviderId;
         }

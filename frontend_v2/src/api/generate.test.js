@@ -34,7 +34,7 @@ describe('generateApi', () => {
             {
                 kind: 'graph',
                 workflow,
-                metadata,
+                metadata: expect.objectContaining(metadata),
             },
             {
                 idempotencyKey: 'generated-idempotency-key',
@@ -56,7 +56,7 @@ describe('generateApi', () => {
             {
                 kind: 'graph',
                 workflow,
-                metadata: { steps: 20 },
+                metadata: expect.objectContaining({ steps: 20 }),
             },
             {
                 idempotencyKey: 'custom-key',
@@ -80,7 +80,7 @@ describe('generateApi', () => {
             {
                 kind: 'guided',
                 options: { prompt: 'a cat', mode: 't2i' },
-                metadata: { prompt: 'a cat' },
+                metadata: expect.objectContaining({ prompt: 'a cat' }),
                 preferred_provider_id: 'modal-primary',
             },
             { idempotencyKey: 'generated-idempotency-key' }
@@ -115,5 +115,17 @@ describe('generateApi', () => {
         expect(body.options).toBeUndefined();
     });
 
+    it('injects client_submitted_at and client_perf_start for end-to-end telemetry', async () => {
+        postMock.mockResolvedValue({ ok: true });
+        const before = Date.now();
+        await generateApi.submit({ kind: 'guided', options: {} });
+        const after = Date.now();
+
+        const callBody = postMock.mock.calls[0][1];
+        expect(callBody.metadata).toBeDefined();
+        expect(callBody.metadata.client_submitted_at).toBeGreaterThanOrEqual(before);
+        expect(callBody.metadata.client_submitted_at).toBeLessThanOrEqual(after);
+        expect(typeof callBody.metadata.client_perf_start).toBe('number');
+    });
 });
 

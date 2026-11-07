@@ -1,5 +1,6 @@
 import asyncio
 import os
+import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -299,6 +300,7 @@ async def finalize_persisted_job_outputs(
             except NotFoundError:
                 active_job_service = job_service
             try:
+                t_proc_start = time.time()
                 for output in outputs:
                     if output.get("type") == "text":
                         continue
@@ -328,9 +330,26 @@ async def finalize_persisted_job_outputs(
 
                     if process_image_background_fn and path and output.get("type") == "image":
                         await process_image_background_fn(path, job_id)
-
                 await wait_for_gallery_outputs(outputs)
+                t_proc_done = time.time()
+                processing_sec = round(t_proc_done - t_proc_start, 3)
+                meta = job.metadata_ or {}
+                client_sub = meta.get("client_submitted_at")
+                api_rec = meta.get("api_received_at")
+                enq = meta.get("enqueued_at")
 
+                enriched_timings = dict(timings or {})
+                if client_sub and api_rec:
+                    client_upload_sec = round(api_rec - (client_sub / 1000.0), 3)
+                    if client_upload_sec >= 0.0:
+                        enriched_timings["client_upload_seconds"] = client_upload_sec
+                if enq:
+                    inf_start_est = t_proc_start - (enriched_timings.get("total_seconds") or 0.0)
+                    queue_sec = round(max(0.0, inf_start_est - enq), 3)
+                    enriched_timings["queue_seconds"] = queue_sec
+                enriched_timings["processing_seconds"] = processing_sec
+                tot = enriched_timings.get("total_seconds") or 0.0
+                enriched_timings["total_backend_seconds"] = round(tot + processing_sec, 2)
                 # Persist the reply BEFORE the job goes COMPLETED.
                 #
                 # This used to happen in the event bus consumer, which is
@@ -394,7 +413,7 @@ async def finalize_persisted_job_outputs(
                     provider_id=provider_id,
                     load_balancer=load_balancer,
                     event_extra=event_extra,
-                    timings=timings,
+                    timings=enriched_timings,
                 )
                 logger.info("job_completed", job_id=job_id, outputs=len(outputs), provider_id=provider_id)
             except Exception as exc:

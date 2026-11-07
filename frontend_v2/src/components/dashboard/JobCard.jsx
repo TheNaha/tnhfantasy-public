@@ -58,6 +58,7 @@ const JobCard = memo(function JobCard({ job: initialJob, onClick, onDelete }) {
     const { data: realtimeJob } = useJobStatus(initialJob.id);
     const job = useMemo(() => realtimeJob ? { ...initialJob, ...realtimeJob } : initialJob, [initialJob, realtimeJob]);
     const queryClient = useQueryClient();
+    const [showTimings, setShowTimings] = useState(false);
     const [previewCleared, setPreviewCleared] = useState(false);
     const hasPreview = Boolean(job.preview && !previewCleared);
 
@@ -311,6 +312,110 @@ const JobCard = memo(function JobCard({ job: initialJob, onClick, onDelete }) {
                             <p className="text-xs text-gray-500 truncate mt-1" title={checkpoint}>
                                 {checkpointShort}
                             </p>
+                        )}
+                        {job.timings && (
+                            <div className="w-full mt-2 pt-2 border-t border-gray-700/60">
+                                <button
+                                    type="button"
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        setShowTimings((prev) => !prev);
+                                    }}
+                                    className="w-full flex items-center justify-between text-xs text-gray-400 hover:text-cyan-300 transition-colors py-0.5 cursor-pointer"
+                                >
+                                    <span className="flex items-center gap-1">
+                                        <Clock size={11} className="text-cyan-400" />
+                                        <span>Telemetry</span>
+                                    </span>
+                                    <span className="font-mono text-cyan-400 text-xs">
+                                        {(job.timings.total_e2e_seconds || job.timings.total_seconds || job.duration_seconds || 0).toFixed(1)}s
+                                    </span>
+                                </button>
+                                {/* Color-coded Telemetry Bar */}
+                                <div className="w-full bg-gray-700/80 rounded-full h-1.5 overflow-hidden flex mt-1">
+                                    {job.timings.queue_seconds > 0 && (
+                                        <div
+                                            style={{ width: `${Math.min(100, (job.timings.queue_seconds / (job.timings.total_seconds || 1)) * 100)}%` }}
+                                            className="bg-yellow-400 h-full"
+                                            title={`Queue: ${job.timings.queue_seconds.toFixed(2)}s`}
+                                        />
+                                    )}
+                                    {job.timings.model_load_seconds > 0 && (
+                                        <div
+                                            style={{ width: `${Math.min(100, (job.timings.model_load_seconds / (job.timings.total_seconds || 1)) * 100)}%` }}
+                                            className="bg-purple-400 h-full"
+                                            title={`Model Load: ${job.timings.model_load_seconds.toFixed(2)}s`}
+                                        />
+                                    )}
+                                    {job.timings.sampling_seconds > 0 && (
+                                        <div
+                                            style={{ width: `${Math.min(100, (job.timings.sampling_seconds / (job.timings.total_seconds || 1)) * 100)}%` }}
+                                            className="bg-blue-400 h-full"
+                                            title={`Sampling: ${job.timings.sampling_seconds.toFixed(2)}s`}
+                                        />
+                                    )}
+                                    {job.timings.transfer_seconds > 0 && (
+                                        <div
+                                            style={{ width: `${Math.min(100, (job.timings.transfer_seconds / (job.timings.total_seconds || 1)) * 100)}%` }}
+                                            className="bg-cyan-400 h-full"
+                                            title={`Transfer: ${job.timings.transfer_seconds.toFixed(2)}s`}
+                                        />
+                                    )}
+                                    {job.timings.processing_seconds > 0 && (
+                                        <div
+                                            style={{ width: `${Math.min(100, (job.timings.processing_seconds / (job.timings.total_seconds || 1)) * 100)}%` }}
+                                            className="bg-emerald-400 h-full"
+                                            title={`Post-proc: ${job.timings.processing_seconds.toFixed(2)}s`}
+                                        />
+                                    )}
+                                </div>
+                                {showTimings && (
+                                    <div className="mt-1.5 p-1.5 bg-gray-900/80 rounded text-left font-mono text-xs space-y-0.5 text-gray-300">
+                                        {job.timings.client_upload_seconds !== undefined && (
+                                            <div className="flex justify-between">
+                                                <span className="text-gray-400">Upload:</span>
+                                                <span>{(job.timings.client_upload_seconds * 1000).toFixed(0)}ms</span>
+                                            </div>
+                                        )}
+                                        {job.timings.queue_seconds !== undefined && (
+                                            <div className="flex justify-between">
+                                                <span className="text-yellow-400">Queue:</span>
+                                                <span>{job.timings.queue_seconds.toFixed(2)}s</span>
+                                            </div>
+                                        )}
+                                        {job.timings.model_load_seconds !== undefined && (
+                                            <div className="flex justify-between">
+                                                <span className="text-purple-400">Model Load:</span>
+                                                <span>{job.timings.model_load_seconds.toFixed(2)}s</span>
+                                            </div>
+                                        )}
+                                        {job.timings.sampling_seconds !== undefined && (
+                                            <div className="flex justify-between">
+                                                <span className="text-blue-400">Sampling:</span>
+                                                <span>{job.timings.sampling_seconds.toFixed(2)}s</span>
+                                            </div>
+                                        )}
+                                        {job.timings.transfer_seconds !== undefined && (
+                                            <div className="flex justify-between">
+                                                <span className="text-cyan-400">Transfer:</span>
+                                                <span>{job.timings.transfer_seconds.toFixed(2)}s</span>
+                                            </div>
+                                        )}
+                                        {job.timings.processing_seconds !== undefined && (
+                                            <div className="flex justify-between">
+                                                <span className="text-emerald-400">Post-proc:</span>
+                                                <span>{job.timings.processing_seconds.toFixed(2)}s</span>
+                                            </div>
+                                        )}
+                                        {job.timings.total_e2e_seconds !== undefined && (
+                                            <div className="flex justify-between border-t border-gray-700 pt-0.5 font-bold text-white">
+                                                <span>E2E Total:</span>
+                                                <span className="text-cyan-300">{job.timings.total_e2e_seconds.toFixed(2)}s</span>
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
                         )}
                     </>
                 ) : isError ? (

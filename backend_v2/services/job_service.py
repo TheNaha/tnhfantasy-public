@@ -1239,6 +1239,7 @@ class JobService:
                 for key, value in metadata.items()
                 if key not in self.LIST_METADATA_OMIT
             }
+        diagnostics = build_job_diagnostics(job)
         return {
             "id": job.id,
             "task_type": job.task_type,
@@ -1259,5 +1260,6 @@ class JobService:
             "message": job.message,
             "error": job.error,
             "provider_id": job.provider_id,
-            "diagnostics": build_job_diagnostics(job),
+            "diagnostics": diagnostics,
+            "timings": diagnostics.get("timings"),
         }

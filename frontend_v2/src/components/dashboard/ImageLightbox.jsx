@@ -446,6 +446,102 @@ export default memo(function ImageLightbox({
                                     </div>
                                 )}
 
+                                {/* Generation Telemetry Breakdown */}
+                                {(job?.timings || metadata.timings || metadata.job?.timings) && (
+                                    (() => {
+                                        const timings = job?.timings || metadata.timings || metadata.job?.timings;
+                                        const total = timings.total_e2e_seconds || timings.total_backend_seconds || timings.total_seconds || 0;
+                                        return (
+                                            <div className="bg-gray-800/60 p-3.5 rounded-lg border border-gray-700/80">
+                                                <div className="flex items-center justify-between mb-2">
+                                                    <h4 className="text-xs font-semibold text-cyan-400 uppercase tracking-wider flex items-center gap-1.5">
+                                                        <Clock size={13} />
+                                                        <span>Generation Telemetry</span>
+                                                    </h4>
+                                                    <span className="font-mono text-cyan-300 font-bold text-xs">
+                                                        {total.toFixed(2)}s
+                                                    </span>
+                                                </div>
+                                                <div className="w-full bg-gray-700/80 rounded-full h-1.5 overflow-hidden flex mb-2.5">
+                                                    {timings.queue_seconds > 0 && (
+                                                        <div
+                                                            style={{ width: `${Math.min(100, (timings.queue_seconds / (total || 1)) * 100)}%` }}
+                                                            className="bg-yellow-400 h-full"
+                                                            title={`Queue: ${timings.queue_seconds.toFixed(2)}s`}
+                                                        />
+                                                    )}
+                                                    {timings.model_load_seconds > 0 && (
+                                                        <div
+                                                            style={{ width: `${Math.min(100, (timings.model_load_seconds / (total || 1)) * 100)}%` }}
+                                                            className="bg-purple-400 h-full"
+                                                            title={`Model Load: ${timings.model_load_seconds.toFixed(2)}s`}
+                                                        />
+                                                    )}
+                                                    {timings.sampling_seconds > 0 && (
+                                                        <div
+                                                            style={{ width: `${Math.min(100, (timings.sampling_seconds / (total || 1)) * 100)}%` }}
+                                                            className="bg-blue-400 h-full"
+                                                            title={`Sampling: ${timings.sampling_seconds.toFixed(2)}s`}
+                                                        />
+                                                    )}
+                                                    {timings.transfer_seconds > 0 && (
+                                                        <div
+                                                            style={{ width: `${Math.min(100, (timings.transfer_seconds / (total || 1)) * 100)}%` }}
+                                                            className="bg-cyan-400 h-full"
+                                                            title={`Transfer: ${timings.transfer_seconds.toFixed(2)}s`}
+                                                        />
+                                                    )}
+                                                    {timings.processing_seconds > 0 && (
+                                                        <div
+                                                            style={{ width: `${Math.min(100, (timings.processing_seconds / (total || 1)) * 100)}%` }}
+                                                            className="bg-emerald-400 h-full"
+                                                            title={`Post-proc: ${timings.processing_seconds.toFixed(2)}s`}
+                                                        />
+                                                    )}
+                                                </div>
+                                                <div className="grid grid-cols-2 gap-1.5 text-xs font-mono">
+                                                    {timings.queue_seconds !== undefined && (
+                                                        <div className="flex justify-between bg-gray-900/40 px-2 py-1 rounded">
+                                                            <span className="text-yellow-400">Queue:</span>
+                                                            <span className="text-gray-300">{timings.queue_seconds.toFixed(2)}s</span>
+                                                        </div>
+                                                    )}
+                                                    {timings.model_load_seconds !== undefined && (
+                                                        <div className="flex justify-between bg-gray-900/40 px-2 py-1 rounded">
+                                                            <span className="text-purple-400">Model Load:</span>
+                                                            <span className="text-gray-300">{timings.model_load_seconds.toFixed(2)}s</span>
+                                                        </div>
+                                                    )}
+                                                    {timings.sampling_seconds !== undefined && (
+                                                        <div className="flex justify-between bg-gray-900/40 px-2 py-1 rounded">
+                                                            <span className="text-blue-400">Sampling:</span>
+                                                            <span className="text-gray-300">{timings.sampling_seconds.toFixed(2)}s</span>
+                                                        </div>
+                                                    )}
+                                                    {timings.transfer_seconds !== undefined && (
+                                                        <div className="flex justify-between bg-gray-900/40 px-2 py-1 rounded">
+                                                            <span className="text-cyan-400">Transfer:</span>
+                                                            <span className="text-gray-300">{timings.transfer_seconds.toFixed(2)}s</span>
+                                                        </div>
+                                                    )}
+                                                    {timings.processing_seconds !== undefined && (
+                                                        <div className="flex justify-between bg-gray-900/40 px-2 py-1 rounded">
+                                                            <span className="text-emerald-400">Post-proc:</span>
+                                                            <span className="text-gray-300">{timings.processing_seconds.toFixed(2)}s</span>
+                                                        </div>
+                                                    )}
+                                                    {timings.total_backend_seconds !== undefined && (
+                                                        <div className="flex justify-between bg-gray-900/40 px-2 py-1 rounded font-bold">
+                                                            <span className="text-gray-400">Backend:</span>
+                                                            <span className="text-white">{timings.total_backend_seconds.toFixed(2)}s</span>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        );
+                                    })()
+                                )}
+
                                 {/* LoRAs */}
                                 {metadata.loras?.length > 0 && (
                                     <div>
