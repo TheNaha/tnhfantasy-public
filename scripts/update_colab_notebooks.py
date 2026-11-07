@@ -1436,7 +1436,7 @@ print(f"🧠 Host RAM: {tot_ram_gb:.1f} GB ({ram_avail_gb:.1f} GB avail) | Model
 # already there.
 if enable_ram_cache and os.path.exists("/dev/shm"):
     try:
-        target_shm_gb = min(64, int(tot_ram_gb * 0.82))
+        target_shm_gb = min(64, int(tot_ram_gb * 0.70))  # RAM guard: max ~70% of host RAM
         current_shm_gb = int(shutil.disk_usage("/dev/shm").total / (1024**3))
         if current_shm_gb < target_shm_gb:
             subprocess.run(
@@ -1447,9 +1447,13 @@ if enable_ram_cache and os.path.exists("/dev/shm"):
             )
         else:
             print(f"   • /dev/shm already {current_shm_gb} GB; no remount needed.")
+        try:
+            curr_avail = psutil.virtual_memory().available / (1024**3)
+            print(f"   • Host RAM headroom: {curr_avail:.1f} GB available (target /dev/shm: {target_shm_gb} GB)")
+        except Exception:
+            pass
     except Exception:
         pass
-
 # 1. Persistent Agent Service Token
 token_file = os.path.join(gdrive_root, ".agent-token")
 if os.path.exists(token_file):
@@ -1998,7 +2002,7 @@ for mid in distinct_active_llm:
 try:
     import psutil
     tot_ram = psutil.virtual_memory().total / (1024**3)
-    target_shm_gb = min(64, int(tot_ram * 0.82))
+    target_shm_gb = min(64, int(tot_ram * 0.70))  # RAM guard: max ~70% of host RAM
     # Only remount when /dev/shm is smaller than the target, and quietly.
     #
     # This one was NOT guarded by the current size, so it ran on every host
@@ -2833,9 +2837,9 @@ def launch_llm_track():
         print(f"⚡ [LLM Track] Pre-warming {os.path.basename(src_expected)} into RAM cache (/dev/shm)...")
         try:
             ram_mgr.ensure_in_ram(src_expected, model_id=active_rp, role="rp", is_anchor=True)
+            drop_page_cache()
             ram_mgr.aliases["default"] = active_rp
             ram_mgr.aliases["rp"] = active_rp
-            print("✅ [LLM Track] GGUF weights cached in RAM!")
         except Exception as exc:
             print(f"⚠️ [LLM Track] Pre-warming failed ({exc}); will load directly from storage.")
 
@@ -2845,6 +2849,7 @@ def launch_llm_track():
             print(f"⚡ [LLM Track] Pre-warming Util model {os.path.basename(src_util)} into RAM cache (/dev/shm)...")
             try:
                 ram_mgr.ensure_in_ram(src_util, model_id=active_util, role="util", is_anchor=True)
+                drop_page_cache()
                 ram_mgr.aliases["util"] = active_util
                 print("✅ [LLM Track] Util GGUF weights cached in RAM!")
             except Exception as exc:
