@@ -167,8 +167,42 @@ export function useJobsRealtime() {
                 return remaining;
             });
 
+            const rawTimings = job.timings || job.diagnostics?.timings;
+            let enrichedTimings = rawTimings ? { ...rawTimings } : null;
+            if (type === 'completed' && enrichedTimings) {
+                const meta = jobMetadata(job);
+                if (meta.client_submitted_at) {
+                    const e2eSec = Math.max(0, (Date.now() - meta.client_submitted_at) / 1000);
+                    enrichedTimings.total_e2e_seconds = Number(e2eSec.toFixed(2));
+                }
+                if (typeof console !== 'undefined' && console.table) {
+                    const durLabel = enrichedTimings.total_e2e_seconds
+                        ? `${enrichedTimings.total_e2e_seconds}s (E2E)`
+                        : `${enrichedTimings.total_backend_seconds || enrichedTimings.total_seconds || 0}s (Backend)`;
+                    try {
+                        console.groupCollapsed(`⏱️ Job ${job.id ? job.id.slice(0, 8) : ''} Generation Telemetry — ${durLabel}`);
+                        console.table({
+                            'Client Upload': { duration: enrichedTimings.client_upload_seconds !== undefined ? `${(enrichedTimings.client_upload_seconds * 1000).toFixed(0)} ms` : 'N/A' },
+                            'Queue Wait': { duration: enrichedTimings.queue_seconds !== undefined ? `${enrichedTimings.queue_seconds.toFixed(2)} s` : 'N/A' },
+                            'Prompt Dispatch': { duration: enrichedTimings.dispatch_ack_seconds !== undefined ? `${(enrichedTimings.dispatch_ack_seconds * 1000).toFixed(0)} ms` : 'N/A' },
+                            'Model / LoRA Load': { duration: enrichedTimings.model_load_seconds !== undefined ? `${enrichedTimings.model_load_seconds.toFixed(2)} s` : 'N/A' },
+                            'KSampler (Sampling)': { duration: enrichedTimings.sampling_seconds !== undefined ? `${enrichedTimings.sampling_seconds.toFixed(2)} s` : 'N/A' },
+                            'Image Transfer': { duration: enrichedTimings.transfer_seconds !== undefined ? `${enrichedTimings.transfer_seconds.toFixed(2)} s` : 'N/A' },
+                            'Post-Processing': { duration: enrichedTimings.processing_seconds !== undefined ? `${enrichedTimings.processing_seconds.toFixed(2)} s` : 'N/A' },
+                            'Total Backend': { duration: enrichedTimings.total_backend_seconds !== undefined ? `${enrichedTimings.total_backend_seconds.toFixed(2)} s` : 'N/A' },
+                            'Total End-to-End': { duration: enrichedTimings.total_e2e_seconds !== undefined ? `${enrichedTimings.total_e2e_seconds.toFixed(2)} s` : 'N/A' },
+                        });
+                        console.groupEnd();
+                    } catch (e) {
+                        void e;
+                    }
+                }
+            }
+
+            const updatedJob = enrichedTimings ? { ...job, timings: enrichedTimings } : job;
+
             queryClient.setQueryData(['jobs', job.id], (old) =>
-                old ? { ...old, ...job, preview: null } : { ...job, preview: null }
+                old ? { ...old, ...updatedJob, preview: null } : { ...updatedJob, preview: null }
             );
             queryClient.invalidateQueries({ queryKey: ['jobs', 'queue'] });
 

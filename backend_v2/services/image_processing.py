@@ -141,10 +141,15 @@ def build_job_outputs(
                     "checkpoint",
                     "loras",
                     "workflow",
+                    "diagnostics",
+                    "timings",
                 ]:
                     if key in job.metadata_:
                         full_metadata[key] = job.metadata_[key]
-
+            if "timings" not in full_metadata and isinstance(job.metadata_, dict):
+                diag_timings = job.metadata_.get("diagnostics", {}).get("timings")
+                if diag_timings:
+                    full_metadata["timings"] = diag_timings
             try:
                 with Image.open(io.BytesIO(image_data)) as img_obj:
                     save_image_with_metadata(img_obj, output_path, full_metadata)

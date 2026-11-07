@@ -1350,7 +1350,7 @@ class DirectComfyEngine(InProcessEngine):
                     json={"prompt": graph, "client_id": client_id},
                     timeout=30.0,
                 )
-
+                t_prompt_ack = time.monotonic()
                 # 3. Targeted Fallback: if ComfyUI rejects with 400 validation error (e.g. "Value not in list"),
                 # fetch ONLY the affected node schema via /object_info/{node_class} (<5 KB) and retry once!
                 missing_model_on_provider = False
@@ -1453,6 +1453,10 @@ class DirectComfyEngine(InProcessEngine):
                 last_preview_step: int = -1
                 current_step: int = 0
                 total_steps: int = 0
+                t_first_executing: Optional[float] = None
+                t_first_progress: Optional[float] = None
+                t_last_progress: Optional[float] = None
+                t_sampling_done: Optional[float] = None
                 # Listen to WebSocket messages until execution completes or times out
                 async with asyncio.timeout(timeout):
                     while True:
@@ -1540,6 +1544,8 @@ class DirectComfyEngine(InProcessEngine):
                         msg_prompt_id = msg_data.get("prompt_id")
 
                         if msg_type == "executing":
+                            if t_first_executing is None:
+                                t_first_executing = time.monotonic()
                             node = msg_data.get("node")
                             if node is None and msg_prompt_id == prompt_id:
                                 # Completed
@@ -1549,8 +1555,8 @@ class DirectComfyEngine(InProcessEngine):
                                 yield {"event": "node", "job_id": job_id, "node": str(node)}
 
                         elif msg_type == "execution_success":
+                            t_sampling_done = time.monotonic()
                             # The terminal frame, and the one this loop
-                            # actually terminates on.
                             #
                             # ComfyUI no longer ends a prompt with
                             # `executing {node: null}` — `execution.py` emits
@@ -1577,6 +1583,9 @@ class DirectComfyEngine(InProcessEngine):
                                 return
 
                         elif msg_type == "progress":
+                            if t_first_progress is None:
+                                t_first_progress = time.monotonic()
+                            t_last_progress = time.monotonic()
                             if msg_prompt_id is None or msg_prompt_id == prompt_id:
                                 val = msg_data.get("value")
                                 max_val = msg_data.get("max") or 0
@@ -1710,17 +1719,22 @@ class DirectComfyEngine(InProcessEngine):
                 outputs = [a for a in fetched if a is not None]
 
                 t_fetch_all_done = time.monotonic()
+                dispatch_ack_sec = round((t_prompt_ack - t_prompt_start), 3) if t_prompt_ack else 0.0
+                model_load_sec = round((t_first_progress - (t_first_executing or t_prompt_ack or t_prompt_start)), 2) if t_first_progress else 0.0
+                sampling_sec = round(((t_sampling_done or t_last_progress or t_fetch_all_start) - t_first_progress), 2) if t_first_progress else 0.0
                 inference_sec = round(t_fetch_all_start - t_prompt_start, 2)
                 transfer_sec = round(t_fetch_all_done - t_fetch_all_start, 2)
                 total_sec = round(t_fetch_all_done - t_prompt_start, 2)
                 timings = {
+                    "dispatch_ack_seconds": max(dispatch_ack_sec, 0.0),
+                    "model_load_seconds": max(model_load_sec, 0.0),
+                    "sampling_seconds": max(sampling_sec, 0.0),
                     "inference_seconds": max(inference_sec, 0.0),
                     "transfer_seconds": max(transfer_sec, 0.0),
                     "total_seconds": max(total_sec, 0.0),
                     "transfer_bytes": total_fetch_bytes,
                     "transfer_format": "webp" if used_webp else "png",
                 }
-
                 # Audio is not images. `SaveAudio` / `PreviewAudio` publish
                 # `outputs[<node>]["audio"]` and never `images`, so a TTS
                 # history document walked for images yields nothing at all:

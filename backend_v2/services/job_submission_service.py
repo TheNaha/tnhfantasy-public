@@ -1,6 +1,6 @@
 import asyncio
+import time
 from typing import Any
-
 from sqlmodel import Session
 
 from core.exceptions import JobError, MissingModelsError
@@ -123,7 +123,9 @@ class JobSubmissionService:
                 can_trigger_download=availability.can_trigger_download,
             )
 
-        job = await self.job_service.create_job(workflow, metadata, task_type=task_type)
+        resolved_meta = dict(metadata or {})
+        resolved_meta.setdefault("enqueued_at", time.time())
+        job = await self.job_service.create_job(workflow, resolved_meta, task_type=task_type)
         try:
             await queue_manager.enqueue(job.id, task_type=task_type)
         except Exception as exc:
