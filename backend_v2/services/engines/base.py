@@ -689,6 +689,7 @@ class InProcessEngine(ABC):
         job_id: str | None = None,
         use_snapshot: bool = False,
         timeout: float = 3600.0,
+        **kwargs: Any,
     ) -> AsyncIterator[dict[str, Any]]:
         """
         Execute an inference workflow, yielding TaskEvent dictionaries:

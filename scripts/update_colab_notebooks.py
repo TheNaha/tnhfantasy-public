@@ -524,8 +524,8 @@ USE_UV = bootstrap_uv()
 def install_python_packages(req_files=None, packages=None):
     \"\"\"Unified fast package installer using uv if available, falling back to pip.\"\"\"
     req_files = [f for f in (req_files or []) if os.path.isfile(f)]
-    packages = packages or []
-    if not req_files and not packages:
+    raw_packages = packages or []
+    if not req_files and not raw_packages:
         return
 
     os.environ["UV_BREAK_SYSTEM_PACKAGES"] = "1"
@@ -561,7 +561,14 @@ def install_python_packages(req_files=None, packages=None):
         except Exception:
             sanitized_reqs.append(r)
 
-    wheel_cache_dir = f"{gdrive_root}/wheel_cache"
+    clean_packages = []
+    for pkg in raw_packages:
+        stripped = pkg.strip()
+        if stripped.startswith("git+") or " @ git+" in stripped:
+            git_packages.append(stripped)
+        else:
+            clean_packages.append(pkg)
+    packages = clean_packages
     os.makedirs(wheel_cache_dir, exist_ok=True)
     def _monitor_and_prune_wheel_cache(max_gb: float = 3.5):
         if not os.path.exists(wheel_cache_dir):
@@ -600,18 +607,25 @@ def install_python_packages(req_files=None, packages=None):
     _monitor_and_prune_wheel_cache()
 
     if USE_UV:
-        wheel_opt = ["--find-links", wheel_cache_dir, "--cache-dir", uv_cache_dir]
+        wheel_opt = ["--find-links", wheel_cache_dir]
         if isinstance(USE_UV, str) and " -m " in USE_UV:
             uv_base = [sys.executable, "-m", "uv", "pip", "install", "--system", "--break-system-packages", "--index-strategy", "unsafe-best-match", *wheel_opt, "--extra-index-url", "https://download.pytorch.org/whl/cu124"]
         elif isinstance(USE_UV, str):
             uv_base = [USE_UV, "pip", "install", "--system", "--break-system-packages", "--index-strategy", "unsafe-best-match", *wheel_opt, "--extra-index-url", "https://download.pytorch.org/whl/cu124"]
         else:
             uv_base = ["uv", "pip", "install", "--system", "--break-system-packages", "--index-strategy", "unsafe-best-match", *wheel_opt, "--extra-index-url", "https://download.pytorch.org/whl/cu124"]
+    else:
         uv_base = None
-
     def _install_git_packages():
         for g in git_packages:
             pkg_name = g.split("/")[-1].split("@")[0].strip()
+            if pkg_name == "sam2":
+                try:
+                    import sam2  # noqa: F401
+                    print("  ⏭️ sam2 already installed and verified.")
+                    continue
+                except Exception:
+                    pass
             print(f"  📦 Installing optional extension: {pkg_name}...")
             git_env = os.environ.copy()
             git_env["SAM2_BUILD_ALLOW_ERRORS"] = "1"
@@ -648,22 +662,9 @@ def install_python_packages(req_files=None, packages=None):
                     print(f"  ⚠️ Warning: Error installing {pkg_name}: {e}")
 
     def _populate_wheel_cache():
-        try:
-            whl_cmd = [
-                sys.executable, "-m", "pip", "wheel",
-                "-w", wheel_cache_dir,
-                "--find-links", wheel_cache_dir,
-                "--no-deps",
-            ]
-            for r in sanitized_reqs:
-                whl_cmd.extend(["-r", r])
-            whl_cmd.extend(packages)
-            print("📦 Caching wheels to Google Drive for instantaneous future boots...")
-            subprocess.run(whl_cmd, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            _monitor_and_prune_wheel_cache()
-        except Exception:
-            pass
-
+        # Do not block worker startup by compiling wheels to Drive FUSE.
+        # Wheels are installed directly via uv / pip cache.
+        pass
     if USE_UV and uv_base:
         cmd = list(uv_base)
         for r in sanitized_reqs:
@@ -717,8 +718,7 @@ def install_python_packages(req_files=None, packages=None):
         subprocess.run(pip_cmd, check=False)
     except Exception as e:
         print(f"⚠️ pip installation error: {e}")
-
-    _populate_wheel_cache()
+    _install_git_packages()
 # 1. Install Networking Tool (NetBird or Cloudflared)
 
 if tunnel_key == "netbird":
@@ -923,13 +923,31 @@ elif mode_key in ("model", "hybrid", "tts"):
             )
     except Exception:
         pass
-    # Extra packages required by nodes (ADetailer, IPAdapter, QwenTTS, etc.)
+
+    # Pre-seed Impact Pack default config to prevent KeyError: 'default' on startup
+    impact_dir = os.path.join(custom_nodes_dir, "ComfyUI-Impact-Pack")
+    impact_ini = os.path.join(impact_dir, "impact-pack.ini")
+    if os.path.exists(impact_dir) and not os.path.exists(impact_ini):
+        try:
+            with open(impact_ini, "w", encoding="utf-8") as f:
+                f.write(
+                    "[default]\\n"
+                    "sam_editor_cpu = False\\n"
+                    "sam_editor_model = sam_vit_b_01ec64.pth\\n"
+                    "custom_wildcards = custom_wildcards\\n"
+                    "disable_gpu_opencv = True\\n"
+                    "gpu_gaussian_blur = False\\n"
+                    "wildcard_cache_limit_mb = 50\\n"
+                )
+        except Exception:
+            pass
+    # Extra packages required by nodes (ADetailer, Impact-Pack SAM/SAM2, IPAdapter, QwenTTS, etc.)
     extra_packages = [
         "accelerate", "scipy", "ultralytics", "dill", "einops", "timm",
         "soundfile", "torchaudio", "librosa", "opencv-python", "matplotlib",
-        "hydra-core", "iopath", "huggingface_hub", "psutil", "pysocks"
+        "hydra-core", "iopath", "huggingface_hub", "psutil", "pysocks",
+        "segment-anything", "git+https://github.com/facebookresearch/sam2"
     ]
-
 # 3. Unified High-Speed Python Package Installation
 print("📦 Installing all Python dependencies concurrently...")
 install_python_packages(req_files=collected_reqs, packages=extra_packages)
@@ -949,6 +967,8 @@ if mode_key in ("model", "hybrid", "tts"):
         ("models/ultralytics/bbox/hand_yolov8n.pt", "https://huggingface.co/Bingsu/adetailer/resolve/main/hand_yolov8n.pt"),
         # ADetailer Models (Seg)
         ("models/ultralytics/seg/person_yolov8n-seg.pt", "https://huggingface.co/Bingsu/adetailer/resolve/main/person_yolov8n-seg.pt"),
+        # SAM (Segment Anything)
+        ("models/sams/sam_vit_b_01ec64.pth", "https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth"),
     ]
 
     print("📥 Checking auxiliary models (Upscalers & ADetailer)...")

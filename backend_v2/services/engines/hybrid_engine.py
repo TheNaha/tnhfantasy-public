@@ -295,6 +295,7 @@ class HybridRemoteEngine(InProcessEngine):
         job_id: Optional[str] = None,
         use_snapshot: bool = True,
         timeout: float = 3600.0,
+        **kwargs: Any,
     ) -> AsyncIterator[Dict[str, Any]]:
         """Dispatch inference to the proper engine under GPU policy coordination."""
         policy = await self._resolve_policy()
@@ -310,7 +311,7 @@ class HybridRemoteEngine(InProcessEngine):
                     self._last_workload = "tts"
                     try:
                         async for event in self.image_engine.inference(
-                            workflow, job_id=job_id, use_snapshot=use_snapshot, timeout=timeout
+                            workflow, job_id=job_id, use_snapshot=use_snapshot, timeout=timeout, **kwargs
                         ):
                             yield event
                     finally:
@@ -321,7 +322,7 @@ class HybridRemoteEngine(InProcessEngine):
                     self._last_workload = "image"
                     try:
                         async for event in self.image_engine.inference(
-                            workflow, job_id=job_id, use_snapshot=use_snapshot, timeout=timeout
+                            workflow, job_id=job_id, use_snapshot=use_snapshot, timeout=timeout, **kwargs
                         ):
                             yield event
                     finally:
@@ -337,7 +338,7 @@ class HybridRemoteEngine(InProcessEngine):
                         self._last_workload = "llm"
                     try:
                         async for event in self.llm_engine.inference(
-                            workflow, job_id=job_id, use_snapshot=use_snapshot, timeout=timeout
+                            workflow, job_id=job_id, use_snapshot=use_snapshot, timeout=timeout, **kwargs
                         ):
                             yield event
                     finally:
@@ -354,7 +355,7 @@ class HybridRemoteEngine(InProcessEngine):
                     )
                     try:
                         async for event in self.llm_engine.inference(
-                            workflow, job_id=job_id, use_snapshot=use_snapshot, timeout=timeout
+                            workflow, job_id=job_id, use_snapshot=use_snapshot, timeout=timeout, **kwargs
                         ):
                             yield event
                     finally:
@@ -362,17 +363,17 @@ class HybridRemoteEngine(InProcessEngine):
             else:
                 if is_tts:
                     async for event in self.image_engine.inference(
-                        workflow, job_id=job_id, use_snapshot=use_snapshot, timeout=timeout
+                        workflow, job_id=job_id, use_snapshot=use_snapshot, timeout=timeout, **kwargs
                     ):
                         yield event
                 elif is_image:
                     async for event in self.image_engine.inference(
-                        workflow, job_id=job_id, use_snapshot=use_snapshot, timeout=timeout
+                        workflow, job_id=job_id, use_snapshot=use_snapshot, timeout=timeout, **kwargs
                     ):
                         yield event
                 else:
                     async for event in self.llm_engine.inference(
-                        workflow, job_id=job_id, use_snapshot=use_snapshot, timeout=timeout
+                        workflow, job_id=job_id, use_snapshot=use_snapshot, timeout=timeout, **kwargs
                     ):
                         yield event
 
@@ -380,17 +381,17 @@ class HybridRemoteEngine(InProcessEngine):
             # Concurrent mode (A100-80GB / H100): parallel pass-through
             if is_tts:
                 async for event in self.image_engine.inference(
-                    workflow, job_id=job_id, use_snapshot=use_snapshot, timeout=timeout
+                    workflow, job_id=job_id, use_snapshot=use_snapshot, timeout=timeout, **kwargs
                 ):
                     yield event
             elif is_image:
                 async for event in self.image_engine.inference(
-                    workflow, job_id=job_id, use_snapshot=use_snapshot, timeout=timeout
+                    workflow, job_id=job_id, use_snapshot=use_snapshot, timeout=timeout, **kwargs
                 ):
                     yield event
             else:
                 async for event in self.llm_engine.inference(
-                    workflow, job_id=job_id, use_snapshot=use_snapshot, timeout=timeout
+                    workflow, job_id=job_id, use_snapshot=use_snapshot, timeout=timeout, **kwargs
                 ):
                     yield event
 

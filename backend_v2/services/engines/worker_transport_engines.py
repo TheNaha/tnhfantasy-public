@@ -171,6 +171,7 @@ class _BeamLLMEngineBase(BeamEngine):
         job_id: Optional[str] = None,
         use_snapshot: bool = True,
         timeout: float = 1800.0,
+        **kwargs: Any,
     ) -> AsyncIterator[dict[str, Any]]:
         """Stream TaskEvents from the Beam app over the dialect's websocket.
 
@@ -786,6 +787,7 @@ class RemoteTTSEngine(RemoteAgentFileMixin, InProcessEngine):
         job_id: Optional[str] = None,
         use_snapshot: bool = True,
         timeout: float = 1800.0,
+        **kwargs: Any,
     ) -> AsyncIterator[dict[str, Any]]:
         """Synthesise speech on the self-hosted container.
 

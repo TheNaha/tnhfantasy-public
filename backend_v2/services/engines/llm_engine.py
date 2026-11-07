@@ -443,6 +443,7 @@ class OpenAICompatLLMEngine(InProcessEngine):
         job_id: Optional[str] = None,
         use_snapshot: bool = True,
         timeout: float = 120.0,
+        **kwargs: Any,
     ) -> AsyncIterator[Dict[str, Any]]:
         """
         Stream chat completions SSE from OpenAI-compatible endpoint, yielding canonical TaskEvents.
@@ -970,6 +971,7 @@ class ModalLlamaCPPEngine(InProcessEngine):
         job_id: Optional[str] = None,
         use_snapshot: bool = True,
         timeout: float = 300.0,
+        **kwargs: Any,
     ) -> AsyncIterator[Dict[str, Any]]:
         timeout = clamp_timeout(timeout, default=300.0)
         yield {"event": "started", "job_id": job_id, "provider_id": self.provider_id}
@@ -1315,6 +1317,7 @@ class AnthropicLLMEngine(InProcessEngine):
         job_id: Optional[str] = None,
         use_snapshot: bool = True,
         timeout: float = 120.0,
+        **kwargs: Any,
     ) -> AsyncIterator[Dict[str, Any]]:
         messages, system_prompt = translate_messages_anthropic(workflow.get("messages") or [])
         tools = translate_tools_anthropic(workflow.get("tools"))
@@ -1555,6 +1558,7 @@ class GoogleLLMEngine(InProcessEngine):
         job_id: Optional[str] = None,
         use_snapshot: bool = True,
         timeout: float = 120.0,
+        **kwargs: Any,
     ) -> AsyncIterator[Dict[str, Any]]:
         contents, system_prompt = translate_messages_google(workflow.get("messages") or [])
         tools = translate_tools_google(workflow.get("tools"))
