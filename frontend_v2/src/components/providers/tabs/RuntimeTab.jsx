@@ -1,7 +1,7 @@
 import { Wrench, Zap, Brain, RefreshCw, CheckCircle, XCircle, Loader2, Rocket, Cpu, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import { LineChart, Line, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import { DataRow, StatusRow, ActionBtn } from './Shared';
 import { STATUS_TONE, humanize } from './utils';
@@ -164,6 +164,7 @@ export default function RuntimeTab({
     const [pingLatency, setPingLatency] = useState(null);
     const [liveTelemetry, setLiveTelemetry] = useState(null);
     const [freeingVram, setFreeingVram] = useState(false);
+    const queryClient = useQueryClient();
 
     const isLLM = provider.worker_type === 'llm';
     const isHybridOrRemote = provider.worker_type === 'hybrid' || provider.type === 'remote_hybrid' || provider.type === 'direct_comfy';
@@ -355,9 +356,27 @@ export default function RuntimeTab({
             {vramChartPoints.length > 0 && (
                 <div className="rounded-xl border border-white/[0.06] bg-gray-900/40 overflow-hidden">
                     <div className="px-4 py-2.5 border-b border-white/[0.03]">
-                        <span className="text-xs font-bold uppercase tracking-widest text-blue-400">
-                            VRAM History ({vramChartPoints.length} samples)
-                        </span>
+                        <div className="flex items-center justify-between">
+                            <span className="text-xs font-bold uppercase tracking-widest text-blue-400">
+                                VRAM History ({vramChartPoints.length} samples)
+                            </span>
+                            <button
+                                onClick={async () => {
+                                    try {
+                                        await providersApi.refreshVram(provider.id);
+                                        toast.success('VRAM sampled successfully');
+                                        await queryClient.invalidateQueries({ queryKey: ['providers'] });
+                                    } catch (e) {
+                                        toast.error(e?.message || 'Failed to sample VRAM');
+                                    }
+                                }}
+                                className="flex items-center gap-1 px-2 py-0.5 text-xs text-blue-300 hover:text-white rounded bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/20 transition-colors"
+                                title="Sample fresh GPU VRAM metrics from remote worker"
+                            >
+                                <RefreshCw size={10} />
+                                Refresh VRAM
+                            </button>
+                        </div>
                     </div>
                     <div className="p-3" style={{ width: '100%', height: 180 }}>
                         <ResponsiveContainer>

@@ -386,11 +386,14 @@ class ProviderTelemetryService:
                 provider_id=provider.id,
                 error=str(exc),
             )
-            return
+            return None
 
         if sample is not None:
             self._append_vram_sample(provider.id, sample)
-
+        return sample
+    async def sample_vram_now(self, provider: Any, engine: Any) -> dict[str, Any] | None:
+        """Force an immediate VRAM sample on demand."""
+        return await self._sample_vram(provider, engine)
     def _append_vram_sample(self, provider_id: str, sample: dict[str, Any]) -> None:
         ring = self._vram_history.setdefault(
             provider_id, deque(maxlen=VRAM_HISTORY_MAX_ENTRIES)

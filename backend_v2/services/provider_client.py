@@ -42,10 +42,7 @@ def _extract_http_status(message: str) -> int | None:
 # only the latest payload per job (lossless), so fewer emits never drop tokens.
 LLM_PROGRESS_THROTTLE_SECONDS = 1.0 / 60.0
 
-# How often a generation's progress may be written to the `jobs` row. The
-# websocket event is unaffected, so the UI still updates smoothly; this bounds
-# the number of synchronous commits on the event loop per generation.
-PROGRESS_PERSIST_INTERVAL_SECONDS = 1.0
+PREVIEW_THROTTLE_SECONDS = 0.5
 
 
 class ProviderCallError(Exception):
@@ -102,36 +99,24 @@ class _ImageReducer:
         self.provider_id = provider_id
         self.executed_nodes = set()
         self.final_result = None
-        # Progress frames are coalesced for the database, not for the UI.
-        # ComfyUI emits a `node` and a `progress` event for every step of every
-        # attempt, so a 20-step SDXL job produced 40-60 `update_job` calls, each
-        # one a synchronous SELECT + UPDATE + COMMIT + REFRESH on the event
-        # loop plus a websocket broadcast and a flushed log line. Every gallery,
-        # job-list and provider-status request queued behind them.
-        #
-        # The websocket event still goes out on every frame — that is what the
-        # progress bar reads, and it is cheap. Only the row write is throttled,
-        # to at most one per PROGRESS_PERSIST_INTERVAL_SECONDS.
-        #
-        # No flush is needed. Every terminal branch below discards the pending
-        # frame, because `completed`/`failed`/`cancelled` all overwrite status,
-        # progress and message anyway. And a stream that ends with no terminal
-        # event raises in `finalize()`, which routes to the job's failure path —
-        # so there is no exit where a dropped frame is the last thing the user
-        # would have seen.
-        self._last_persist_at = 0.0
-        self._pending_progress: dict | None = None
+        self._current_progress: float = 0.0
+        self._current_overall: int = 0
+        self._current_message: str | None = None
         self._latest_preview: str | None = None
+        self._last_preview_persist_at: float = 0.0
 
     async def _persist_progress(self, **fields) -> None:
-        """Write progress to the row, coalescing bursts. Terminal states bypass."""
-        now = time.perf_counter()
-        if now - self._last_persist_at < PROGRESS_PERSIST_INTERVAL_SECONDS:
-            self._pending_progress = fields
-            return
-        self._last_persist_at = now
-        self._pending_progress = None
-        event_extra = {"preview": self._latest_preview} if self._latest_preview else None
+        """Write progress and emit event immediately with zero progress throttling."""
+        if "progress" in fields:
+            self._current_progress = float(fields["progress"])
+        if "overall_progress" in fields:
+            self._current_overall = int(fields["overall_progress"])
+        if "message" in fields:
+            self._current_message = fields["message"]
+        fields.setdefault("progress", self._current_progress)
+        fields.setdefault("overall_progress", self._current_overall)
+        fields.setdefault("message", self._current_message or f"Rendering: {int(self._current_progress)}%")
+        event_extra = fields.pop("event_extra", None) or ({"preview": self._latest_preview} if self._latest_preview else None)
         await self.job_service.update_job(self.job_id, event_extra=event_extra, **fields)
 
     async def __call__(self, ev: dict) -> None:
@@ -176,18 +161,16 @@ class _ImageReducer:
             if preview:
                 self._latest_preview = preview
                 now = time.perf_counter()
-                if now - self._last_persist_at >= PROGRESS_PERSIST_INTERVAL_SECONDS:
-                    self._last_persist_at = now
-                    await self.job_service.update_job(
-                        self.job_id,
-                        event_extra={"preview": preview},
+                if now - self._last_preview_persist_at >= PREVIEW_THROTTLE_SECONDS:
+                    self._last_preview_persist_at = now
+                    await self._persist_progress(
+                        status=JobStatus.GENERATING,
                         event_type=EventType.JOB_PROGRESS,
                         include_full_metadata=False,
+                        event_extra={"preview": preview},
                     )
         elif event == "completed":
-            # Terminal: the last coalesced progress frame is now moot, because
-            # the completion path overwrites status, progress and message
-            # anyway. Flushing here would be a redundant write.
+            # Terminal: clear preview and finalise
             self._latest_preview = None
             try:
                 validate_image_outputs(ev)

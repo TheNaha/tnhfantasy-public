@@ -135,7 +135,8 @@ export const providersApi = {
 
     /** Purge GPU VRAM and reset model caching on remote worker engine. */
     freeVram: (providerId) => api.post(`${P}/${providerId}/free-vram`),
-
+    /** Force an immediate fresh VRAM sample from remote worker. */
+    refreshVram: (providerId) => api.post(`${P}/${providerId}/vram-refresh`),
     /** Shut down a provider's worker (waits for active jobs first). */
     shutdown: (providerId) => api.post(`${P}/${providerId}/shutdown`),
 

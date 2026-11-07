@@ -117,7 +117,8 @@ class VRAMManager:
         self.active_lease: Optional[str] = None
         self.in_flight_count: int = 0
         self.waiting_queue: List[str] = []
-
+        self._last_comfy_probe_at: float = 0.0
+        self._last_comfy_generating: bool = False
     @staticmethod
     def _get_cuda_device_count() -> int:
         """How many CUDA devices this box has. **0 means UNKNOWN.**
@@ -310,28 +311,16 @@ class VRAMManager:
     # Component Eviction Controls & Execution Inspection
     # ----------------------------------------------------------------------
 
-    def is_comfy_generating(self, timeout: float = 2.0) -> bool:
+    def is_comfy_generating(self, timeout: float = 0.5, max_age: float = 0.5) -> bool:
         """Is ComfyUI executing or queuing a prompt?
 
-        The failure modes are distinguished, because they mean OPPOSITE
-        things, and treating them the same is expensive:
-
-        * ComfyUI REFUSES the connection -> it is not running -> it is
-          definitely not generating -> False. A worker that serves only the
-          LLM has no ComfyUI at all, and answering "busy" here would put a
-          60-second drain in front of every one of its requests.
-        * ComfyUI ACCEPTS the connection but does not ANSWER in time -> it is
-          running and busy -> True. Freeing its VRAM now would kill a live
-          generation.
-        * ComfyUI answers with an HTTP error -> it is running, and it is not
-          generating -> False.
-
-        The old version answered False for every failure, so a timeout on a
-        loaded ComfyUI freed its VRAM under a live generation. The version
-        that answered True for every failure stalled every request on a
-        worker with no ComfyUI - and made the test suite 60 seconds slower
-        per affected test. Neither is right; this distinguishes them.
+        Cached briefly (default 500ms) so telemetry and VRAM polling never
+        hammer ComfyUI /queue synchronously.
         """
+        now = time.monotonic()
+        if now - self._last_comfy_probe_at < max_age:
+            return self._last_comfy_generating
+
         try:
             req = urllib.request.Request(f"{self.comfy_url}/queue")
             with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -339,10 +328,13 @@ class VRAMManager:
                     data = json.loads(resp.read().decode("utf-8"))
                     running = data.get("queue_running") or []
                     pending = data.get("queue_pending") or []
-                    return bool(running or pending)
-                # It answered, with something that is not a queue.
+                    res = bool(running or pending)
+                    self._last_comfy_generating = res
+                    self._last_comfy_probe_at = now
+                    return res
+                self._last_comfy_generating = False
+                self._last_comfy_probe_at = now
                 return False
-        except urllib.error.HTTPError:
             # It answered, with an error. It is running; it is not generating.
             return False
         except urllib.error.URLError as exc:

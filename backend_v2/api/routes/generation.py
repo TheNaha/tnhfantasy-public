@@ -96,7 +96,7 @@ async def _target_capabilities(
 
         digest, _graph = await asyncio.wait_for(
             _fetch_provider_object_info(provider_id, session),
-            timeout=8.0,
+            timeout=1.5,
         )
         return derive_capabilities(digest, provider_id=provider_id)
     except Exception as exc:

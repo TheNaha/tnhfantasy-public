@@ -829,6 +829,33 @@ async def free_provider_vram(
         logger.warning("provider_free_vram_failed", provider_id=provider_id, error=str(exc))
         raise ComfyError(f"Failed to free GPU VRAM: {exc!s}") from exc
 
+@router.post("/{provider_id}/vram-refresh")
+async def refresh_provider_vram(
+    provider_id: str,
+    service: ProviderService = Depends(get_provider_service),
+):
+    """Trigger an immediate VRAM sample on demand from remote agent."""
+    provider = await service.get_provider(provider_id)
+    if not provider:
+        raise NotFoundError("Provider", provider_id)
+
+    from services.engines.engine_factory import get_engine, can_create_engine
+    from services.provider_telemetry_service import telemetry_service
+
+    if not can_create_engine(provider):
+        raise ValidationError(f"Provider {provider_id} cannot run in-process engine")
+
+    engine = get_engine(provider_id, provider)
+    if not engine:
+        raise NotFoundError(f"Engine for provider {provider_id} could not be initialized")
+
+    sample = await telemetry_service.sample_vram_now(provider, engine)
+    _invalidate_provider_runtime_caches(provider_id)
+    return {
+        "status": "success",
+        "provider_id": provider_id,
+        "sample": sample,
+    }
 
 #: How long to wait for active jobs before giving up on shutdown.
 SHUTDOWN_MAX_WAIT_SECONDS = float(

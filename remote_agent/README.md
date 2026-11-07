@@ -129,6 +129,17 @@ the mode — in **every** mode, not just `model`. That is what makes a `remote_l
 or `remote_tts` provider able to manage files the same way a `remote_comfy` one
 can, and what makes the remote transport 1-to-1 with `modal` per category.
 
+### Storage-only mode (`WORKER_MODE=storage`)
+
+Setting `WORKER_MODE=storage` turns the agent into a **model manager with no
+inference**: it still serves the storage endpoints above, reports
+`inference_enabled: false` from `/info`, and returns **HTTP 503** from every
+inference endpoint (`/setup` for generation, `/download-model` for inference
+weights, and the LLM/TTS routes). Use it on a CPU box that only stages
+weights for a GPU worker elsewhere. The backend's `remote_*` engines treat a
+503 as "not available for this task type" rather than a transport failure, so a
+storage-only node is never silently picked for a job.
+
 ## `WORKER_MODE=llm` serves its own weights
 
 An LLM worker is not a proxy by default. It reads the model registry
