@@ -1286,6 +1286,8 @@ class DirectComfyEngine(InProcessEngine):
         job_id: Optional[str] = None,
         use_snapshot: bool = True,
         timeout: float = 3600.0,
+        metadata: Optional[Dict[str, Any]] = None,
+        **kwargs: Any,
     ) -> AsyncIterator[Dict[str, Any]]:
         """
         Execute an inference workflow by connecting to ComfyUI's WebSocket and dispatching /prompt.
@@ -1725,7 +1727,12 @@ class DirectComfyEngine(InProcessEngine):
                 inference_sec = round(t_fetch_all_start - t_prompt_start, 2)
                 transfer_sec = round(t_fetch_all_done - t_fetch_all_start, 2)
                 total_sec = round(t_fetch_all_done - t_prompt_start, 2)
+                meta = metadata or {}
                 timings = {
+                    "client_submitted_at": meta.get("client_submitted_at"),
+                    "client_perf_start": meta.get("client_perf_start"),
+                    "api_received_at": meta.get("api_received_at"),
+                    "enqueued_at": meta.get("enqueued_at"),
                     "dispatch_ack_seconds": max(dispatch_ack_sec, 0.0),
                     "model_load_seconds": max(model_load_sec, 0.0),
                     "sampling_seconds": max(sampling_sec, 0.0),
