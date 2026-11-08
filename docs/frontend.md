@@ -4,7 +4,7 @@ The frontend of TNHFantasy (`tnhfantasy-frontend`) is built with **React 19** an
 
 ## Package manager — bun only
 
-This workspace is intentionally **bun-only**. The preinstall guard (`scripts/enforce-bun.cjs`) rejects npm, pnpm, and yarn.
+This workspace is intentionally **bun-only**. The preinstall guard (`frontend_v2/scripts/enforce-bun.cjs`) rejects npm, pnpm, and yarn.
 
 ```bash
 cd frontend_v2

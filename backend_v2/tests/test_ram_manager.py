@@ -245,3 +245,23 @@ def test_ram_manager_insufficient_space(temp_env, monkeypatch):
         mgr.ensure_in_ram(str(m_src), model_id="huge_model", role="rp", is_anchor=True)
     assert "Insufficient RAM cache space" in str(exc_info.value)
 
+
+def test_ram_manager_nvme_backing_and_in_place_registration(tmp_path):
+    nvme_dir = tmp_path / "nvme_cache"
+    nvme_dir.mkdir()
+
+    mgr = RamModelManager(ram_dir=str(nvme_dir))
+    assert mgr.is_shm is False
+    assert mgr.budget_bytes > 0
+
+    # Create file directly inside nvme_dir (e.g. downloaded directly from CivitAI)
+    direct_file = nvme_dir / "checkpoints" / "illustrious_v1.safetensors"
+    direct_file.parent.mkdir(parents=True, exist_ok=True)
+    direct_file.write_bytes(b"I" * (2 * 1024 * 1024))
+
+    # ensure_in_ram on file already in ram_dir should register in-place
+    res_path = mgr.ensure_in_ram(str(direct_file), model_id="illustrious_v1", role="image", is_anchor=True)
+    assert res_path == direct_file
+    assert mgr.is_cached("illustrious_v1")
+    assert mgr.entries["illustrious_v1"].ram_path == str(direct_file)
+    assert mgr.entries["illustrious_v1"].is_anchor is True

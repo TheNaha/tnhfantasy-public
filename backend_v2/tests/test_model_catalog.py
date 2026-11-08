@@ -126,7 +126,14 @@ class TestModelCatalogAndRegistry:
 
     def test_checkpoint_recommendations_with_assets(self, session, client: TestClient):
         from datetime import datetime, timezone
-        from core.entities import Asset, AssetKind, ModelFile, ModelV2, ModelVersion
+        from core.entities import (
+            Asset,
+            AssetKind,
+            AssetLora,
+            ModelFile,
+            ModelV2,
+            ModelVersion,
+        )
         from services.checkpoint_recommendations import get_checkpoint_recommendations
 
         # Create model in DB
@@ -178,6 +185,38 @@ class TestModelCatalogAndRegistry:
             created_at=now,
         )
         session.add(flux_asset)
+        # Add a LoRA model in DB and link via AssetLora
+        lora_mv2 = ModelV2(
+            name="Detailed Eyes LoRA",
+            type="LORA",
+            directory="loras",
+            civitai_model_id=55555,
+        )
+        session.add(lora_mv2)
+        session.flush()
+
+        lora_ver = ModelVersion(
+            model_id=lora_mv2.id,
+            name="v1.0",
+            civitai_version_id=123456,
+            base_model="Illustrious",
+            is_enabled=True,
+        )
+        session.add(lora_ver)
+        session.flush()
+
+        lora_file = ModelFile(
+            version_id=lora_ver.id,
+            original_filename="detailed_eyes.safetensors",
+            storage_filename="detailed_eyes_v1_123456.safetensors",
+            download_url="https://civitai.com/api/download/models/123456",
+            size_kb=220000.0,
+            is_primary=True,
+        )
+        session.add(lora_file)
+
+        # Attach AssetLora to assets
+        session.add(AssetLora(asset_id=asset.id, model_id=lora_mv2.id, civitai_model_id=55555))
         session.commit()
 
         rec = get_checkpoint_recommendations(session)
@@ -196,3 +235,21 @@ class TestModelCatalogAndRegistry:
         assert flux_entry is not None
         assert flux_entry["is_flux"] is True
 
+        # Check all_non_flux_checkpoints
+        all_nf = rec["all_non_flux_checkpoints"]
+        assert len(all_nf) >= 1
+        assert any(
+            x["filename"] == "_janku_trained_chenkin_noobai__v777_2786084.safetensors"
+            and x["is_flux"] is False
+            and x["download_url"] == "https://civitai.com/api/download/models/2786084"
+            for x in all_nf
+        )
+        assert not any("flux" in x["filename"].lower() for x in all_nf)
+
+        # Check top_loras_30d
+        top_loras = rec["top_loras_30d"]
+        assert len(top_loras) >= 1
+        assert top_loras[0]["filename"] == "detailed_eyes_v1_123456.safetensors"
+        assert top_loras[0]["civitai_version_id"] == 123456
+        assert top_loras[0]["civitai_model_id"] == 55555
+        assert top_loras[0]["count"] >= 1

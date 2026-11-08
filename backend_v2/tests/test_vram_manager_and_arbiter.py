@@ -535,4 +535,22 @@ class TestVRAMConcurrencyAndWorkloadQueue:
         assert data["active_lease"] is None
 
 
+    def test_vram_manager_nvme_cache_resolution(self, monkeypatch, tmp_path):
+        nvme_dir = tmp_path / "models" / "nvme_cache"
+        llm_nvme_dir = nvme_dir / "llm"
+        llm_nvme_dir.mkdir(parents=True)
+
+        fake_gguf = llm_nvme_dir / "TheDrummer_Artemis-31B-v1.2-Q5_K_M.gguf"
+        fake_gguf.write_bytes(b"GGUF" + b"\x00" * 1024)
+
+        monkeypatch.setenv("CACHE_TIER", "nvme")
+        monkeypatch.setenv("NVME_CACHE_DIR", str(nvme_dir))
+
+        mgr = VRAMManager()
+        assert mgr.cache_tier == "nvme"
+        assert mgr.cache_in_ram is False
+
+        path, mid = mgr._resolve_model_path("artemis")
+        assert path == str(fake_gguf)
+        assert "artemis" in mid.lower()
 
