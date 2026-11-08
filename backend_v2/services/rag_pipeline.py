@@ -8,7 +8,6 @@ exist for CRUD, but search semantics live here.
 
 from __future__ import annotations
 
-import asyncio
 import random
 from datetime import datetime, timezone
 
@@ -107,8 +106,8 @@ def search_memories(
       content match, or recency order when there is no query.
     - touch_last_accessed: stamps retrieved memories (used by the recall_memory agent tool).
     - q_vec: a precomputed query embedding. Pass it (with
-      ``q_vec_computed=True``) from an async caller that has already run
-      ``_try_embedding`` in a thread; see ``search_memories_async``.
+      ``q_vec_computed=True``) from a caller that has already computed the
+      vector off the event loop.
 
     Turning RAG off does NOT remove retrieval. It removes only the *semantic*
     step: without an embedding the function falls through to its keyword /
@@ -170,37 +169,6 @@ def search_memories(
         session.commit()
 
     return memories
-
-
-async def search_memories_async(
-    session: Session,
-    character_id: str,
-    query: str = "",
-    limit: int = 10,
-    *,
-    touch_last_accessed: bool = False,
-) -> list[CharacterMemory]:
-    """`search_memories` with the embedding pass moved off the event loop.
-
-    The model forward is the expensive part (seconds on first call); the query
-    itself is a bounded, indexed lookup and is left alone. Without this split,
-    every `recall_memory` agent tool call blocked the whole event loop for the
-    duration of a synchronous sentence-transformers pass.
-    """
-    rag_on = rag_enabled()
-    query = (query or "").strip()
-    q_vec = None
-    if rag_on and query and _is_postgres(session):
-        q_vec = await asyncio.to_thread(_try_embedding, query)
-    return search_memories(
-        session,
-        character_id,
-        query,
-        limit,
-        touch_last_accessed=touch_last_accessed,
-        q_vec=q_vec,
-        q_vec_computed=True,
-    )
 
 
 def search_lorebook_entries(

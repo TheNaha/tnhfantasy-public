@@ -90,16 +90,18 @@ class VRAMManager:
             or max(self.comfy_gpu_device, self.llm_gpu_device) < device_count
         )
 
-        # RAM Caching Policy: "1" (default) or "0" (low-RAM direct volume streaming)
+        # Caching Tier Policy: "ram" (Tier 1 /dev/shm), "nvme" (Tier 2 local NVMe SSD), "disabled"
+        self.cache_tier = os.getenv("CACHE_TIER", "").strip().lower()
         cache_ram_env = os.getenv("CACHE_IN_RAM", "auto").strip().lower()
-        if cache_ram_env in ("0", "false", "no", "off", "disable", "disabled"):
+        if self.cache_tier == "nvme":
             self.cache_in_ram = False
-        elif cache_ram_env in ("1", "true", "yes", "on", "enable", "enabled"):
+        elif self.cache_tier == "disabled" or cache_ram_env in ("0", "false", "no", "off", "disable", "disabled"):
+            self.cache_in_ram = False
+        elif self.cache_tier == "ram" or cache_ram_env in ("1", "true", "yes", "on", "enable", "enabled"):
             self.cache_in_ram = True
         else:
             # Auto: disable RAM caching if host has < 20 GB RAM to prevent container OOM
             self.cache_in_ram = self._detect_ram_capacity_gb() >= 20.0
-
         # Managed llama-server process handle
         self.llama_proc: Optional[subprocess.Popen] = None
         self.llama_model_id: Optional[str] = None
@@ -1224,7 +1226,10 @@ class VRAMManager:
         else:
             clean_mid = env_rp
 
+        nvme_cache_dir = os.getenv("NVME_CACHE_DIR", "/content/models/nvme_cache")
         disk_dirs = [
+            nvme_cache_dir,
+            os.path.join(nvme_cache_dir, "llm"),
             os.getenv("PERSISTENT_STORAGE_PATH", ""),
             "/mnt/data/tnhfantasy/llm_models",
             "/mnt/data/models/llm",
@@ -1240,7 +1245,53 @@ class VRAMManager:
             "/content/ComfyUI/models/llm",
         ]
 
-        # Low-RAM / Modal direct volume streaming mode: bypass /dev/shm copy when cache_in_ram is disabled
+        # 1. Check RAM / NVMe Manager entries first (active whenever caching is enabled)
+        try:
+            from ram_manager import get_ram_manager
+
+            mgr = get_ram_manager()
+            if mgr.enabled:
+                # If empty or specific mid not cached, attempt a rescan of ram_dir
+                if not mgr.entries or (clean_mid and not mgr.is_cached(clean_mid)):
+                    mgr._rescan_ram_dir()
+
+                # 1a. Direct hit or alias hit
+                target_id = mgr.aliases.get(clean_mid, clean_mid)
+                if target_id in mgr.entries:
+                    return mgr.entries[target_id].ram_path, clean_mid or target_id
+
+                # Also check alias if raw_mid was requested directly (e.g. "util", "rp", "default")
+                if raw_mid and raw_mid in mgr.aliases:
+                    alias_id = mgr.aliases[raw_mid]
+                    if alias_id in mgr.entries:
+                        return mgr.entries[alias_id].ram_path, alias_id
+
+                # 1b. Substring match for requested clean_mid
+                if clean_mid:
+                    for mid, entry in mgr.entries.items():
+                        if clean_mid.lower() in mid.lower() or clean_mid.lower() in entry.ram_path.lower():
+                            return entry.ram_path, mid
+
+                # 1c. Target role match (rp vs util)
+                target_role = "util" if is_util else "rp"
+                for mid, entry in mgr.entries.items():
+                    if entry.role == target_role:
+                        return entry.ram_path, mid
+
+                # 1d. Fallback for generic / default / rp: prefer non-util GGUFs first!
+                if is_generic or is_rp:
+                    for mid, entry in mgr.entries.items():
+                        if (entry.role in ("rp", "llm") or mid.endswith(".gguf") or entry.ram_path.endswith(".gguf")) and entry.role != "util" and "util" not in mid.lower():
+                            return entry.ram_path, mid
+
+                # 1e. Fallback to any LLM model
+                for mid, entry in mgr.entries.items():
+                    if entry.role in ("rp", "util", "llm") or mid.endswith(".gguf") or entry.ram_path.endswith(".gguf"):
+                        return entry.ram_path, mid
+        except Exception as exc:
+            logger.debug(f"ram_manager_resolve_skipped: {exc}")
+
+        # Low-RAM / NVMe-unregistered / Modal direct volume streaming mode: scan disk_dirs directly
         if not self.cache_in_ram:
             direct_candidates: List[str] = []
             for d_dir in disk_dirs:
@@ -1262,52 +1313,6 @@ class VRAMManager:
                 first_p = direct_candidates[0]
                 stem = os.path.splitext(os.path.basename(first_p))[0]
                 return first_p, stem or "default"
-
-        # 1. Check RAM Manager entries
-        try:
-            from ram_manager import get_ram_manager
-
-            mgr = get_ram_manager()
-            # If empty or specific mid not cached, attempt a rescan of ram_dir
-            if not mgr.entries or (clean_mid and not mgr.is_cached(clean_mid)):
-                mgr._rescan_ram_dir()
-
-            # 1a. Direct hit or alias hit
-            target_id = mgr.aliases.get(clean_mid, clean_mid)
-            if target_id in mgr.entries:
-                return mgr.entries[target_id].ram_path, clean_mid or target_id
-
-            # Also check alias if raw_mid was requested directly (e.g. "util", "rp", "default")
-            if raw_mid and raw_mid in mgr.aliases:
-                alias_id = mgr.aliases[raw_mid]
-                if alias_id in mgr.entries:
-                    return mgr.entries[alias_id].ram_path, alias_id
-
-            # 1b. Substring match for requested clean_mid
-            if clean_mid:
-                for mid, entry in mgr.entries.items():
-                    if clean_mid.lower() in mid.lower() or clean_mid.lower() in entry.ram_path.lower():
-                        return entry.ram_path, mid
-
-            # 1c. Target role match (rp vs util)
-            target_role = "util" if is_util else "rp"
-            for mid, entry in mgr.entries.items():
-                if entry.role == target_role:
-                    return entry.ram_path, mid
-
-            # 1d. Fallback for generic / default / rp: prefer non-util GGUFs first!
-            if is_generic or is_rp:
-                for mid, entry in mgr.entries.items():
-                    if (entry.role in ("rp", "llm") or mid.endswith(".gguf") or entry.ram_path.endswith(".gguf")) and entry.role != "util" and "util" not in mid.lower():
-                        return entry.ram_path, mid
-
-            # 1e. Fallback to any LLM model
-            for mid, entry in mgr.entries.items():
-                if entry.role in ("rp", "util", "llm") or mid.endswith(".gguf") or entry.ram_path.endswith(".gguf"):
-                    return entry.ram_path, mid
-        except Exception as exc:
-            logger.debug(f"ram_manager_resolve_skipped: {exc}")
-
         # 2. Check RAM directories (/dev/shm/tnh_ram_cache, /dev/shm)
         ram_dirs = [
             os.getenv("RAM_CACHE_DIR", "/dev/shm/tnh_ram_cache"),

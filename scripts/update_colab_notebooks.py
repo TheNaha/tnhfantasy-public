@@ -170,12 +170,12 @@ TUNNEL_METHOD = "netbird (private mesh VPN)" #@param ["netbird (private mesh VPN
 CONCURRENCY_POLICY = "auto (detect from GPU VRAM & count)" #@param ["auto (detect from GPU VRAM & count)", "exclusive (budget L4/T4)", "semi_concurrent (A100 40GB)", "concurrent (Multi-GPU / A100 80GB)"]
 
 #@markdown ---
-#@markdown #### 🧠 System RAM Caching Policy (Models-in-RAM):
+#@markdown #### 🧠 Model Caching Tier Policy (RAM vs. Local NVMe vs. Direct):
+#@markdown - `nvme_only`: Caches active LLMs, Laya, & all non-Flux checkpoints on local NVMe SSD (`/content/models/nvme_cache`), skipping `/dev/shm` completely (0 MB Host RAM overhead, ~2-5s model loads)
 #@markdown - `auto`: Automatically uses RAM cache on high-RAM machines (>20GB RAM, e.g. Colab), or direct volume streaming on low-RAM containers (e.g. Modal 12-16GB RAM)
 #@markdown - `always`: Force pre-warm into `/dev/shm` (Sub-second VRAM swaps, requires >=32GB system RAM)
 #@markdown - `disabled`: Direct NVMe disk streaming (Keeps Modal container RAM bill minimal, 0 MB host RAM waste)
-CACHE_IN_RAM_SETTING = "auto (detect RAM capacity)" #@param ["auto (detect RAM capacity)", "always (pre-warm into /dev/shm)", "disabled (direct disk streaming for low RAM)"]
-
+CACHE_IN_RAM_SETTING = "nvme_only (cache to local NVMe SSD, skip RAM - 0 MB host RAM)" #@param ["nvme_only (cache to local NVMe SSD, skip RAM - 0 MB host RAM)", "auto (detect RAM capacity)", "always (pre-warm into /dev/shm)", "disabled (direct disk streaming for low RAM)"]
 #@markdown ---
 #@markdown #### 🌐 NetBird Mesh VPN (Default & Recommended):
 #@markdown Your setup key is only needed ONCE. Config will be saved to persistent storage so your IP is static forever:
@@ -203,7 +203,9 @@ CIVITAI_TOKEN = "" #@param {type:"string"}
 #@markdown - `direct_download_fast` (Recommended): Download directly from Hugging Face CDN into local NVMe SSD / RAM (~150-250 MB/s, ~2 min for 20GB). Bypasses slow FUSE throttling!
 #@markdown - `persistent_volume`: Download & cache models in persistent storage (Modal Volume or Google Drive).
 STORAGE_STRATEGY = "direct_download_fast (recommended: 150+ MB/s from HF)" #@param ["direct_download_fast (recommended: 150+ MB/s from HF)", "persistent_volume (Google Drive / Modal Volume)"]
-
+#@markdown - `civitai_direct`: Download active & non-Flux checkpoints directly from CivitAI CDN (using backend catalog) into local NVMe/RAM cache instead of reading from Google Drive
+#@markdown - `gdrive_first`: Load checkpoints from Google Drive first, falling back to CivitAI CDN only if missing on Drive
+CIVITAI_DOWNLOAD_STRATEGY = "gdrive_first (load from Google Drive, fallback to CivitAI)" #@param ["gdrive_first (load from Google Drive, fallback to CivitAI)", "civitai_direct (download checkpoints directly from CivitAI CDN, skip Drive)"]
 #@markdown ---
 #@markdown #### 🎨 Image / Hybrid Mode — Storage Paths:
 MODAL_VOLUME_PATH = "/mnt/data" #@param {type:"string"}
@@ -266,6 +268,7 @@ print(f"• Network Tunnel: {TUNNEL_METHOD}")
 print(f"• Concurrency Policy: {CONCURRENCY_POLICY}")
 print(f"• RAM Caching Policy: {CACHE_IN_RAM_SETTING}")
 print(f"• Storage Strategy: {STORAGE_STRATEGY}")
+print(f"• CivitAI Checkpoint Strategy: {CIVITAI_DOWNLOAD_STRATEGY}")
 print(f"• Decision Model: {LAYA_MODEL}")
 print(f"• RP Model: {LLM_RP_MODEL}")
 print(f"• Util Model: {LLM_UTIL_MODEL}")
@@ -532,7 +535,7 @@ def install_python_packages(req_files=None, packages=None):
     os.environ["PIP_BREAK_SYSTEM_PACKAGES"] = "1"
     os.environ["UV_INDEX_STRATEGY"] = "unsafe-best-match"
     os.environ["UV_EXTRA_INDEX_URL"] = "https://download.pytorch.org/whl/cu124"
-    uv_cache_dir = f"{gdrive_root}/uv_cache"
+    uv_cache_dir = os.path.join(WORKSPACE_ROOT, ".cache", "uv")
     os.makedirs(uv_cache_dir, exist_ok=True)
     os.environ["UV_CACHE_DIR"] = uv_cache_dir
     sanitized_reqs = []
@@ -1439,15 +1442,26 @@ try:
     ram_avail_gb = psutil.virtual_memory().available / (1024**3)
 except Exception:
     pass
-
-if "disabled" in ram_strat:
+if "nvme" in ram_strat:
+    cache_tier = "nvme"
     enable_ram_cache = False
+    enable_nvme_cache = True
+elif "disabled" in ram_strat:
+    cache_tier = "disabled"
+    enable_ram_cache = False
+    enable_nvme_cache = False
 elif "always" in ram_strat:
+    cache_tier = "ram"
     enable_ram_cache = True
+    enable_nvme_cache = True
 else:
     enable_ram_cache = (tot_ram_gb >= 20.0) and (ram_avail_gb >= 4.0)
+    enable_nvme_cache = True
+    cache_tier = "ram" if enable_ram_cache else "nvme"
 
-print(f"🧠 Host RAM: {tot_ram_gb:.1f} GB ({ram_avail_gb:.1f} GB avail) | Models-in-RAM Cache: {'ENABLED (/dev/shm)' if enable_ram_cache else 'DISABLED (Direct Volume Streaming)'}")
+civitai_strat_key = "direct" if ("CIVITAI_DOWNLOAD_STRATEGY" in locals() and "direct" in str(CIVITAI_DOWNLOAD_STRATEGY).lower()) else "gdrive"
+
+print(f"🧠 Host RAM: {tot_ram_gb:.1f} GB ({ram_avail_gb:.1f} GB avail) | Cache Tier: {cache_tier.upper()} | CivitAI Checkpoint Mode: {civitai_strat_key.upper()}")
 
 # 0d. Expand /dev/shm capacity early for Direct-to-RAM streaming on High-RAM hosts
 #
@@ -1890,13 +1904,15 @@ if active_image:
 checkpoint_recs = catalog.get("checkpoint_recommendations") or {}
 top_rec_7d = checkpoint_recs.get("top_checkpoint_7d")
 recent_recs_30d = checkpoint_recs.get("recent_checkpoints_30d") or []
+all_non_flux_ckpts = checkpoint_recs.get("all_non_flux_checkpoints") or [r for r in recent_recs_30d if not r.get("is_flux")]
+top_loras_30d = checkpoint_recs.get("top_loras_30d") or []
 if top_rec_7d and top_rec_7d.get("filename"):
     c_ver_str = f" (CivitAI Ver: {top_rec_7d.get('civitai_version_id')})" if top_rec_7d.get("civitai_version_id") else ""
     print(f"   • Recommended Tier 1 Checkpoint: {top_rec_7d['filename']}{c_ver_str} [{top_rec_7d.get('count', 0)} uses in 7d]")
-if recent_recs_30d:
-    non_flux_count = sum(1 for r in recent_recs_30d if not r.get("is_flux"))
-    print(f"   • Warm Tier 2 Candidate Models: {len(recent_recs_30d)} models ({non_flux_count} non-Flux ready for NVMe caching)")
-
+if all_non_flux_ckpts:
+    print(f"   • Available Non-Flux Library Checkpoints: {len(all_non_flux_ckpts)} models ready for NVMe pre-warming")
+if top_loras_30d:
+    print(f"   • Frequently Used Library LoRAs: {len(top_loras_30d)} models prioritized for NVMe caching")
 # Sync API tokens from backend if returned by catalog endpoint
 backend_tokens = catalog.get("tokens") or {}
 if isinstance(backend_tokens, dict):
@@ -2058,8 +2074,31 @@ if not os.path.isfile(os.path.join(agent_dir, "ram_manager.py")):
         "Please run Cell 3 (📥 Clone / Update TNHFantasy Repository) to set up the workspace."
     )
 from ram_manager import RamModelManager
-shm_budget = min(56.0, float(int(tot_ram_gb * 0.70))) if enable_ram_cache else 0.0
-ram_mgr = RamModelManager(ram_dir="/dev/shm/tnh_ram_cache", budget_gb=shm_budget)
+
+comfy_dir = os.path.join(WORKSPACE_ROOT, "ComfyUI")
+nvme_cache_base = os.path.join(WORKSPACE_ROOT, "models", "nvme_cache")
+nvme_ckpt_dir = f"{nvme_cache_base}/checkpoints"
+nvme_lora_dir = os.path.join(nvme_cache_base, "loras")
+os.makedirs(nvme_ckpt_dir, exist_ok=True)
+os.makedirs(nvme_lora_dir, exist_ok=True)
+os.makedirs(f"{nvme_cache_base}/vae", exist_ok=True)
+os.makedirs(f"{nvme_cache_base}/llm", exist_ok=True)
+
+if cache_tier == "ram":
+    active_cache_dir = "/dev/shm/tnh_ram_cache"
+    cache_budget_gb = min(56.0, float(int(tot_ram_gb * 0.70)))
+elif cache_tier == "nvme":
+    active_cache_dir = nvme_cache_base
+    try:
+        free_nvme_gb = shutil.disk_usage(WORKSPACE_ROOT).free / (1024**3)
+        cache_budget_gb = max(10.0, float(int(free_nvme_gb - 15.0)))
+    except Exception:
+        cache_budget_gb = 50.0
+else:
+    active_cache_dir = "/dev/shm/tnh_ram_cache"
+    cache_budget_gb = 0.0
+
+ram_mgr = RamModelManager(ram_dir=active_cache_dir, budget_gb=cache_budget_gb)
 
 anchor_ids = [active_rp]
 if not shared_weights:
@@ -2072,7 +2111,7 @@ for m_id, w_path in resolved_weights.items():
     if w_path and os.path.exists(w_path):
         w_fn = os.path.basename(w_path)
         anchor_ids.extend([m_id, w_fn])
-        if enable_ram_cache:
+        if cache_tier in ("ram", "nvme"):
             role_m = "rp" if m_id == active_rp else "util"
             try:
                 ram_mgr.ensure_in_ram(w_path, model_id=m_id, role=role_m, is_anchor=True)
@@ -2085,15 +2124,7 @@ for m_id, w_path in resolved_weights.items():
                 elif m_id == active_util:
                     ram_mgr.aliases["util"] = active_util
             except Exception as exc:
-                print(f"⚠️ Notice during early RAM registration for {m_id}: {exc}")
-
-comfy_dir = os.path.join(WORKSPACE_ROOT, "ComfyUI")
-nvme_cache_base = os.path.join(WORKSPACE_ROOT, "models", "nvme_cache")
-nvme_ckpt_dir = f"{nvme_cache_base}/checkpoints"
-os.makedirs(nvme_ckpt_dir, exist_ok=True)
-os.makedirs(f"{nvme_cache_base}/loras", exist_ok=True)
-os.makedirs(f"{nvme_cache_base}/vae", exist_ok=True)
-
+                print(f"⚠️ Notice during early RAM/NVMe registration for {m_id}: {exc}")
 # Determine Google Drive master checkpoint location
 gdrive_path = GDRIVE_COMFY_PATH.strip() if "GDRIVE_COMFY_PATH" in locals() and GDRIVE_COMFY_PATH.strip() else "/content/drive/MyDrive/comfyui"
 gdrive_base = gdrive_path
@@ -2114,6 +2145,54 @@ nvme_lora_dir = os.path.join(nvme_cache_base, "loras")
 # Tier 2: Warm Local NVMe SSD Cache (/content/models/nvme_cache) — Non-Flux 30-day set
 # Tier 3: Master Permanent Library (Google Drive / Modal Volume)
 # ----------------------------------------------------------------------------
+
+def download_civitai_model(filename, dl_url=None, civitai_ver=None, target_path=None, label="Checkpoint"):
+    civ_token = os.environ.get("CIVITAI_TOKEN", "")
+    c_url = dl_url or (f"https://civitai.com/api/download/models/{civitai_ver}" if civitai_ver else "")
+    if not c_url or not target_path:
+        return False
+    if civ_token:
+        sep = "&" if "?" in c_url else "?"
+        c_url += f"{sep}token={civ_token}"
+    try:
+        import requests
+        from tqdm import tqdm
+        headers = {"User-Agent": "TNHFantasy-Colab-Worker/1.0"}
+        if civ_token:
+            headers["Authorization"] = f"Bearer {civ_token}"
+        os.makedirs(os.path.dirname(target_path), exist_ok=True)
+        tmp_target = target_path + ".downloading"
+        with requests.get(c_url, headers=headers, stream=True, timeout=60, allow_redirects=True) as resp:
+            if resp.status_code != 200:
+                raise RuntimeError(f"CivitAI CDN HTTP {resp.status_code}: {resp.text[:180]}")
+            tot_bytes = int(resp.headers.get("content-length", 0))
+            with open(tmp_target, "wb") as f_dl, tqdm(
+                desc=f"⚡ [CivitAI CDN] {filename[:25]}",
+                total=tot_bytes,
+                unit="B",
+                unit_scale=True,
+                unit_divisor=1024,
+            ) as bar:
+                for chunk in resp.iter_content(chunk_size=16 * 1024 * 1024):
+                    if chunk:
+                        f_dl.write(chunk)
+                        bar.update(len(chunk))
+        min_sz = 100_000_000 if ("checkpoint" in label.lower() or "image" in label.lower()) else 1_000_000
+        if os.path.exists(tmp_target) and os.path.getsize(tmp_target) >= min_sz:
+            os.replace(tmp_target, target_path)
+            evict_file_from_page_cache(target_path)
+            print(f"✅ Successfully downloaded {label} ({os.path.getsize(target_path) / (1024**3):.2f} GB) to {target_path}!")
+            return True
+        else:
+            if os.path.exists(tmp_target):
+                os.remove(tmp_target)
+            return False
+    except Exception as exc:
+        print(f"⚠️ CivitAI CDN download failed for {filename}: {exc}")
+        if os.path.exists(target_path + ".downloading"):
+            try: os.remove(target_path + ".downloading")
+            except Exception: pass
+        return False
 
 tier1_candidate_name = active_image if active_image else (top_rec_7d.get("filename", "") if top_rec_7d else "")
 tier1_civitai_ver = None
@@ -2185,9 +2264,8 @@ if tier1_candidate_name:
     print(f"   • Tier 1 (RAM /dev/shm):     {'[RESIDENT]' if (ram_candidate and os.path.exists(ram_candidate) and os.path.getsize(ram_candidate) > 100_000_000) else '[NOT RESIDENT]'}")
     print(f"   • Tier 2 (Local NVMe SSD):   {'[FOUND]' if (nvme_candidate and os.path.exists(nvme_candidate) and os.path.getsize(nvme_candidate) > 100_000_000 and not is_on_gdrive(nvme_candidate)) else '[NOT FOUND]'}")
     print(f"   • Tier 3 (Google Drive):     {'[FOUND: ' + gdrive_candidate + ']' if gdrive_candidate else ('[FOUND: ' + comfy_candidate + ']' if (comfy_candidate and os.path.exists(comfy_candidate) and os.path.getsize(comfy_candidate) > 100_000_000) else '[NOT FOUND]')}")
-
     # 1. Tier 1: Resident in RAM Cache (/dev/shm)
-    if ram_candidate and os.path.exists(ram_candidate) and os.path.getsize(ram_candidate) > 100_000_000:
+    if enable_ram_cache and ram_candidate and os.path.exists(ram_candidate) and os.path.getsize(ram_candidate) > 100_000_000:
         print(f"⚡ [Tier 1 Cache Hit] Checkpoint already resident in RAM cache (/dev/shm): {tier1_candidate_name}")
         active_ckpt_path = ram_candidate
 
@@ -2196,74 +2274,44 @@ if tier1_candidate_name:
         print(f"⚡ [Tier 2 Cache Hit] Found checkpoint already present on local NVMe SSD: {tier1_candidate_name}")
         active_ckpt_path = nvme_candidate
 
-    # 3. Tier 3: Google Drive Master Library (Always preferred over slow, throttled CivitAI CDN!)
-    elif gdrive_candidate and os.path.exists(gdrive_candidate) and os.path.getsize(gdrive_candidate) > 100_000_000:
-        sz_gb = os.path.getsize(gdrive_candidate) / (1024**3)
-        print(f"📁 [Tier 3 Library] Found checkpoint in Google Drive: {gdrive_candidate} ({sz_gb:.2f} GB)")
-        print(f"   ⚡ Loading directly from Google Drive into RAM cache (/dev/shm) at ~85 MB/s (~1.5 min) — zero CivitAI throttling!")
-        active_ckpt_path = gdrive_candidate
-    elif comfy_candidate and os.path.exists(comfy_candidate) and os.path.getsize(comfy_candidate) > 100_000_000:
-        sz_gb = os.path.getsize(comfy_candidate) / (1024**3)
-        print(f"📁 [Tier 3 Library] Found checkpoint in ComfyUI models: {comfy_candidate} ({sz_gb:.2f} GB)")
-        print(f"   ⚡ Loading directly from Google Drive into RAM cache (/dev/shm) at ~85 MB/s (~1.5 min) — zero CivitAI throttling!")
-        active_ckpt_path = comfy_candidate
-    else:
-        print(f"ℹ️ Checkpoint not found in local RAM, NVMe, or Google Drive library.")
+    # 3. Direct CivitAI Download Strategy (when civitai_strat_key == "direct")
+    elif civitai_strat_key == "direct" and (tier1_dl_url or tier1_civitai_ver):
+        target_dl_path = ram_candidate if (enable_ram_cache and can_direct_download_to_ram) else nvme_candidate
+        target_dl_desc = "RAM cache (/dev/shm)" if (enable_ram_cache and can_direct_download_to_ram) else f"local NVMe SSD ({nvme_cache_base})"
+        print(f"⚡ [CivitAI Direct Mode] Downloading primary checkpoint directly from CivitAI CDN to {target_dl_desc}...")
+        if download_civitai_model(tier1_candidate_name, dl_url=tier1_dl_url, civitai_ver=tier1_civitai_ver, target_path=target_dl_path, label="Primary Checkpoint"):
+            active_ckpt_path = target_dl_path
+        else:
+            print("📁 CivitAI direct download failed; checking Google Drive master library...")
+
+    # 4. Tier 3: Google Drive Master Library
+    if not active_ckpt_path:
+        if gdrive_candidate and os.path.exists(gdrive_candidate) and os.path.getsize(gdrive_candidate) > 100_000_000:
+            sz_gb = os.path.getsize(gdrive_candidate) / (1024**3)
+            print(f"📁 [Tier 3 Library] Found checkpoint in Google Drive: {gdrive_candidate} ({sz_gb:.2f} GB)")
+            active_ckpt_path = gdrive_candidate
+        elif comfy_candidate and os.path.exists(comfy_candidate) and os.path.getsize(comfy_candidate) > 100_000_000:
+            sz_gb = os.path.getsize(comfy_candidate) / (1024**3)
+            print(f"📁 [Tier 3 Library] Found checkpoint in ComfyUI models: {comfy_candidate} ({sz_gb:.2f} GB)")
+            active_ckpt_path = comfy_candidate
+        else:
+            print(f"ℹ️ Checkpoint not found in local RAM, NVMe, or Google Drive library.")
 
 print("=" * 65 + "\\n")
 
-# Fallback: only if completely absent from RAM, NVMe, and Google Drive, attempt CivitAI download
+# Fallback CivitAI download for gdrive_first strategy if missing on Drive
 if not active_ckpt_path and (tier1_dl_url or tier1_civitai_ver):
-    civ_token = os.environ.get("CIVITAI_TOKEN", "")
-    target_dl_path = ram_candidate if can_direct_download_to_ram else nvme_candidate
-    target_dl_desc = "RAM cache (/dev/shm) [⚡ Zero-NVMe direct stream]" if can_direct_download_to_ram else f"local NVMe SSD ({nvme_cache_base})"
-    c_url = tier1_dl_url or f"https://civitai.com/api/download/models/{tier1_civitai_ver}"
-    if civ_token:
-        sep = "&" if "?" in c_url else "?"
-        c_url += f"{sep}token={civ_token}"
-    
+    target_dl_path = ram_candidate if (enable_ram_cache and can_direct_download_to_ram) else nvme_candidate
+    target_dl_desc = "RAM cache (/dev/shm)" if (enable_ram_cache and can_direct_download_to_ram) else f"local NVMe SSD ({nvme_cache_base})"
     print(f"📥 Checkpoint not present in Google Drive library; downloading from CivitAI CDN to {target_dl_desc}...")
-    try:
-        import requests
-        from tqdm import tqdm
-        headers = {"User-Agent": "TNHFantasy-Colab-Worker/1.0"}
-        if civ_token:
-            headers["Authorization"] = f"Bearer {civ_token}"
-        os.makedirs(os.path.dirname(target_dl_path), exist_ok=True)
-        tmp_target = target_dl_path + ".downloading"
-        with requests.get(c_url, headers=headers, stream=True, timeout=60, allow_redirects=True) as resp:
-            if resp.status_code != 200:
-                raise RuntimeError(f"CivitAI CDN HTTP {resp.status_code}: {resp.text[:180]}")
-            tot_bytes = int(resp.headers.get("content-length", 0))
-            with open(tmp_target, "wb") as f_dl, tqdm(
-                desc=f"⚡ [CivitAI CDN] {tier1_candidate_name[:25] if tier1_candidate_name else 'Tier 1'}",
-                total=tot_bytes,
-                unit="B",
-                unit_scale=True,
-                unit_divisor=1024,
-            ) as bar:
-                for chunk in resp.iter_content(chunk_size=16 * 1024 * 1024):
-                    if chunk:
-                        f_dl.write(chunk)
-                        bar.update(len(chunk))
-        if os.path.exists(tmp_target) and os.path.getsize(tmp_target) > 100_000_000:
-            os.replace(tmp_target, target_dl_path)
-            active_ckpt_path = target_dl_path
-            print(f"✅ Successfully downloaded Tier 1 Checkpoint ({os.path.getsize(target_dl_path) / (1024**3):.2f} GB) to {target_dl_desc}!")
-        else:
-            if os.path.exists(tmp_target):
-                os.remove(tmp_target)
-            raise RuntimeError("Downloaded file too small or incomplete")
-    except Exception as exc:
-        print(f"⚠️ CivitAI direct download error: {exc}")
+    if download_civitai_model(tier1_candidate_name, dl_url=tier1_dl_url, civitai_ver=tier1_civitai_ver, target_path=target_dl_path, label="Tier 1 Checkpoint"):
+        active_ckpt_path = target_dl_path
+    else:
         if gdrive_candidate and os.path.exists(gdrive_candidate):
-            print(f"📁 CivitAI direct download failed; falling back to Google Drive cache: {gdrive_candidate}")
             active_ckpt_path = gdrive_candidate
         elif comfy_candidate and os.path.exists(comfy_candidate):
-            print(f"📁 CivitAI direct download failed; falling back to Google Drive ComfyUI: {comfy_candidate}")
             active_ckpt_path = comfy_candidate
         elif nvme_candidate and os.path.exists(nvme_candidate):
-            print(f"📁 Falling back to existing local NVMe copy: {nvme_candidate}")
             active_ckpt_path = nvme_candidate
 
 # Final fallback: scan available checkpoint directories for any valid model
@@ -2337,18 +2385,19 @@ gdrive_storage:
         pass
 
 def sync_tier2_warm_cache():
-    if not (is_colab and os.path.exists(gdrive_base)):
+    if not (is_colab and enable_nvme_cache and mode_key in ("hybrid", "model")):
         return
     time.sleep(6)
     tier1_base = os.path.basename(active_ckpt_path) if active_ckpt_path else ""
     synced_count = 0
-    print("\\n🔄 [Tier 2 Background Sync] Checking recent models for local NVMe caching...")
-    for item in recent_recs_30d:
+    print("\\n🔄 [Tier 2 Background Sync] Checking non-Flux checkpoints and top LoRAs for local NVMe caching...")
+
+    ckpt_candidates = all_non_flux_ckpts if all_non_flux_ckpts else recent_recs_30d
+    for item in ckpt_candidates:
         fn = item.get("filename") or ""
         if not fn or fn == tier1_base:
             continue
         if item.get("is_flux") or ("flux" in fn.lower()):
-            print(f"   • [Tier 2] Skipping Flux model {fn} (Flux excluded from NVMe scratch)")
             continue
 
         try:
@@ -2360,44 +2409,107 @@ def sync_tier2_warm_cache():
             pass
 
         dest_file = os.path.join(nvme_ckpt_dir, fn)
-        src_file = os.path.join(gdrive_ckpt_dir, fn)
-        if not os.path.exists(src_file):
+        if os.path.exists(dest_file) and os.path.getsize(dest_file) > 100_000_000:
+            continue
+        if ram_mgr.is_cached(fn):
+            continue
+
+        # CivitAI direct download if strategy is direct
+        dl_url = item.get("download_url")
+        c_ver = item.get("civitai_version_id")
+        civitai_done = False
+        if civitai_strat_key == "direct" and (dl_url or c_ver):
+            print(f"📦 [Tier 2 Background Sync] Downloading non-Flux checkpoint {fn} directly from CivitAI CDN...")
+            civitai_done = download_civitai_model(fn, dl_url=dl_url, civitai_ver=c_ver, target_path=dest_file, label="Non-Flux Checkpoint")
+            if civitai_done:
+                synced_count += 1
+                if cache_tier == "nvme":
+                    try: ram_mgr.ensure_in_ram(dest_file, model_id=fn, role="image_secondary", is_anchor=False)
+                    except Exception: pass
+                continue
+
+        # Otherwise copy from Google Drive
+        src_file = os.path.join(gdrive_ckpt_dir, fn) if os.path.exists(gdrive_ckpt_dir) else ""
+        if src_file and not os.path.exists(src_file):
             for root, _, files in os.walk(gdrive_ckpt_dir):
                 if fn in files:
                     src_file = os.path.join(root, fn)
                     break
 
-        if not os.path.exists(src_file):
-            continue
+        if src_file and os.path.exists(src_file):
+            src_sz = os.path.getsize(src_file)
+            if src_sz > 11.5 * 1024 * 1024 * 1024:
+                print(f"   • [Tier 2] Skipping {fn} ({src_sz / (1024**3):.1f} GB > 11.5 GB limit)")
+                continue
+            try:
+                sz_gb = src_sz / (1024**3)
+                print(f"📦 [Tier 2 Background Sync] Caching {fn} ({sz_gb:.2f} GB) from Drive to local NVMe SSD...")
+                tmp_file = dest_file + ".syncing"
+                with open(src_file, "rb") as fsrc, open(tmp_file, "wb") as fdst:
+                    shutil.copyfileobj(fsrc, fdst, length=16 * 1024 * 1024)
+                os.replace(tmp_file, dest_file)
+                synced_count += 1
+                evict_file_from_page_cache(src_file)
+                evict_file_from_page_cache(dest_file)
+                drop_page_cache()
+                if cache_tier == "nvme":
+                    try: ram_mgr.ensure_in_ram(dest_file, model_id=fn, role="image_secondary", is_anchor=False)
+                    except Exception: pass
+                print(f"✅ [Tier 2 Background Sync] Cached {fn} to local NVMe SSD!")
+            except Exception as exc:
+                print(f"⚠️ [Tier 2 Background Sync] Notice while caching {fn}: {exc}")
+                if os.path.exists(dest_file + ".syncing"):
+                    try: os.remove(dest_file + ".syncing")
+                    except Exception: pass
+        elif (dl_url or c_ver) and not civitai_done:
+            # Drive missing, download from CivitAI as fallback
+            print(f"📦 [Tier 2 Background Sync] Checkpoint {fn} missing on Drive; downloading from CivitAI CDN...")
+            if download_civitai_model(fn, dl_url=dl_url, civitai_ver=c_ver, target_path=dest_file, label="Non-Flux Checkpoint"):
+                synced_count += 1
+                if cache_tier == "nvme":
+                    try: ram_mgr.ensure_in_ram(dest_file, model_id=fn, role="image_secondary", is_anchor=False)
+                    except Exception: pass
 
-        src_sz = os.path.getsize(src_file)
-        if src_sz > 11.5 * 1024 * 1024 * 1024:
-            print(f"   • [Tier 2] Skipping {fn} ({src_sz / (1024**3):.1f} GB > 11.5 GB limit)")
-            continue
-
-        if os.path.exists(dest_file) and os.path.getsize(dest_file) == src_sz:
-            continue
-
-        try:
-            sz_gb = src_sz / (1024**3)
-            print(f"📦 [Tier 2 Background Sync] Caching {fn} ({sz_gb:.2f} GB) from Drive to local NVMe SSD...")
-            tmp_file = dest_file + ".syncing"
-            with open(src_file, "rb") as fsrc, open(tmp_file, "wb") as fdst:
-                shutil.copyfileobj(fsrc, fdst, length=16 * 1024 * 1024)
-            os.replace(tmp_file, dest_file)
-            synced_count += 1
-            evict_file_from_page_cache(src_file)
-            evict_file_from_page_cache(dest_file)
-            drop_page_cache()
-            print(f"✅ [Tier 2 Background Sync] Cached {fn} to local NVMe SSD!")
-        except Exception as exc:
-            print(f"⚠️ [Tier 2 Background Sync] Notice while caching {fn}: {exc}")
-            if os.path.exists(dest_file + ".syncing"):
-                try: os.remove(dest_file + ".syncing")
-                except Exception: pass
     # LoRA Tier 2 Warm Cache Mirroring:
-    # Pre-copy recently modified LoRAs from Drive to local NVMe to eliminate FUSE read pauses
-    if os.path.exists(gdrive_lora_dir):
+    # Priority 1: Top frequently used LoRAs from backend catalog (top_loras_30d)
+    # Priority 2: Recently modified LoRAs from Google Drive
+    preloaded_loras = set()
+    if top_loras_30d:
+        for lora_item in top_loras_30d:
+            try:
+                free_gb = shutil.disk_usage(WORKSPACE_ROOT).free / (1024**3)
+                if free_gb < 15.0 or len(preloaded_loras) >= 16:
+                    break
+            except Exception:
+                pass
+            l_fn = lora_item.get("filename") or ""
+            if not l_fn or l_fn in preloaded_loras:
+                continue
+            dest_file = os.path.join(nvme_lora_dir, l_fn)
+            if os.path.exists(dest_file) and os.path.getsize(dest_file) > 1_000_000:
+                preloaded_loras.add(l_fn)
+                continue
+            # Check Google Drive first
+            gdrive_src = os.path.join(gdrive_lora_dir, l_fn) if os.path.exists(gdrive_lora_dir) else ""
+            if gdrive_src and os.path.exists(gdrive_src):
+                try:
+                    tmp_file = dest_file + ".syncing"
+                    with open(gdrive_src, "rb") as fsrc, open(tmp_file, "wb") as fdst:
+                        shutil.copyfileobj(fsrc, fdst, length=8 * 1024 * 1024)
+                    os.replace(tmp_file, dest_file)
+                    synced_count += 1
+                    preloaded_loras.add(l_fn)
+                    evict_file_from_page_cache(gdrive_src)
+                    evict_file_from_page_cache(dest_file)
+                    print(f"📦 [Tier 2 LoRA Sync] Cached top library LoRA {l_fn} to NVMe!")
+                except Exception:
+                    pass
+            elif lora_item.get("download_url") or lora_item.get("civitai_version_id"):
+                if download_civitai_model(l_fn, dl_url=lora_item.get("download_url"), civitai_ver=lora_item.get("civitai_version_id"), target_path=dest_file, label="Top LoRA"):
+                    synced_count += 1
+                    preloaded_loras.add(l_fn)
+
+    if len(preloaded_loras) < 16 and os.path.exists(gdrive_lora_dir):
         try:
             lora_candidates = []
             for root, _, files in os.walk(gdrive_lora_dir):
@@ -2407,12 +2519,13 @@ def sync_tier2_warm_cache():
                         try:
                             st = os.stat(fp)
                             rel_name = os.path.relpath(fp, gdrive_lora_dir)
-                            lora_candidates.append((fp, rel_name, st.st_size, st.st_mtime))
+                            if rel_name not in preloaded_loras:
+                                lora_candidates.append((fp, rel_name, st.st_size, st.st_mtime))
                         except Exception:
                             pass
             lora_candidates.sort(key=lambda x: x[3], reverse=True)
-            lora_candidates = lora_candidates[:16]
-            for src_file, rel_name, src_sz, _ in lora_candidates:
+            slots_left = 16 - len(preloaded_loras)
+            for src_file, rel_name, src_sz, _ in lora_candidates[:slots_left]:
                 try:
                     free_gb = shutil.disk_usage(WORKSPACE_ROOT).free / (1024**3)
                     if free_gb < 15.0:
@@ -2422,6 +2535,7 @@ def sync_tier2_warm_cache():
                 dest_file = os.path.join(nvme_lora_dir, rel_name)
                 os.makedirs(os.path.dirname(dest_file), exist_ok=True)
                 if os.path.exists(dest_file) and os.path.getsize(dest_file) == src_sz:
+                    preloaded_loras.add(rel_name)
                     continue
                 try:
                     tmp_file = dest_file + ".syncing"
@@ -2429,18 +2543,18 @@ def sync_tier2_warm_cache():
                         shutil.copyfileobj(fsrc, fdst, length=8 * 1024 * 1024)
                     os.replace(tmp_file, dest_file)
                     synced_count += 1
+                    preloaded_loras.add(rel_name)
                     evict_file_from_page_cache(src_file)
                     evict_file_from_page_cache(dest_file)
                     if synced_count % 4 == 0:
                         drop_page_cache()
-                    print(f"📦 [Tier 2 LoRA Sync] Cached LoRA {rel_name} ({src_sz / (1024*1024):.1f} MB) to NVMe!")
+                    print(f"📦 [Tier 2 LoRA Sync] Cached recently modified LoRA {rel_name} ({src_sz / (1024*1024):.1f} MB) to NVMe!")
                 except Exception as exc:
                     if os.path.exists(dest_file + ".syncing"):
                         try: os.remove(dest_file + ".syncing")
                         except Exception: pass
         except Exception as exc:
             print(f"⚠️ [Tier 2 LoRA Sync] Error scanning LoRAs: {exc}")
-
     if synced_count > 0:
         drop_page_cache()
         print(f"✨ [Tier 2 Background Sync] Warm cache synchronization finished ({synced_count} models/LoRAs cached on NVMe).")
@@ -2775,9 +2889,11 @@ def start_remote_agent():
         HF_TOKEN=str(globals().get("HF_TOKEN") or os.environ.get("HF_TOKEN", "")).strip(),
         LLM_DATA_DIR=str(globals().get("GDRIVE_LLM_PATH") or os.environ.get("GDRIVE_LLM_PATH", "/content/drive/MyDrive/tnhfantasy/llm_models")).strip(),
         LLM_UPSTREAM_BASE=f"http://127.0.0.1:{llm_port}/v1",
-        RAM_CACHE_DIR="/dev/shm/tnh_ram_cache",
-        RAM_CACHE_BUDGET_GB="40" if enable_ram_cache else "0",
-        CACHE_IN_RAM="1" if enable_ram_cache else "0",
+        RAM_CACHE_DIR=active_cache_dir,
+        NVME_CACHE_DIR=nvme_cache_base,
+        CACHE_TIER=cache_tier,
+        RAM_CACHE_BUDGET_GB=str(int(cache_budget_gb)),
+        CACHE_IN_RAM="1" if cache_tier in ("ram", "nvme") else "0",
         COMFY_GPU_DEVICE=str(comfy_gpu_device),
         LLM_GPU_DEVICE=str(llm_gpu_device),
         LAYA_GPU_DEVICE=str(laya_gpu_device),
@@ -2839,12 +2955,13 @@ def launch_comfyui_track(preview_method=None):
             print(f"📡 Synced preview setting from backend: {comfy_active_preview_method}")
         else:
             print(f"📡 Backend preview setting unreachable, using default: {comfy_active_preview_method}")
-    if active_ckpt_path:
-        print(f"⚡ [ComfyUI Track] Pre-warming {os.path.basename(active_ckpt_path)} into RAM cache (/dev/shm)...")
+    if active_ckpt_path and cache_tier in ("ram", "nvme"):
+        loc_desc = "RAM cache (/dev/shm)" if cache_tier == "ram" else f"local NVMe ({nvme_ckpt_dir})"
+        print(f"⚡ [ComfyUI Track] Pre-warming {os.path.basename(active_ckpt_path)} into {loc_desc}...")
         try:
             ram_mgr.ensure_in_ram(active_ckpt_path, model_id=img_id, role="image", is_anchor=True)
             drop_page_cache([active_ckpt_path])
-            print("✅ [ComfyUI Track] Checkpoint cached in RAM!")
+            print(f"✅ [ComfyUI Track] Checkpoint cached in {loc_desc}!")
         except Exception as exc:
             print(f"⚠️ [ComfyUI Track] Pre-warming failed ({exc}); will stream from storage directly.")
     print(f"🚀 [ComfyUI Track] Starting ComfyUI server on :{comfy_port} (--preview-method {comfy_active_preview_method})...")
@@ -2875,8 +2992,9 @@ def launch_comfyui_track(preview_method=None):
 
 def launch_llm_track():
     src_expected = resolved_weights.get(active_rp, "")
-    if src_expected:
-        print(f"⚡ [LLM Track] Pre-warming {os.path.basename(src_expected)} into RAM cache (/dev/shm)...")
+    if src_expected and cache_tier in ("ram", "nvme"):
+        loc_desc = "RAM cache (/dev/shm)" if cache_tier == "ram" else f"local NVMe ({nvme_cache_base})"
+        print(f"⚡ [LLM Track] Pre-warming {os.path.basename(src_expected)} into {loc_desc}...")
         try:
             ram_mgr.ensure_in_ram(src_expected, model_id=active_rp, role="rp", is_anchor=True)
             drop_page_cache([src_expected])
@@ -2884,16 +3002,16 @@ def launch_llm_track():
             ram_mgr.aliases["rp"] = active_rp
         except Exception as exc:
             print(f"⚠️ [LLM Track] Pre-warming failed ({exc}); will load directly from storage.")
-
     if not shared_weights:
         src_util = resolved_weights.get(active_util, "")
-        if src_util and enable_ram_cache:
-            print(f"⚡ [LLM Track] Pre-warming Util model {os.path.basename(src_util)} into RAM cache (/dev/shm)...")
+        if src_util and cache_tier in ("ram", "nvme"):
+            loc_desc = "RAM cache (/dev/shm)" if cache_tier == "ram" else f"local NVMe ({nvme_cache_base})"
+            print(f"⚡ [LLM Track] Pre-warming Util model {os.path.basename(src_util)} into {loc_desc}...")
             try:
                 ram_mgr.ensure_in_ram(src_util, model_id=active_util, role="util", is_anchor=True)
                 drop_page_cache([src_util])
                 ram_mgr.aliases["util"] = active_util
-                print("✅ [LLM Track] Util GGUF weights cached in RAM!")
+                print(f"✅ [LLM Track] Util GGUF weights cached in {loc_desc}!")
             except Exception as exc:
                 print(f"⚠️ [LLM Track] Util pre-warming failed ({exc}); will stream from storage.")
 
@@ -3050,7 +3168,8 @@ def launch_laya_track():
     if active_decisions in ("same_as_util", "disabled"):
         print(f"ℹ️ [Laya Track] Decisions mode is '{active_decisions}'; skipping Laya pre-warm.")
         return
-    print(f"⚡ [Laya Track] Pre-warming Laya [{active_decisions}] into RAM cache...")
+    loc = "RAM cache" if enable_ram_cache else "local NVMe"
+    print(f"⚡ [Laya Track] Pre-warming Laya [{active_decisions}] on {loc}...")
     try:
         laya_dir = os.path.join(WORKSPACE_ROOT, "agent-data", "decisions", str(active_decisions))
         repo_fallback = laya_repo_map.get(active_decisions) or models_dict.get(active_decisions, {}).get("repo") or "convaiinnovations/laya-multilingual"
@@ -3060,7 +3179,7 @@ def launch_laya_track():
                 ram_mgr.ensure_dir_in_ram(src, model_id=active_decisions, role="decisions", is_anchor=True)
             except Exception:
                 pass
-        print(f"✅ [Laya Track] Laya [{active_decisions}] pre-warmed in RAM cache (<150ms inference ready)!")
+        print(f"✅ [Laya Track] Laya [{active_decisions}] ready on {loc} (<150ms inference ready)!")
     except Exception as exc:
         print(f"⚠️ [Laya Track] Pre-warming notice for {active_decisions}: {exc}")
 

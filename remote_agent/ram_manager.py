@@ -157,6 +157,9 @@ class RamModelManager:
             fallback.mkdir(parents=True, exist_ok=True)
             self.ram_dir = fallback
 
+        # Detect whether cache directory is in /dev/shm (tmpfs RAM) or disk/NVMe
+        self.is_shm = str(self.ram_dir).startswith("/dev/shm")
+
         # 2. Resolve Budget
         sys_total, sys_avail = _get_system_ram_info()
         self.min_reserve_bytes = int(min_system_reserve_gb * 1024 * 1024 * 1024)
@@ -183,10 +186,22 @@ class RamModelManager:
                 else:
                     self.budget_bytes = int(env_value * 1024 * 1024 * 1024)
             else:
-                # Default: 75% of total system RAM, but leave at least min_reserve_bytes
-                default_target = int(sys_total * 0.75)
-                self.budget_bytes = min(default_target, max(sys_total - self.min_reserve_bytes, 1024 * 1024 * 1024))
-
+                if self.is_shm:
+                    # Default for RAM: 75% of total system RAM, but leave at least min_reserve_bytes
+                    default_target = int(sys_total * 0.75)
+                    self.budget_bytes = min(
+                        default_target, max(sys_total - self.min_reserve_bytes, 1024 * 1024 * 1024)
+                    )
+                else:
+                    # Disk/NVMe cache: budget against filesystem capacity leaving 15 GB reserve
+                    try:
+                        disk_usage = shutil.disk_usage(self.ram_dir)
+                        self.budget_bytes = max(
+                            1024 * 1024 * 1024,
+                            int(disk_usage.total) - int(15.0 * 1024 * 1024 * 1024),
+                        )
+                    except Exception:
+                        self.budget_bytes = 100 * 1024 * 1024 * 1024
         self.entries: Dict[str, CacheEntry] = {}
         self.aliases: Dict[str, str] = {}
         self.anchors: Set[str] = set()
@@ -476,7 +491,7 @@ class RamModelManager:
                 src.relative_to(self.ram_dir)
                 is_src_in_ram = True
             except ValueError:
-                if str(src).startswith("/dev/shm"):
+                if (self.is_shm and str(src).startswith("/dev/shm")) or str(src).startswith(str(self.ram_dir)):
                     is_src_in_ram = True
 
             candidates_to_check = [dest_path, flat_dest_path, subfolder_dir / src.name, self.ram_dir / src.name]

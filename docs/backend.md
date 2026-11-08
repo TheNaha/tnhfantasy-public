@@ -76,7 +76,7 @@ The venv is **`.venv`** (not `venv`). `setup_jules.sh` creates `backend_v2/.venv
    pip install -r requirements.txt
    ```
 3. Copy `.env.example` to `.env` **at the repository root** and fill in the necessary tokens (`HF_TOKEN`, `CIVITAI_TOKEN`, provider credentials). `config.py` resolves `<repo-root>/.env`. A `backend_v2/.env` is gitignored and read by nothing.
-4. Note that this path uses **SQLite**, not the Compose stack's PostgreSQL. `setup_jules.sh` and `cd backend_v2 && uvicorn` both resolve to `sqlite:///./data/db/comfy.db` (the `config.py` default), while Compose runs `postgresql://…@db/comfy`. They are different databases, so a character you create in one is invisible in the other. (One maintenance script, `scripts/backfill_download_urls.py`, still defaults to the older `sqlite:///./data/comfy.db` path — a latent inconsistency, not fixed here.)
+4. Note that this path uses **SQLite**, not the Compose stack's PostgreSQL. `setup_jules.sh` and `cd backend_v2 && uvicorn` both resolve to `sqlite:///./data/db/comfy.db` (the `config.py` default), while Compose runs `postgresql://…@db/comfy`. They are different databases, so a character you create in one is invisible in the other. (One maintenance script, `backend_v2/scripts/backfill_download_urls.py`, still defaults to the older `sqlite:///./data/comfy.db` path — a latent inconsistency, not fixed here.)
 5. Run the server (loopback only):
    ```bash
    .venv/bin/uvicorn api.main:app --host 127.0.0.1 --port 8002 --reload
