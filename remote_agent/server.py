@@ -1405,8 +1405,6 @@ if WORKER_MODE in ("llm", "hybrid"):
         except Exception:
             pass
 
-    UPSTREAM_TIMEOUT = float(os.getenv("LLM_UPSTREAM_TIMEOUT", "600"))
-
     def _upstream_for(payload: dict) -> str:
         """The base URL that serves the model this payload names.
 
@@ -1818,10 +1816,6 @@ def _evaluate_laya_sync(model_id: str, context_text: str, questions: Any) -> Dic
         "answers": answers,
         "results": answers,
     }
-
-
-def _evaluate_laya_cpu_sync(model_id: str, context_text: str, questions: Any) -> Dict[str, Any]:
-    return _evaluate_laya_sync(model_id, context_text, questions)
 
 
 @app.post("/v1/decisions", dependencies=[Depends(verify_token)])

@@ -2421,9 +2421,9 @@ def _migration_092_revisions_carry_beats(conn) -> bool:
     if "beats" in cols:
         logger.info("migration_noop", note="story_chapter_revisions.beats already present")
         return True
-        conn.execute(
-            text("ALTER TABLE story_chapter_revisions ADD COLUMN beats JSON DEFAULT '[]'")
-        )
+    conn.execute(
+        text("ALTER TABLE story_chapter_revisions ADD COLUMN beats JSON DEFAULT '[]'")
+    )
     logger.info("migration_column_added", table="story_chapter_revisions", column="beats")
     return True
 
@@ -2796,7 +2796,6 @@ def _migration_070_create_sessions(conn) -> bool:
     inspector = inspect(conn)
     existing_tables = set(inspector.get_table_names())
     is_postgres = conn.dialect.name == "postgresql"
-    changed = False
 
     if "sessions" not in existing_tables:
         # TIMESTAMPTZ on Postgres to match what SQLModel emits for a tz-aware
@@ -2833,7 +2832,6 @@ def _migration_070_create_sessions(conn) -> bool:
         ):
             conn.execute(text(stmt))
         logger.info("migration_table_created", table="sessions")
-        changed = True
 
     if "session_assets" not in existing_tables:
         conn.execute(text("""
@@ -2848,7 +2846,6 @@ def _migration_070_create_sessions(conn) -> bool:
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_session_assets_session_id ON session_assets (session_id)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_session_assets_asset_id ON session_assets (asset_id)"))
         logger.info("migration_table_created", table="session_assets")
-        changed = True
 
     # Unconditional, and deliberately outside both table guards: `create_all`
     # cannot produce a partial index on an existing table, so this is the one
@@ -2860,9 +2857,12 @@ def _migration_070_create_sessions(conn) -> bool:
             "ON assets (user_id, seed) WHERE seed IS NOT NULL AND seed != 0"
         ))
         logger.info("migration_index_created", table="assets", index="ix_assets_seed_lookup")
-        changed = True
 
-    return changed
+    # Deliberately True even when nothing changed: `run_migrations` records the
+    # step only when it returns True, so an already-applied 070 must not
+    # re-execute on every boot. The CREATEs above are idempotent, so this is
+    # safe and matches the NOTE at the top of the function.
+    return True
 
 
 def _migration_065_index_jobs_metadata_chat_id(conn) -> bool:

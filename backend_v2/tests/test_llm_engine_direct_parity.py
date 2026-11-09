@@ -6,11 +6,6 @@ and local GGUF IDs (e.g. 'artemis_31b_q4') to their configured external models.
 Also tests that canonical 'preview' events pass through translate_legacy_image_update.
 """
 
-import pytest
-from unittest.mock import MagicMock
-from sqlmodel import Session
-
-from core.entities import Provider
 from services.engines.base import CANONICAL_EVENT_KINDS, translate_legacy_image_update
 from services.engines.llm_engine import (
     resolve_direct_llm_target_model,
@@ -18,7 +13,6 @@ from services.engines.llm_engine import (
     AnthropicLLMEngine,
     GoogleLLMEngine,
 )
-from services.llm_config import resolve_model_for_kind
 
 
 class TestDirectLLMModelRemapping:
