@@ -229,6 +229,30 @@ def resolve_model_for_kind(
     if override:
         return override
 
+    role = "rp"
+    try:
+        from services.llm_router import get_router
+        router = get_router()
+        role = router.role_for_kind(kind)
+    except Exception:
+        pass
+
+    try:
+        prov_info = resolve_default_provider(session)
+        if prov_info:
+            prov_id = prov_info[0]
+            prov = session.get(Provider, prov_id)
+            if prov and prov.type in ("openai_compat", "ollama", "anthropic", "google"):
+                cfg = getattr(prov, "config", None) or {}
+                if role in ("util", "decisions"):
+                    direct_model = cfg.get("default_util_model") or cfg.get("model") or cfg.get("default_model")
+                else:
+                    direct_model = cfg.get("default_rp_model") or cfg.get("model") or cfg.get("default_model")
+                if direct_model:
+                    return str(direct_model)
+    except Exception as exc:
+        logger.debug("direct_provider_model_resolve_failed", error=str(exc))
+
     try:
         from services.llm_router import get_router
 

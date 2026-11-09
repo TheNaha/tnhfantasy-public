@@ -353,7 +353,7 @@ MODEL_DIRECTORIES = [
 #: never be misread as a legacy ``{"status": ...}`` update.
 CANONICAL_EVENT_KINDS = frozenset({
     "started", "progress", "delta", "node", "cached_nodes",
-    "completed", "failed", "cancelled",
+    "completed", "failed", "cancelled", "preview",
 })
 
 #: Events that end a job's stream — used by every engine's fetcher loop to know

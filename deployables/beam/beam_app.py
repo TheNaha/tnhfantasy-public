@@ -197,11 +197,32 @@ def _ensure_comfyui_running():
             return True
     except Exception:
         pass
-    
+    fast_save_node = "/root/comfy/ComfyUI/custom_nodes/tnh_fast_save.py"
+    try:
+        os.makedirs(os.path.dirname(fast_save_node), exist_ok=True)
+        with open(fast_save_node, "w", encoding="utf-8") as f:
+            f.write(
+                "import logging\n"
+                "logger = logging.getLogger('tnh_fast_save')\n"
+                "try:\n"
+                "    import nodes\n"
+                "    if hasattr(nodes, 'SaveImage'):\n"
+                "        _orig_init = nodes.SaveImage.__init__\n"
+                "        def _fast_init(self, *args, **kwargs):\n"
+                "            _orig_init(self, *args, **kwargs)\n"
+                "            self.compress_level = 1\n"
+                "        nodes.SaveImage.__init__ = _fast_init\n"
+                "        logger.info('Patched SaveImage.compress_level = 1 for fast lossless encoding')\n"
+                "except Exception as e:\n"
+                "    logger.warning(f'Could not patch SaveImage: {e}')\n"
+                "NODE_CLASS_MAPPINGS = {}\n"
+            )
+    except Exception:
+        pass
+
     logger.info("[ComfyUI] Starting server via comfy-cli...")
-    cmd = ["comfy", "launch", "--background", "--", "--listen", "0.0.0.0", "--port", str(_comfy_port)]
+    cmd = ["comfy", "launch", "--background", "--", "--listen", "0.0.0.0", "--port", str(_comfy_port), "--highvram"]
     _comfy_process = subprocess.Popen(cmd)
-    
     logger.info("[ComfyUI] Waiting for server to be ready...")
     for i in range(120):
         try:
@@ -266,7 +287,7 @@ async def _run_inference_realtime(workflow: Dict[str, Any]):
     async for update in _execute_workflow(workflow, _comfy_port):
         
         # Log what we're yielding
-        status = update.get("status", "unknown")
+        status = update.get("status") or update.get("event", "unknown")
         logger.info(f"[_run_inference_realtime] Yielding: status={status}")
         
         # Yield update as JSON string (Beam realtime expects strings)

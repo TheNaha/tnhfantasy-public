@@ -4,9 +4,10 @@ import subprocess
 import sys
 import time
 import logging
-
 import os
 import json
+import base64
+import struct
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Dict, Any, Optional, AsyncGenerator
@@ -211,6 +212,10 @@ async def execute_comfy_workflow(workflow_json: Dict[str, Any], port: int = 8188
     yield {"status": "queued", "prompt_id": prompt_id}
     effective_stall_timeout = max(float(stall_timeout_seconds), 1.0)
     last_prompt_node = None
+    last_preview_time: float = 0.0
+    last_preview_step: int = -1
+    current_step: int = 0
+    total_steps: int = 0
     
     try:
         while True:
@@ -240,7 +245,31 @@ async def execute_comfy_workflow(workflow_json: Dict[str, Any], port: int = 8188
             except Exception as error:
                 yield {"status": "error", "message": f"WebSocket error: {error}", "code": 500, "retryable": False, "details": {"reason": "websocket_error", "prompt_id": prompt_id}}
                 return
-                
+            if isinstance(message, bytes):
+                if len(message) > 8:
+                    try:
+                        event_type, _img_type = struct.unpack(">II", message[:8])
+                        if event_type == 1:  # PREVIEW_IMAGE
+                            now = time.monotonic()
+                            near_end = total_steps > 3 and current_step >= (total_steps - 2)
+                            step_stride = max(3, total_steps // 5) if total_steps > 0 else 3
+                            step_ok = (last_preview_step < 0) or (current_step - last_preview_step >= step_stride)
+                            time_ok = (now - last_preview_time) >= 0.8
+                            if not near_end and step_ok and time_ok:
+                                last_preview_time = now
+                                last_preview_step = current_step
+                                preview_b64 = base64.b64encode(message[8:]).decode("ascii")
+                                yield {
+                                    "event": "preview",
+                                    "preview": preview_b64,
+                                    "step": current_step,
+                                    "total": total_steps,
+                                    "prompt_id": prompt_id,
+                                }
+                    except Exception:
+                        pass
+                continue
+
             if not isinstance(message, str): continue
             try: payload = json.loads(message)
             except json.JSONDecodeError: continue
@@ -258,7 +287,9 @@ async def execute_comfy_workflow(workflow_json: Dict[str, Any], port: int = 8188
             elif msg_type == "execution_cached" and msg_prompt_id == prompt_id:
                 yield {"status": "execution_cached", "nodes": msg_data.get("nodes", []), "prompt_id": prompt_id}
             elif msg_type == "progress" and (msg_prompt_id is None or msg_prompt_id == prompt_id):
-                yield {"status": "progress", "value": msg_data.get("value", 0), "max": msg_data.get("max", 0), "prompt_id": prompt_id}
+                current_step = msg_data.get("value", 0)
+                total_steps = msg_data.get("max", 0)
+                yield {"status": "progress", "value": current_step, "max": total_steps, "prompt_id": prompt_id}
             elif msg_type == "execution_error":
                 yield {"status": "error", "message": str(msg_data)}; return
     except asyncio.CancelledError:
@@ -281,6 +312,28 @@ async def execute_comfy_workflow(workflow_json: Dict[str, Any], port: int = 8188
     yield {"status": "success", "images": _collect_images_from_filesystem(history_data, output_dir=output_dir, temp_dir=temp_dir, logger_obj=logger)}
 
 def _start_comfy_server(port: int, extra_args: list[str] = None):
+    fast_save_node = "/root/comfy/ComfyUI/custom_nodes/tnh_fast_save.py"
+    try:
+        os.makedirs(os.path.dirname(fast_save_node), exist_ok=True)
+        with open(fast_save_node, "w", encoding="utf-8") as f:
+            f.write(
+                "import logging\n"
+                "logger = logging.getLogger('tnh_fast_save')\n"
+                "try:\n"
+                "    import nodes\n"
+                "    if hasattr(nodes, 'SaveImage'):\n"
+                "        _orig_init = nodes.SaveImage.__init__\n"
+                "        def _fast_init(self, *args, **kwargs):\n"
+                "            _orig_init(self, *args, **kwargs)\n"
+                "            self.compress_level = 1\n"
+                "        nodes.SaveImage.__init__ = _fast_init\n"
+                "        logger.info('Patched SaveImage.compress_level = 1 for fast lossless encoding')\n"
+                "except Exception as e:\n"
+                "    logger.warning(f'Could not patch SaveImage: {e}')\n"
+                "NODE_CLASS_MAPPINGS = {}\n"
+            )
+    except Exception:
+        pass
     # --highvram: disables ComfyUI's internal memory manager from offloading models to CPU RAM.
     # On L4 (24 GB) with SDXL+LoRAs the heuristic sits right at the eviction threshold,
     # causing a full 90-120s reload every run with 3+ LoRAs loaded. --highvram keeps everything
@@ -967,7 +1020,7 @@ class ComfyUINodeExtractor:
     timeout=DOWNLOAD_TIMEOUT,
     max_containers=DOWNLOAD_MAX_CONTAINERS,
 )
-@modal.concurrent(max_inputs=1, target_inputs=1)
+@modal.concurrent(max_inputs=5, target_inputs=2)
 def download_model(url: str, path: str, token: str = None, preview_url: str = None, metadata: dict = None):
     """Download model with shared validation pipeline and progress tracking."""
     safe_vol_reload()

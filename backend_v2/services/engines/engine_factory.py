@@ -462,6 +462,8 @@ def get_engine(provider_id: Any, provider: Optional[Any] = None) -> Optional[InP
                     provider_id=provider_id,
                     api_key=api_key,
                     default_model=default_model,
+                    default_rp_model=config.get("default_rp_model") or config.get("rp_model"),
+                    default_util_model=config.get("default_util_model") or config.get("util_model"),
                 )
                 _ENGINE_CACHE[provider_id] = engine
                 return engine
@@ -485,8 +487,9 @@ def get_engine(provider_id: Any, provider: Optional[Any] = None) -> Optional[InP
                     provider_id=provider_id,
                     api_key=api_key,
                     default_model=default_model,
+                    default_rp_model=config.get("default_rp_model") or config.get("rp_model"),
+                    default_util_model=config.get("default_util_model") or config.get("util_model"),
                 )
-                _ENGINE_CACHE[provider_id] = engine
                 return engine
             return None
 
@@ -526,6 +529,8 @@ def get_engine(provider_id: Any, provider: Optional[Any] = None) -> Optional[InP
                 base_url=base_url,
                 api_key=api_key,
                 default_model=default_model,
+                default_rp_model=config.get("default_rp_model") or config.get("rp_model"),
+                default_util_model=config.get("default_util_model") or config.get("util_model"),
             )
             _ENGINE_CACHE[provider_id] = engine
             return engine

@@ -180,6 +180,23 @@ def _patch_safetensors_loader():
     _utils.load_torch_file = _timed
     logger.info("[TNH_PROFILER] Patched load_torch_file")
 
+def _patch_save_image():
+    with _patch_lock:
+        if "save_image" in _already_patched:
+            return
+        _already_patched.add("save_image")
+    try:
+        import nodes
+        if hasattr(nodes, "SaveImage"):
+            _orig_init = nodes.SaveImage.__init__
+            def _fast_init(self, *args, **kwargs):
+                _orig_init(self, *args, **kwargs)
+                self.compress_level = 1
+            nodes.SaveImage.__init__ = _fast_init
+            logger.info("[TNH_PROFILER] Patched SaveImage.compress_level = 1 for fast lossless encoding")
+    except Exception as e:
+        logger.warning(f"[TNH_PROFILER] Could not patch SaveImage: {e}")
+
 
 # ─── Apply all patches at import time via a deferred background thread ─────────
 _emit("profiler_init", 0.0, {"pid": __import__("os").getpid()})
@@ -191,6 +208,7 @@ def _deferred_patch():
     _patch_lora_loader()
     _patch_model_management()
     _patch_safetensors_loader()
+    _patch_save_image()
     _emit("profiler_patches_applied", 0.0)
 
 

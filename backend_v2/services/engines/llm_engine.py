@@ -296,6 +296,44 @@ def redact_api_key(text: str, secret: str) -> str:
     return text.replace(secret, "***REDACTED***")
 
 
+_KNOWN_INTERNAL_GGUF_MODELS = frozenset({
+    "artemis_31b_q4", "artemis_31b", "writers_31b_v2", "gemma4_31b_heretic",
+    "sompoa_26b_a4b", "weirdcompound_24b", "magnum_diamond_24b",
+    "dark_thoughts_v2_31b", "split_untied_31b", "goetia_26b_a4b",
+    "styletune_v2_26b_a4b", "gemma4_31b_heretic_util", "gemma4_26b_a4b_heretic_util",
+    "mistral_small_32_it", "gemma3_12b_heretic_util", "qwen2.5_14b",
+    "gemma3_12b_heretic", "laya_multilingual", "laya_typed_decisions", "laya_english",
+})
+
+
+def resolve_direct_llm_target_model(
+    raw_model: Optional[str],
+    default_model: str,
+    default_rp_model: Optional[str] = None,
+    default_util_model: Optional[str] = None,
+    role: Optional[str] = None,
+) -> str:
+    """Normalize and remap model IDs for direct external LLM providers.
+
+    If raw_model is a placeholder ('default', 'rp', 'util', 'decisions'),
+    an internal GGUF ID, or a filename ending in .gguf, remap it to the direct
+    provider's configured API model for the relevant role (RP vs Utility).
+    """
+    model_str = (raw_model or "").strip()
+    is_placeholder = not model_str or model_str in ("default", "rp", "util", "decisions")
+    is_gguf = model_str.lower().endswith(".gguf") or model_str in _KNOWN_INTERNAL_GGUF_MODELS
+
+    if not is_placeholder and not is_gguf:
+        return model_str
+
+    is_util = (role in ("util", "decisions")) or ("util" in model_str.lower())
+    if is_util and default_util_model and default_util_model not in ("util", "default"):
+        return default_util_model
+    if default_rp_model and default_rp_model not in ("rp", "default"):
+        return default_rp_model
+    return default_model
+
+
 class OpenAICompatLLMEngine(InProcessEngine):
     """In-process execution engine for OpenAI-compatible endpoints."""
 
@@ -450,11 +488,13 @@ class OpenAICompatLLMEngine(InProcessEngine):
         """
         messages = workflow.get("messages") or []
         tools = workflow.get("tools")
-        model = workflow.get("model") or self.default_model
-        if model in ("rp", "default") and self.default_rp_model and self.default_rp_model not in ("rp", "default"):
-            model = self.default_rp_model
-        elif model == "util" and self.default_util_model and self.default_util_model != "util":
-            model = self.default_util_model
+        model = resolve_direct_llm_target_model(
+            workflow.get("model"),
+            default_model=self.default_model,
+            default_rp_model=self.default_rp_model,
+            default_util_model=self.default_util_model,
+            role=workflow.get("role"),
+        )
 
         payload: Dict[str, Any] = {
             "model": model,
@@ -1204,10 +1244,15 @@ class AnthropicLLMEngine(InProcessEngine):
         provider_id: str,
         api_key: Optional[str] = None,
         default_model: str = "claude-3-5-sonnet-latest",
+        default_rp_model: Optional[str] = None,
+        default_util_model: Optional[str] = None,
+        **kwargs: Any,
     ):
         super().__init__(provider_id)
         self.api_key = (api_key or "").strip()
         self.default_model = default_model or "claude-3-5-sonnet-latest"
+        self.default_rp_model = default_rp_model
+        self.default_util_model = default_util_model
         self._http: Optional[httpx.AsyncClient] = None
 
 
@@ -1321,7 +1366,13 @@ class AnthropicLLMEngine(InProcessEngine):
     ) -> AsyncIterator[Dict[str, Any]]:
         messages, system_prompt = translate_messages_anthropic(workflow.get("messages") or [])
         tools = translate_tools_anthropic(workflow.get("tools"))
-        model = workflow.get("model") or self.default_model
+        model = resolve_direct_llm_target_model(
+            workflow.get("model"),
+            default_model=self.default_model,
+            default_rp_model=self.default_rp_model,
+            default_util_model=self.default_util_model,
+            role=workflow.get("role"),
+        )
         payload: Dict[str, Any] = {
             "model": model,
             "messages": messages,
@@ -1444,10 +1495,15 @@ class GoogleLLMEngine(InProcessEngine):
         provider_id: str,
         api_key: Optional[str] = None,
         default_model: str = "gemini-2.0-flash",
+        default_rp_model: Optional[str] = None,
+        default_util_model: Optional[str] = None,
+        **kwargs: Any,
     ):
         super().__init__(provider_id)
         self.api_key = (api_key or "").strip()
         self.default_model = default_model or "gemini-2.0-flash"
+        self.default_rp_model = default_rp_model
+        self.default_util_model = default_util_model
         self._http: Optional[httpx.AsyncClient] = None
 
 
@@ -1562,7 +1618,13 @@ class GoogleLLMEngine(InProcessEngine):
     ) -> AsyncIterator[Dict[str, Any]]:
         contents, system_prompt = translate_messages_google(workflow.get("messages") or [])
         tools = translate_tools_google(workflow.get("tools"))
-        model = workflow.get("model") or self.default_model
+        model = resolve_direct_llm_target_model(
+            workflow.get("model"),
+            default_model=self.default_model,
+            default_rp_model=self.default_rp_model,
+            default_util_model=self.default_util_model,
+            role=workflow.get("role"),
+        )
         payload: Dict[str, Any] = {"contents": contents}
         if tools:
             payload["tools"] = tools

@@ -3601,20 +3601,88 @@ card_header_html = f'''
 </div>
 '''
 
+import collections
+import html
+
+def _sample_telemetry():
+    try:
+        import psutil
+        cpu_pct = f"{psutil.cpu_percent(interval=None):.0f}%"
+        vmem = psutil.virtual_memory()
+        ram_str = f"{vmem.used / (1024**3):.1f}/{vmem.total / (1024**3):.1f} GB ({vmem.percent:.0f}%)"
+    except Exception:
+        cpu_pct, ram_str = "N/A", "N/A"
+
+    gpu_str = "N/A"
+    vram_str = "N/A"
+    temp_str = ""
+    try:
+        raw = subprocess.check_output(
+            ["nvidia-smi", "--query-gpu=utilization.gpu,memory.used,memory.total,temperature.gpu", "--format=csv,noheader,nounits"],
+            timeout=1.0,
+            text=True,
+            stderr=subprocess.DEVNULL
+        ).strip().split("\\n")[0].split(",")
+        if len(raw) >= 4:
+            gpu_str = f"{raw[0].strip()}%"
+            used_mb = float(raw[1].strip())
+            total_mb = float(raw[2].strip())
+            vram_str = f"{used_mb / 1024:.1f}/{total_mb / 1024:.1f} GB ({round(used_mb / total_mb * 100)}%)"
+            temp_str = f" ({raw[3].strip()}°C)"
+    except Exception:
+        try:
+            import torch
+            if torch.cuda.is_available():
+                alloc = torch.cuda.memory_allocated() / (1024**3)
+                tot = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+                vram_str = f"{alloc:.1f}/{tot:.1f} GB"
+                gpu_str = "Active"
+        except Exception:
+            pass
+    return cpu_pct, ram_str, gpu_str + temp_str, vram_str
+
+def _render_metrics_bar(cpu_pct, ram_str, gpu_str, vram_str):
+    return f'''<div style="background: rgba(15, 23, 42, 0.85); border: 1px solid #334155; border-radius: 8px; padding: 10px 14px; margin-bottom: 12px; font-size: 12px; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px;">
+    <div style="display: flex; align-items: center; gap: 6px;">
+        <span style="color: #38bdf8; font-weight: 700;">🎮 GPU:</span>
+        <span style="color: #f8fafc; font-weight: 600;">{gpu_str}</span>
+        <span style="color: #64748b;">|</span>
+        <span style="color: #38bdf8; font-weight: 700;">VRAM:</span>
+        <span style="color: #a78bfa; font-weight: 600;">{vram_str}</span>
+    </div>
+    <div style="display: flex; align-items: center; gap: 6px;">
+        <span style="color: #34d399; font-weight: 700;">⚡ CPU:</span>
+        <span style="color: #f8fafc; font-weight: 600;">{cpu_pct}</span>
+        <span style="color: #64748b;">|</span>
+        <span style="color: #34d399; font-weight: 700;">RAM:</span>
+        <span style="color: #38bdf8; font-weight: 600;">{ram_str}</span>
+    </div>
+</div>'''
+
+_init_cpu, _init_ram, _init_gpu, _init_vram = _sample_telemetry()
+_metrics_html = _render_metrics_bar(_init_cpu, _init_ram, _init_gpu, _init_vram)
+
+log_buffer = collections.deque(maxlen=250)
+log_buffer.append('<span style="color: #60a5fa; font-weight: bold;">[Status]</span> 📡 Connected to worker service log streams. Waiting for incoming events...')
+
+def _render_log_box():
+    content = "\\n".join(log_buffer)
+    return f'''<div id="tnh-log-box" style="height: 320px; max-height: 400px; overflow-y: auto; background-color: #020617; border: 1px solid #334155; border-radius: 10px; padding: 12px 16px; font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace; font-size: 12px; line-height: 1.5; color: #cbd5e1; scrollbar-width: thin; scrollbar-color: #475569 #020617;">
+<pre style="margin: 0; padding: 0; background: transparent; color: inherit; white-space: pre-wrap; word-break: break-all; font-family: inherit;">{content}</pre>
+</div>
+<script>
+(function() {{
+    var el = document.getElementById("tnh-log-box");
+    if (el) {{ el.scrollTop = el.scrollHeight; }}
+}})();
+</script>'''
+
 try:
     import ipywidgets as widgets
     card_widget = widgets.HTML(card_header_html)
-    log_box = widgets.Output(layout=widgets.Layout(
-        height="320px",
-        max_height="400px",
-        overflow_y="auto",
-        border="1px solid #334155",
-        border_radius="10px",
-        padding="12px 16px",
-        background_color="#020617"
-    ))
-    log_box.add_class("tnh-log-box")
-    panel = widgets.VBox([card_widget, log_box], layout=widgets.Layout(
+    metrics_widget = widgets.HTML(_metrics_html)
+    log_widget = widgets.HTML(_render_log_box())
+    panel = widgets.VBox([card_widget, metrics_widget, log_widget], layout=widgets.Layout(
         background="linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%)",
         border="1px solid #3b82f6",
         border_radius="16px",
@@ -3623,11 +3691,10 @@ try:
         box_shadow="0 10px 25px -5px rgba(0, 0, 0, 0.5)"
     ))
     display(panel)
-    with log_box:
-        print("📡 Connected to worker service log streams. Waiting for incoming events...", flush=True)
 except Exception:
-    display(HTML(f'<div style="background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%); border: 1px solid #3b82f6; border-radius: 16px; padding: 24px; color: #f8fafc; font-family: system-ui, -apple-system, sans-serif; box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5); margin: 20px 0 10px 0;">{card_header_html}</div>'))
-    log_box = None
+    display(HTML(f'<div style="background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%); border: 1px solid #3b82f6; border-radius: 16px; padding: 24px; color: #f8fafc; font-family: system-ui, -apple-system, sans-serif; box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5); margin: 20px 0 10px 0;">{card_header_html}{_metrics_html}</div>'))
+    log_widget = None
+    metrics_widget = None
 
 log_files = {"Agent": log_agent}
 if mode_key in ("hybrid", "model", "tts"):
@@ -3644,16 +3711,16 @@ for label, p in log_files.items():
             f.seek(max(0, sz - 8192), os.SEEK_SET)
         handles[label] = f
 
-TAG_COLORS = {
-    "Agent": "\x1b[92m[Agent]\x1b[0m",
-    "ComfyUI": "\x1b[94m[ComfyUI]\x1b[0m",
-    "LLM": "\x1b[93m[LLM]\x1b[0m",
-    "Status": "\x1b[95m[Status]\x1b[0m",
+TAG_HTML = {
+    "Agent": '<span style="color: #4ade80; font-weight: bold;">[Agent]</span>',
+    "ComfyUI": '<span style="color: #60a5fa; font-weight: bold;">[ComfyUI]</span>',
+    "LLM": '<span style="color: #facc15; font-weight: bold;">[LLM]</span>',
+    "Status": '<span style="color: #c084fc; font-weight: bold;">[Status]</span>',
 }
 
-total_lines = 0
-last_watchdog = 0.0
-last_preview_sync = 0.0
+last_telemetry = 0.0
+last_render = 0.0
+dirty = False
 
 try:
     while True:
@@ -3667,7 +3734,7 @@ try:
                 activity = True
                 line_clean = line.strip()
                 if line_clean:
-                    batch.append([label, line_clean])
+                    batch.append((label, line_clean))
 
         for label, p in log_files.items():
             if label not in handles and os.path.exists(p):
@@ -3675,80 +3742,36 @@ try:
                 handles[label] = f
 
         if batch:
-            total_lines += len(batch)
-            if log_box:
-                if total_lines > 2000:
-                    log_box.clear_output(wait=True)
-                    total_lines = len(batch)
-                with log_box:
-                    for l, t in batch:
-                        tag = TAG_COLORS.get(l, f"[{l}]")
-                        print(f"{tag} {t}", flush=True)
+            for l, t in batch:
+                tag = TAG_HTML.get(l, f"[{l}]")
+                escaped = html.escape(t)
+                log_buffer.append(f"{tag} {escaped}")
+            dirty = True
+
+        now = time.time()
+        # Telemetry update every 2.0s
+        if now - last_telemetry >= 2.0:
+            last_telemetry = now
+            if metrics_widget:
+                c_cpu, c_ram, c_gpu, c_vram = _sample_telemetry()
+                metrics_widget.value = _render_metrics_bar(c_cpu, c_ram, c_gpu, c_vram)
+
+        # Log render throttled to at most once every 0.3s
+        if dirty and (now - last_render >= 0.3):
+            last_render = now
+            dirty = False
+            if log_widget:
+                log_widget.value = _render_log_box()
             else:
                 for l, t in batch:
                     print(f"[{l}] {t}", flush=True)
 
-        # Periodic watchdog to auto-restart llama-server if it exited during the session
-        now = time.time()
-        if now - last_watchdog > 10.0:
-            last_watchdog = now
-            proc_llm = worker_procs.get("llm")
-            # The watchdog deliberately does NOT restart a llama-server.
-            #
-            # In llm mode the notebook does not own one — the agent's stack
-            # does — and the old watchdog used to Popen one anyway, while the
-            # agent's arbiter used to pkill one. The two fought over the same
-            # port, and two 19.5 GB models loading at once on a 24 GB card is
-            # an OOM. The agent's own supervisor is the right owner.
-            if False:
-                tag = TAG_COLORS.get("LLM", "[LLM]")
-                print(f"{tag} ⚠️ llama-server process exited (code {proc_llm.returncode}). Auto-restarting...", flush=True)
-                # Ensure ComfyUI yields VRAM before restarting llama-server
-                try:
-                    req_free = urllib.request.Request(
-                        f"http://127.0.0.1:{comfy_port}/free",
-                        data=json.dumps({"unload_models": True, "free_memory": True}).encode("utf-8"),
-                        headers={"Content-Type": "application/json"}
-                    )
-                    with urllib.request.urlopen(req_free, timeout=2) as _:
-                        pass
-                    time.sleep(0.5)
-                except Exception:
-                    pass
-                with open(log_llm, "a", buffering=1) as out:
-                    worker_procs["llm"] = subprocess.Popen(spawn_cmd, env=env_llm, stdout=out, stderr=out)
-        # Check backend preview setting every 15s and restart ComfyUI if changed
-        if mode_key in ("hybrid", "model") and (now - last_preview_sync > 15.0):
-            last_preview_sync = now
-            backend_method = fetch_backend_preview_method()
-            if backend_method and backend_method != comfy_active_preview_method:
-                print(f"\\n🔄 [ComfyUI Track] Preview configuration changed on backend: {comfy_active_preview_method} -> {backend_method}. Restarting ComfyUI...", flush=True)
-                proc_comfy = worker_procs.get("comfy")
-                if proc_comfy and proc_comfy.poll() is None:
-                    try:
-                        req_free = urllib.request.Request(
-                            f"http://127.0.0.1:{comfy_port}/free",
-                            data=json.dumps({"unload_models": True, "free_memory": True}).encode("utf-8"),
-                            headers={"Content-Type": "application/json"}
-                        )
-                        with urllib.request.urlopen(req_free, timeout=2) as _:
-                            pass
-                    except Exception:
-                        pass
-                    proc_comfy.terminate()
-                    try:
-                        proc_comfy.wait(timeout=5)
-                    except Exception:
-                        proc_comfy.kill()
-                launch_comfyui_track(preview_method=backend_method)
-                print(f"✅ [ComfyUI Track] Restarted with --preview-method {backend_method}\\n", flush=True)
-
         if not activity:
-            time.sleep(0.3)
+            time.sleep(0.08)
 except KeyboardInterrupt:
-    if log_box:
-        with log_box:
-            print("\\n\\033[91m🛑 Stopped live log monitor. Your background services are still running happily!\\033[0m", flush=True)
+    if log_widget:
+        log_buffer.append('<span style="color: #f87171; font-weight: bold;">🛑 Stopped live log monitor. Your background services are still running happily!</span>')
+        log_widget.value = _render_log_box()
     else:
         print("\\n🛑 Stopped live log monitor. Your background services are still running happily!")
 finally:

@@ -641,6 +641,24 @@ async def tts_health():
         "tts_command": bool(os.getenv("TTS_COMMAND", "").strip()),
     }
 
+_DEFAULT_VOICES = [
+    {"id": "friendly", "name": "Friendly", "type": "preset", "language": "en", "description": "Warm, approachable tone"},
+    {"id": "professional", "name": "Professional", "type": "preset", "language": "en", "description": "Clear, authoritative delivery"},
+    {"id": "cheerful", "name": "Cheerful", "type": "preset", "language": "en", "description": "Bright, energetic tone"},
+    {"id": "calm", "name": "Calm", "type": "preset", "language": "en", "description": "Relaxed, soothing presence"},
+    {"id": "deep", "name": "Deep", "type": "preset", "language": "en", "description": "Rich, resonant bass"},
+    {"id": "bright", "name": "Bright", "type": "preset", "language": "en", "description": "Crisp, clear high register"},
+    {"id": "storyteller", "name": "Storyteller", "type": "preset", "language": "en", "description": "Expressive, narrative style"},
+    {"id": "whisper", "name": "Whisper", "type": "preset", "language": "en", "description": "Intimate, hushed delivery"},
+    {"id": "dramatic", "name": "Dramatic", "type": "preset", "language": "en", "description": "Theatrical, emotional range"},
+]
+
+
+@tts_app.get("/v1/voices")
+async def tts_list_voices():
+    """Available voice presets and custom voice models."""
+    return {"voices": _DEFAULT_VOICES}
+
 
 @tts_app.websocket("/tts")
 async def tts_socket(websocket: WebSocket):

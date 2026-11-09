@@ -215,6 +215,8 @@ ENGINE_SPECS: Dict[str, Dict[str, Any]] = {
         "config": [
             {"key": "base_url", "label": "API Base URL", "type": "text", "required": True, "default": "http://localhost:11434/v1", "placeholder": "https://api.openai.com/v1"},
             {"key": "model", "label": "Default Model ID", "type": "text", "required": False, "placeholder": "e.g. llama3.2, mistral, gpt-4o"},
+            {"key": "default_rp_model", "label": "RP / Story Model", "type": "text", "required": False, "placeholder": "e.g. gpt-4o, claude-3-5-sonnet-latest"},
+            {"key": "default_util_model", "label": "Fast / Utility Model", "type": "text", "required": False, "placeholder": "e.g. gpt-4o-mini, claude-3-5-haiku-latest"},
             {"key": "temperature", "label": "Default Temperature", "type": "number", "default": 0.7, "step": 0.05, "min": 0.0, "max": 2.0},
             {"key": "max_output_tokens", "label": "Max Output Tokens", "type": "number", "default": 4096},
         ],
@@ -226,6 +228,8 @@ ENGINE_SPECS: Dict[str, Dict[str, Any]] = {
             "config": {
                 "base_url": ["api_base", "endpoint_url", "openai_api_base"],
                 "model": ["default_model"],
+                "default_rp_model": ["rp_model", "active_rp"],
+                "default_util_model": ["util_model", "active_util"],
             },
         },
     },
@@ -245,6 +249,8 @@ ENGINE_SPECS: Dict[str, Dict[str, Any]] = {
         "config": [
             {"key": "base_url", "label": "Ollama Base URL", "type": "text", "required": True, "default": "http://localhost:11434/v1", "placeholder": "http://localhost:11434/v1"},
             {"key": "model", "label": "Default Model ID", "type": "text", "required": False, "placeholder": "e.g. llama3.2, mistral"},
+            {"key": "default_rp_model", "label": "RP / Story Model", "type": "text", "required": False, "placeholder": "e.g. llama3.3:70b, qwen2.5:32b"},
+            {"key": "default_util_model", "label": "Fast / Utility Model", "type": "text", "required": False, "placeholder": "e.g. llama3.2:3b, qwen2.5:7b"},
             {"key": "temperature", "label": "Default Temperature", "type": "number", "default": 0.7, "step": 0.05, "min": 0.0, "max": 2.0},
             {"key": "max_output_tokens", "label": "Max Output Tokens", "type": "number", "default": 4096},
         ],
@@ -255,6 +261,8 @@ ENGINE_SPECS: Dict[str, Dict[str, Any]] = {
             "config": {
                 "base_url": ["api_base", "endpoint_url", "openai_api_base"],
                 "model": ["default_model"],
+                "default_rp_model": ["rp_model", "active_rp"],
+                "default_util_model": ["util_model", "active_util"],
             },
         },
     },
@@ -273,6 +281,8 @@ ENGINE_SPECS: Dict[str, Dict[str, Any]] = {
         ],
         "config": [
             {"key": "model", "label": "Default Model ID", "type": "text", "default": "claude-3-5-sonnet-latest", "placeholder": "claude-3-5-sonnet-latest"},
+            {"key": "default_rp_model", "label": "RP / Story Model", "type": "text", "required": False, "placeholder": "claude-3-5-sonnet-latest"},
+            {"key": "default_util_model", "label": "Fast / Utility Model", "type": "text", "required": False, "placeholder": "claude-3-5-haiku-latest"},
             {"key": "temperature", "label": "Default Temperature", "type": "number", "default": 0.7, "step": 0.05, "min": 0.0, "max": 1.0},
             {"key": "max_output_tokens", "label": "Max Output Tokens", "type": "number", "default": 4096},
         ],
@@ -280,6 +290,8 @@ ENGINE_SPECS: Dict[str, Dict[str, Any]] = {
             "credentials": {},
             "config": {
                 "model": ["default_model"],
+                "default_rp_model": ["rp_model", "active_rp"],
+                "default_util_model": ["util_model", "active_util"],
             },
         },
     },
@@ -298,6 +310,8 @@ ENGINE_SPECS: Dict[str, Dict[str, Any]] = {
         ],
         "config": [
             {"key": "model", "label": "Default Model ID", "type": "text", "default": "gemini-2.0-flash", "placeholder": "gemini-2.0-flash"},
+            {"key": "default_rp_model", "label": "RP / Story Model", "type": "text", "required": False, "placeholder": "gemini-2.0-flash"},
+            {"key": "default_util_model", "label": "Fast / Utility Model", "type": "text", "required": False, "placeholder": "gemini-2.0-flash"},
             {"key": "temperature", "label": "Default Temperature", "type": "number", "default": 0.7, "step": 0.05, "min": 0.0, "max": 2.0},
             {"key": "max_output_tokens", "label": "Max Output Tokens", "type": "number", "default": 4096},
         ],
@@ -305,6 +319,8 @@ ENGINE_SPECS: Dict[str, Dict[str, Any]] = {
             "credentials": {},
             "config": {
                 "model": ["default_model"],
+                "default_rp_model": ["rp_model", "active_rp"],
+                "default_util_model": ["util_model", "active_util"],
             },
         },
     },
