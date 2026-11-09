@@ -32,6 +32,7 @@ export default function UnifiedGeneratorLayout({
     leftColumnTop,
     leftColumnBottom,
     rightColumnMiddle,
+    rightColumnExtra,
     rightColumnBottom,
     mobileActionBar,
     showAdvancedSampling = true,
@@ -130,15 +131,14 @@ export default function UnifiedGeneratorLayout({
                 accentClass={accentClass}
                 activeJobCount={activeJobCount}
                 gapClass="gap-3 lg:gap-8"
-                leftColumnClass="order-last lg:order-none"
-                rightColumnClass="order-first lg:order-none"
+                leftColumnClass="order-first lg:order-none"
+                rightColumnClass="order-last lg:order-none"
                 isMissingModelsOpen={isMissingModelsOpen}
                 setIsMissingModelsOpen={setIsMissingModelsOpen}
                 validationResult={validationResult}
                 leftColumn={(
                     <>
                         {leftColumnTop}
-                        
                         <PromptPanel embeddingModels={embeddingModels} />
 
                         <div className="space-y-4 pb-4 border-b border-gray-800">
@@ -196,46 +196,52 @@ export default function UnifiedGeneratorLayout({
                                         hiresFix={mode === 't2i' ? hiresFix : undefined}
                                         setHiresFix={mode === 't2i' ? setHiresFix : undefined}
                                         hiresUpscaler={hiresUpscaler}
-                                setHiresUpscaler={setHiresUpscaler}
-                                hiresDenoise={hiresDenoise}
-                                setHiresDenoise={setHiresDenoise}
-                                hiresUpscale={hiresUpscale}
-                                setHiresUpscale={setHiresUpscale}
-                                hiresSteps={hiresSteps}
-                                setHiresSteps={setHiresSteps}
-                                upscalerModels={upscalerModels}
-                                adetailer={adetailer}
-                                setAdetailer={setAdetailer}
-                                adetailerModel={adetailerModel}
-                                setAdetailerModel={setAdetailerModel}
-                                adetailerPrompt={adetailerPrompt}
-                                setAdetailerPrompt={setAdetailerPrompt}
-                                adetailerSteps={adetailerSteps}
-                                setAdetailerSteps={setAdetailerSteps}
-                                adetailerDenoise={adetailerDenoise}
-                                setAdetailerDenoise={setAdetailerDenoise}
-                                adetailerInpaintMasked={adetailerInpaintMasked}
-                                setAdetailerInpaintMasked={setAdetailerInpaintMasked}
-                                adetailerModels={adetailerModels}
-                                enableFreeU={enableFreeU}
-                                setEnableFreeU={setEnableFreeU}
-                                enablePAG={enablePAG}
-                                setEnablePAG={setEnablePAG}
-                                pagScale={pagScale}
-                                setPagScale={setPagScale}
-                                enableLatentUpscale={enableLatentUpscale}
-                                setEnableLatentUpscale={setEnableLatentUpscale}
-                                latentUpscaleMultiplier={latentUpscaleMultiplier}
-                                setLatentUpscaleMultiplier={setLatentUpscaleMultiplier}
-                            />
+                                        setHiresUpscaler={setHiresUpscaler}
+                                        hiresDenoise={hiresDenoise}
+                                        setHiresDenoise={setHiresDenoise}
+                                        hiresUpscale={hiresUpscale}
+                                        setHiresUpscale={setHiresUpscale}
+                                        hiresSteps={hiresSteps}
+                                        setHiresSteps={setHiresSteps}
+                                        upscalerModels={upscalerModels}
+                                        adetailer={adetailer}
+                                        setAdetailer={setAdetailer}
+                                        adetailerModel={adetailerModel}
+                                        setAdetailerModel={setAdetailerModel}
+                                        adetailerPrompt={adetailerPrompt}
+                                        setAdetailerPrompt={setAdetailerPrompt}
+                                        adetailerSteps={adetailerSteps}
+                                        setAdetailerSteps={setAdetailerSteps}
+                                        adetailerDenoise={adetailerDenoise}
+                                        setAdetailerDenoise={setAdetailerDenoise}
+                                        adetailerInpaintMasked={adetailerInpaintMasked}
+                                        setAdetailerInpaintMasked={setAdetailerInpaintMasked}
+                                        adetailerModels={adetailerModels}
+                                        enableFreeU={enableFreeU}
+                                        setEnableFreeU={setEnableFreeU}
+                                        enablePAG={enablePAG}
+                                        setEnablePAG={setEnablePAG}
+                                        pagScale={pagScale}
+                                        setPagScale={setPagScale}
+                                        enableLatentUpscale={enableLatentUpscale}
+                                        setEnableLatentUpscale={setEnableLatentUpscale}
+                                        latentUpscaleMultiplier={latentUpscaleMultiplier}
+                                        setLatentUpscaleMultiplier={setLatentUpscaleMultiplier}
+                                    />
                                 </>
                             )}
                         </div>
+
+
                         {leftColumnBottom}
                     </>
                 )}
                 rightColumn={(
                     <>
+                        {rightColumnMiddle}
+
+                        {showAdvancedSampling && <SamplingSettings />}
+
                         <GeneratorReadinessPanel
                             providers={providers}
                             providersLoading={providersLoading}
@@ -245,12 +251,12 @@ export default function UnifiedGeneratorLayout({
                             hint={runwayHint}
                         />
 
-                        {rightColumnMiddle}
-                        
-                        {showAdvancedSampling && <SamplingSettings />}
+                        {rightColumnExtra}
 
-                        <div className="hidden md:block">
-                            {rightColumnBottom}
+                        <div className="hidden md:block sticky bottom-4 z-20 pt-2">
+                            <div className="p-2.5 rounded-2xl bg-[#0B0E14]/90 backdrop-blur-xl border border-white/10 shadow-2xl">
+                                {rightColumnBottom}
+                            </div>
                         </div>
                     </>
                 )}
@@ -304,6 +310,7 @@ export default function UnifiedGeneratorLayout({
                     providers={providers}
                     providersLoading={providersLoading}
                     onClose={() => setViewingMetadata(null)}
+                    onAddTriggerWords={addTriggerWords}
                 />
             )}
         </>

@@ -1,6 +1,7 @@
 # Background task scheduler using APScheduler
 # Consolidates all periodic tasks (reconciliation, cleanup, etc.)
 
+import asyncio
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 import hashlib
@@ -121,6 +122,66 @@ class _AdvisoryRunLock:
 # In-memory execution history for scheduled jobs
 _JOB_HISTORY: dict[str, dict[str, Any]] = {}
 
+# Job metadata catalogue for human-readable labels and descriptions
+_JOB_METADATA: dict[str, dict[str, str]] = {
+    "provider_host_refresh": {
+        "title": "Provider Host Refresh",
+        "description": "Periodically polls modal and external providers to refresh health and online statuses.",
+        "category": "Providers",
+    },
+    "job_reaper": {
+        "title": "Stale Job Reaper",
+        "description": "Fails expired or stalled generation jobs and releases worker concurrency slots.",
+        "category": "Jobs",
+    },
+    "cleanup": {
+        "title": "System & Downloads Cleanup",
+        "description": "Cleans temporary directories, expired sessions, and completed download artifacts.",
+        "category": "Maintenance",
+    },
+    "in_process_reconcile": {
+        "title": "In-Process Engine Reconcile",
+        "description": "Monitors in-process engine workers and cleans up orphaned sub-processes.",
+        "category": "Engines",
+    },
+    "idle_simulation": {
+        "title": "Idle Worker Simulation",
+        "description": "Monitors background idle simulation for proactive provider warming.",
+        "category": "Simulation",
+    },
+    "database_vacuum": {
+        "title": "Database Optimization / Vacuum",
+        "description": "Optimizes SQLite databases and reclaims fragmented storage space.",
+        "category": "Database",
+    },
+    "civitai_resync_job": {
+        "title": "Full Civitai Metadata Resync",
+        "description": "Deep background synchronization of metadata, tags, and images for all installed models.",
+        "category": "Models",
+    },
+    "civitai_resync_random": {
+        "title": "Random Batch Metadata Resync",
+        "description": "Rapid incremental refresh of metadata for randomized batches of installed models.",
+        "category": "Models",
+    },
+    "preview_prefetch": {
+        "title": "Model Preview Image Prefetch",
+        "description": "Prefetches and caches missing or stale cover images and gallery previews from Civitai.",
+        "category": "Models",
+    },
+}
+
+def get_job_metadata(job_id: str) -> dict[str, str]:
+    """Get human-readable metadata for a scheduled job ID."""
+    return _JOB_METADATA.get(
+        job_id,
+        {
+            "title": job_id.replace("_", " ").title(),
+            "description": f"Scheduled background job: {job_id}",
+            "category": "General",
+        },
+    )
+
 
 def _guarded(func: Callable, job_id: str) -> Callable:
     """Wrap a scheduled job so only one process runs each tick.
@@ -154,6 +215,14 @@ def _guarded(func: Callable, job_id: str) -> Callable:
                     return None
                 start_time = time.monotonic()
                 run_at = datetime.now(timezone.utc).isoformat()
+                prev_duration = _JOB_HISTORY.get(job_id, {}).get("last_duration_seconds")
+                _JOB_HISTORY[job_id] = {
+                    "last_run_at": run_at,
+                    "last_status": "running",
+                    "last_duration_seconds": prev_duration,
+                    "last_error": None,
+                    "last_result": None,
+                }
                 try:
                     res = await func(*args, **kwargs)
                     duration = round(time.monotonic() - start_time, 3)
@@ -162,6 +231,7 @@ def _guarded(func: Callable, job_id: str) -> Callable:
                         "last_status": "success",
                         "last_duration_seconds": duration,
                         "last_error": None,
+                        "last_result": res if isinstance(res, dict) else None,
                     }
                     return res
                 except Exception as exc:
@@ -171,6 +241,7 @@ def _guarded(func: Callable, job_id: str) -> Callable:
                         "last_status": "failed",
                         "last_duration_seconds": duration,
                         "last_error": str(exc),
+                        "last_result": None,
                     }
                     raise
 
@@ -191,6 +262,14 @@ def _guarded(func: Callable, job_id: str) -> Callable:
                 return None
             start_time = time.monotonic()
             run_at = datetime.now(timezone.utc).isoformat()
+            prev_duration = _JOB_HISTORY.get(job_id, {}).get("last_duration_seconds")
+            _JOB_HISTORY[job_id] = {
+                "last_run_at": run_at,
+                "last_status": "running",
+                "last_duration_seconds": prev_duration,
+                "last_error": None,
+                "last_result": None,
+            }
             try:
                 res = func(*args, **kwargs)
                 duration = round(time.monotonic() - start_time, 3)
@@ -199,6 +278,7 @@ def _guarded(func: Callable, job_id: str) -> Callable:
                     "last_status": "success",
                     "last_duration_seconds": duration,
                     "last_error": None,
+                    "last_result": res if isinstance(res, dict) else None,
                 }
                 return res
             except Exception as exc:
@@ -208,9 +288,9 @@ def _guarded(func: Callable, job_id: str) -> Callable:
                     "last_status": "failed",
                     "last_duration_seconds": duration,
                     "last_error": str(exc),
+                    "last_result": None,
                 }
                 raise
-
     return _wrapper
 
 
@@ -355,18 +435,95 @@ def get_jobs_status() -> list[dict[str, Any]]:
     
     for job in scheduler.get_jobs():
         history = _JOB_HISTORY.get(job.id, {})
+        meta = get_job_metadata(job.id)
+        
+        interval_seconds = None
+        if isinstance(job.trigger, IntervalTrigger):
+            interval_seconds = int(job.trigger.interval.total_seconds())
+            
         jobs.append({
             "id": job.id,
             "name": job.name,
+            "title": meta.get("title", job.id),
+            "description": meta.get("description", ""),
+            "category": meta.get("category", "General"),
             "next_run": job.next_run_time.isoformat() if job.next_run_time else None,
+            "paused": job.next_run_time is None,
             "trigger": str(job.trigger),
+            "interval_seconds": interval_seconds,
             "last_run_at": history.get("last_run_at"),
             "last_status": history.get("last_status", "idle"),
             "last_duration_seconds": history.get("last_duration_seconds"),
             "last_error": history.get("last_error"),
+            "last_result": history.get("last_result"),
         })
     
     return jobs
+
+
+def trigger_job_now(job_id: str) -> dict[str, Any]:
+    """Trigger an immediate run of a scheduled job in a background task."""
+    import inspect
+    from core.exceptions import NotFoundError
+    from infrastructure.background_tasks import start_background_task
+
+    scheduler = get_scheduler()
+    job = scheduler.get_job(job_id)
+    if job is None:
+        raise NotFoundError("Scheduled job", f"Scheduled job '{job_id}' not found")
+
+    if _JOB_HISTORY.get(job_id, {}).get("last_status") == "running":
+        return {"status": "already_running", "job_id": job_id}
+
+    async def _runner():
+        if inspect.iscoroutinefunction(job.func):
+            await job.func(*job.args, **job.kwargs)
+        else:
+            await asyncio.to_thread(job.func, *job.args, **job.kwargs)
+
+    try:
+        asyncio.get_running_loop()
+        start_background_task(_runner(), task_name=f"manual_job:{job_id}", timeout=None)
+    except RuntimeError:
+        loop = getattr(scheduler, "_eventloop", None)
+        if loop and loop.is_running():
+            asyncio.run_coroutine_threadsafe(_runner(), loop)
+        else:
+            asyncio.run(_runner())
+    return {"status": "triggered", "job_id": job_id}
+
+
+def update_scheduled_job(
+    job_id: str,
+    *,
+    interval_seconds: int | None = None,
+    paused: bool | None = None,
+) -> dict[str, Any]:
+    """Update the schedule interval or pause/resume state of a scheduled job."""
+    from core.exceptions import NotFoundError, ValidationError
+
+    scheduler = get_scheduler()
+    job = scheduler.get_job(job_id)
+    if job is None:
+        raise NotFoundError("Scheduled job", f"Scheduled job '{job_id}' not found")
+
+    if interval_seconds is not None:
+        if interval_seconds < 10 or interval_seconds > 604800:
+            raise ValidationError("interval_seconds must be between 10 and 604800 seconds (7 days)")
+        scheduler.reschedule_job(job_id, trigger=IntervalTrigger(seconds=interval_seconds))
+        logger.info("scheduled_job_interval_updated", job_id=job_id, interval_seconds=interval_seconds)
+
+    if paused is not None:
+        if paused:
+            scheduler.pause_job(job_id)
+            logger.info("scheduled_job_paused", job_id=job_id)
+        else:
+            scheduler.resume_job(job_id)
+            logger.info("scheduled_job_resumed", job_id=job_id)
+
+    # Return updated job record
+    updated_statuses = [j for j in get_jobs_status() if j["id"] == job_id]
+    return updated_statuses[0] if updated_statuses else {"id": job_id}
 
 
 # ============================================================================

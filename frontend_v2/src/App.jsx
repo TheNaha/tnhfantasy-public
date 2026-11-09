@@ -46,6 +46,7 @@ const DiscoverModels = lazy(() => import('./pages/DiscoverModels'));
 const InstalledModels = lazy(() => import('./pages/InstalledModels'));
 const Statistics = lazy(() => import('./pages/Statistics'));
 const Settings = lazy(() => import('./pages/Settings'));
+const BackgroundTasks = lazy(() => import('./pages/BackgroundTasks'));
 const Providers = lazy(() => import('./pages/Providers'));
 const Characters = lazy(() => import('./pages/Characters'));
 const ChatWorkspace = lazy(() => import('./pages/ChatWorkspace'));
@@ -169,6 +170,8 @@ function AnimatedRoutes() {
                 <Route path="/llm-studio" element={<Boundary routeKey={routeKey}><LLMStudio /></Boundary>} />
                 <Route path="/statistics" element={<Boundary routeKey={routeKey}><Statistics /></Boundary>} />
                 <Route path="/settings" element={<Boundary routeKey={routeKey}><Settings /></Boundary>} />
+                <Route path="/settings/background-tasks" element={<Navigate to="/tasks" replace />} />
+                <Route path="/tasks" element={<Boundary routeKey={routeKey}><BackgroundTasks /></Boundary>} />
                 <Route path="*" element={<Boundary routeKey={routeKey}><NotFound /></Boundary>} />
             </Routes>
         </AnimatePresence>
@@ -264,6 +267,18 @@ function App() {
         success: state.settings.ui.toastSuccessDuration,
         error: state.settings.ui.toastErrorDuration,
     })));
+
+    const [isMobile, setIsMobile] = useState(() => {
+        if (typeof window === 'undefined') return false;
+        return window.innerWidth < 768;
+    });
+
+    useEffect(() => {
+        if (typeof window === 'undefined') return;
+        const checkMobile = () => setIsMobile(window.innerWidth < 768);
+        window.addEventListener('resize', checkMobile);
+        return () => window.removeEventListener('resize', checkMobile);
+    }, []);
 
     const [queryClient] = useState(() => (
         new QueryClient({
@@ -366,7 +381,7 @@ function App() {
                     </Router>
                     <ConfirmationHost />
                     <Toaster
-                        position="top-right"
+                        position={isMobile ? "top-left" : "top-right"}
                         toastOptions={{
                             className: '',
                             style: {

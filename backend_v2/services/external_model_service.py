@@ -363,6 +363,33 @@ class ExternalModelService:
             status_code=500,
             detail=f"Failed to fetch version from CivitAI: {last_error!s}",
         )
+
+    async def get_civitai_community_images(
+        self, model_id: int, version_id: int | None = None, limit: int = 10, prefer_red: bool = False
+    ) -> list[dict[str, Any]]:
+        """Fetch community showcase images for a model or version."""
+        domains = ["civitai.red", "civitai.com"] if prefer_red else ["civitai.com", "civitai.red"]
+        query_parts = [f"modelId={model_id}", f"limit={limit}"]
+        if version_id:
+            query_parts.append(f"modelVersionId={version_id}")
+        url_params = "&".join(query_parts)
+
+        for domain in domains:
+            try:
+                response = await get_http_client().get(
+                    f"https://{domain}/api/v1/images?{url_params}",
+                    headers=self._civitai_headers(),
+                    timeout=10,
+                )
+                if response.status_code == 200:
+                    data = response.json()
+                    items = data.get("items", [])
+                    if items:
+                        return items
+            except Exception as exc:
+                logger.debug("civitai_community_images_failed", domain=domain, error=str(exc))
+                continue
+        return []
     async def _parse_huggingface_url(self, url: str) -> dict[str, Any]:
         match = re.search(r"huggingface\.co/([^/]+/[^/]+)", url)
         if not match:

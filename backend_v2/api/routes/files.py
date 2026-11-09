@@ -1502,6 +1502,8 @@ async def list_files_endpoint(
                         "nsfw": model.get("nsfw", False),
                         # Preview image
                         "preview": preview_url,
+                        # Images gallery
+                        "images": version_fields.get("images") or model.get("images") or [],
                         # Provider sync status
                         "provider_statuses": provider_statuses,
                         # Stats

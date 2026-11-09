@@ -367,3 +367,36 @@ async def test_resync_falls_back_to_civitai_red_on_404(session, monkeypatch):
         "User-Agent": "TNHFantasy/1.0",
         "Authorization": "Bearer test-secret-token",
     }
+
+
+@pytest.mark.asyncio
+async def test_run_randomized_background_resync_samples_and_updates_stats(session, monkeypatch):
+    for i in range(10):
+        make_model(session, 1000 + i, f"Random Model {i}")
+
+    calls = []
+
+    class RecordingClient:
+        async def get(self, url, headers=None, timeout=None, **kwargs):
+            calls.append(url)
+            return FakeResponse(200, json_data=civitai_payload("Random Synced Model", downloads=999))
+
+    client = RecordingClient()
+
+    async def fake_broadcast(evt, data):
+        pass
+
+    monkeypatch.setattr(maintenance, "get_http_client", lambda: client)
+    monkeypatch.setattr(maintenance, "broadcast_to_all", fake_broadcast)
+    monkeypatch.setattr(maintenance, "get_session_context", lambda: fake_session_context(session))
+
+    # Run randomized resync with batch_size=3
+    res = await maintenance.run_randomized_background_resync(batch_size=3)
+    assert res["success"] == 3
+    assert len(calls) == 3
+
+    # Verify status snapshot
+    status = maintenance.get_resync_status()
+    assert status["mode"] == "random"
+    assert status["total"] == 3
+    assert status["results"]["success"] == 3

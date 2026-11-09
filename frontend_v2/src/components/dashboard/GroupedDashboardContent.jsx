@@ -1,7 +1,8 @@
 import { memo, useCallback, useLayoutEffect, useRef, useState } from "react";
 import { motion } from 'framer-motion';
-import { Calendar, Check, ChevronDown, Layers, Loader2, Star } from 'lucide-react';
-
+import { Calendar, Check, ChevronDown, Layers, Loader2, Star, Copy, Wand2 } from 'lucide-react';
+import { copyToClipboard } from '../../utils/clipboard';
+import toast from 'react-hot-toast';
 import FeedCard from './FeedCard';
 import ImageGroup from './ImageGroup';
 import JobCard from './JobCard';
@@ -351,7 +352,7 @@ const SessionGroupCard = memo(function SessionGroupCard({ item, expanded, onTogg
 
 // ⚡ Bolt: Extract inner item renderers into memoized components to prevent re-rendering all DOM nodes
 // for unselected items when the parent's `selectedFiles` Set changes.
-const GridSingleImageCard = memo(function GridSingleImageCard({ item, selected, selectionMode, isFavorite, toggleSelection, handleImageClick, handleToggleFavorite }) {
+const GridSingleImageCard = memo(function GridSingleImageCard({ item, selected, selectionMode, isFavorite, toggleSelection, handleImageClick, handleToggleFavorite, onQuickReuse }) {
     const onCardClick = useCallback(() => {
         if (selectionMode) {
             toggleSelection(assetPath(item));
@@ -365,6 +366,18 @@ const GridSingleImageCard = memo(function GridSingleImageCard({ item, selected, 
         handleToggleFavorite(assetPath(item));
     }, [handleToggleFavorite, item]);
 
+    const onCopyPromptClick = useCallback(async (event) => {
+        event.stopPropagation();
+        const promptText = getAssetPrompt(item);
+        if (!promptText) return;
+        const ok = await copyToClipboard(promptText);
+        if (ok) toast.success('Prompt copied');
+    }, [item]);
+
+    const onReuseClick = useCallback((event) => {
+        event.stopPropagation();
+        if (onQuickReuse) onQuickReuse(item);
+    }, [onQuickReuse, item]);
     // Generation metadata lives under `item.metadata`; nothing hoists it to the
     // top level, so reading `item.prompt` directly was always undefined and the
     // hover overlay below never rendered a word.
@@ -434,6 +447,35 @@ const GridSingleImageCard = memo(function GridSingleImageCard({ item, selected, 
                             >
                                 {getCheckpointDisplayName(item)}
                             </p>
+                        )}
+
+                        {(cardPrompt || item?.metadata) && (
+                            <div className="mt-2.5 flex items-center gap-1.5">
+                                {cardPrompt && (
+                                    <button
+                                        type="button"
+                                        onClick={onCopyPromptClick}
+                                        aria-label="Copy prompt"
+                                        title="Copy prompt"
+                                        className="px-2 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white text-2xs font-medium flex items-center gap-1 backdrop-blur-sm transition-colors"
+                                    >
+                                        <Copy size={12} aria-hidden="true" />
+                                        <span>Copy</span>
+                                    </button>
+                                )}
+                                {item?.metadata && onQuickReuse && (
+                                    <button
+                                        type="button"
+                                        onClick={onReuseClick}
+                                        aria-label="Reuse parameters"
+                                        title="Reuse parameters in Generator"
+                                        className="px-2 py-1 rounded-lg bg-blue-600/80 hover:bg-blue-500 text-white text-2xs font-medium flex items-center gap-1 backdrop-blur-sm transition-colors"
+                                    >
+                                        <Wand2 size={12} aria-hidden="true" />
+                                        <span>Reuse</span>
+                                    </button>
+                                )}
+                            </div>
                         )}
                     </div>
                 </div>
@@ -624,8 +666,8 @@ export default memo(function GroupedDashboardContent({
     handleToggleFavorite,
     handleDelete,
     handleJobDelete,
+    onQuickReuse,
 }) {
-    // ⚡ Bolt: Use a stable callback to prevent re-renders in memoized ImageGroup components
     const handleImageGroupSelection = useCallback((images) => {
         images.forEach((image) => toggleSelection(assetPath(image)));
     }, [toggleSelection]);
@@ -712,7 +754,7 @@ export default memo(function GroupedDashboardContent({
                         />
                     ) : viewMode === 'grid' ? (
                         <div
-                            className="grid gap-4"
+                            className="grid gap-2 sm:gap-4"
                             style={{ gridTemplateColumns: `repeat(${gridCols}, minmax(0, 1fr))` }}
                         >
                             {groupItems.map((item) => (
@@ -742,6 +784,7 @@ export default memo(function GroupedDashboardContent({
                                             toggleSelection={toggleSelection}
                                             handleImageClick={handleImageClick}
                                             handleToggleFavorite={handleToggleFavorite}
+                                            onQuickReuse={onQuickReuse}
                                         />
                                     )}
                                 </motion.div>

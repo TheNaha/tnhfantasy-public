@@ -73,7 +73,7 @@ export default memo(function DashboardGalleryGrid({
     gridCols,
     onDelete,
     onJobDelete,
-
+    onQuickReuse,
     sentinelRef,
     isFetchingNextPage,
     isRefreshing,
@@ -161,6 +161,7 @@ export default memo(function DashboardGalleryGrid({
                     handleToggleFavorite={onToggleFavorite}
                     handleDelete={onDelete}
                     handleJobDelete={onJobDelete}
+                    onQuickReuse={onQuickReuse}
                 />
             )}
 

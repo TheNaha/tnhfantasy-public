@@ -207,7 +207,7 @@ const TriggerBox = memo(function TriggerBox({
         )}
 
         {/* Info Button */}
-        {onInfoClick && selectedModel?.civitai_id && (
+        {onInfoClick && selectedModel && (
           <button
             onClick={(e) => {
               e.stopPropagation();

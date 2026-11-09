@@ -93,7 +93,7 @@ Never commit checkpoints, outputs, or `.env` / `.env.*` files. Only `.env.exampl
 
 ## Docs
 
-- `docs/STATUS.md` is the authoritative status. The newest audit is `docs/audit-2026-10-21.md`. Each audit supersedes the earlier ones for every item it marks fixed. Before re-reporting a defect, check the audit's "did not survive verification" section (`audit-2026-10-10.md` §3).
-- `docs/archive/` is historical only, and its documents contradict each other.
+- `docs/STATUS.md` is the authoritative status. The newest code audit is `docs/maintenance/audit-2026-11-09.md`; the prior consolidated reference is `docs/audit-2026-11-02.md` (root `docs/audit-2026-11-*.md` and `docs/.audit/docs-audit-*`). Each audit supersedes the earlier ones for every item it marks fixed.
+- `docs/audit-2026-11-*.md` (root) and `docs/maintenance/audit-2026-11-*.md` are historical audits; `docs/features/` holds planning drafts. There is no `docs/archive/` in this checkout.
 - `.github/instructions/backend.instructions.md` holds backend rules scoped to `backend_v2/**`.
 - `deployables/README.md` maps each deployable to its engine. `docs/provider-architecture.md` explains which tree runs where.

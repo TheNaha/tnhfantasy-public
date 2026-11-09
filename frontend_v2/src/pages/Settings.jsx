@@ -714,15 +714,24 @@ function ScheduledTasksPanel() {
                         Active APScheduler recurring jobs running across backend worker threads
                     </p>
                 </div>
-                <button
-                    onClick={() => refetch()}
-                    disabled={isFetching}
-                    className="px-3 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-xs font-semibold text-gray-300 flex items-center gap-1.5 transition-colors disabled:opacity-50"
-                    title="Refresh scheduler status"
-                >
-                    <RefreshCw size={12} className={isFetching ? 'animate-spin' : ''} />
-                    Refresh
-                </button>
+                <div className="flex items-center gap-2">
+                    <Link
+                        to="/tasks"
+                        className="px-3 py-1.5 bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/30 rounded-xl text-xs font-semibold text-blue-400 flex items-center gap-1.5 transition-colors"
+                    >
+                        Full Control Center <ArrowRight size={12} />
+                    </Link>
+                    <button
+                        onClick={() => refetch()}
+                        disabled={isFetching}
+                        aria-label="Refresh scheduler status"
+                        className="px-3 py-1.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-xs font-semibold text-gray-300 flex items-center gap-1.5 transition-colors disabled:opacity-50"
+                        title="Refresh scheduler status"
+                    >
+                        <RefreshCw size={12} className={isFetching ? 'animate-spin' : ''} />
+                        Refresh
+                    </button>
+                </div>
             </div>
 
             {isLoading ? (

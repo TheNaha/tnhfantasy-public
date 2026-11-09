@@ -32,6 +32,7 @@ const NAV_ITEMS = [
     { label: 'Installed Models', to: '/models/installed' },
     { label: 'Discover Models', to: '/models/discover' },
     { label: 'Providers', to: '/providers' },
+    { label: 'Background Tasks', to: '/tasks' },
     { label: 'Statistics', to: '/statistics' },
     { label: 'Settings', to: '/settings' },
 ];

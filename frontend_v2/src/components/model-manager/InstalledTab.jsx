@@ -1,8 +1,8 @@
 import { useState, useEffect, useMemo, useCallback, memo } from 'react';
-import { Search, Loader2, RotateCw, Trash2, HardDrive, Globe, Wand2, Check, CheckSquare, Download, X, Database } from 'lucide-react';
+import { Search, Loader2, RotateCw, Trash2, HardDrive, Globe, Wand2, Check, CheckSquare, Download, X, Database, Images } from 'lucide-react';
 import ProgressiveImage from '../ProgressiveImage';
-import { modelListKey } from '../../constants/queryKeys';
 import { getOptimizedImageUrl } from '../../utils/imageOptimization';
+import { modelListKey } from '../../constants/queryKeys';
 import { formatBytes } from '../../utils/bytes';
 import { nextOffsetPageParam } from '../../utils/pagination';
 import toast from 'react-hot-toast';
@@ -122,6 +122,15 @@ const InstalledModelRow = memo(function InstalledModelRow({
                                 title={availability.detail || availability.label}
                             >
                                 {availabilityLabel}
+                            </span>
+                        )}
+                        {file.images && file.images.length > 1 && (
+                            <span
+                                className="inline-flex items-center gap-1 rounded-full bg-purple-500/20 border border-purple-500/40 text-purple-300 px-1.5 py-0.5 text-xs sm:text-2xs font-medium shrink-0"
+                                title={`${file.images.length} preview images available`}
+                            >
+                                <Images size={10} aria-hidden="true" />
+                                {file.images.length}
                             </span>
                         )}
                     </div>

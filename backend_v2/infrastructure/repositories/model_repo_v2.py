@@ -346,9 +346,8 @@ class ModelRepositoryV2:
                 self.session.add(file)
             
             # Create images
-            for i, img_data in enumerate(version_data.get("images", [])[:10]):
+            for i, img_data in enumerate(version_data.get("images", [])[:20]):
                 image = ModelImage(
-                    version_id=version.id,
                     url=img_data.get("url"),
                     width=img_data.get("width"),
                     height=img_data.get("height"),

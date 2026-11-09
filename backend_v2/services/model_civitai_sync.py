@@ -42,6 +42,32 @@ class ModelCivitaiSyncService:
         """
         # Check if model already exists
         civitai_id = civitai_data.get("id")
+        if civitai_id:
+            try:
+                from services.external_model_service import ExternalModelService
+                external = ExternalModelService()
+                for version_data in civitai_data.get("modelVersions", []):
+                    vid = version_data.get("id")
+                    if vid in selected_version_ids and len(version_data.get("images", [])) < 5:
+                        comm_images = await external.get_civitai_community_images(civitai_id, vid, limit=10)
+                        if comm_images:
+                            existing_urls = {img.get("url") for img in version_data.get("images", [])}
+                            for ci in comm_images:
+                                if ci.get("url") and ci.get("url") not in existing_urls:
+                                    version_data.setdefault("images", []).append({
+                                        "url": ci["url"],
+                                        "width": ci.get("width"),
+                                        "height": ci.get("height"),
+                                        "hash": ci.get("hash"),
+                                        "type": ci.get("type", "image"),
+                                        "nsfwLevel": ci.get("browsingLevel", 1),
+                                        "hasMeta": bool(ci.get("meta")),
+                                        "hasPositivePrompt": bool(ci.get("meta", {}).get("prompt") if ci.get("meta") else False),
+                                    })
+                                    existing_urls.add(ci["url"])
+            except Exception as exc:
+                logger.debug("community_images_enrich_failed", error=str(exc))
+
         existing = self.repo.get_model_by_civitai_id(civitai_id)
         if existing:
             # Add new versions to existing model
@@ -239,6 +265,27 @@ class ModelCivitaiSyncService:
 
                 images = civitai_version.get("images", [])
                 existing_images = existing_images_by_version.get(matched_version.id, [])
+
+                if len(images) < 5 and model.civitai_model_id:
+                    try:
+                        comm_images = await external.get_civitai_community_images(model.civitai_model_id, civ_id, limit=12)
+                        if comm_images:
+                            known_urls = {img.get("url") for img in images}
+                            for ci in comm_images:
+                                if ci.get("url") and ci.get("url") not in known_urls:
+                                    images.append({
+                                        "url": ci["url"],
+                                        "width": ci.get("width"),
+                                        "height": ci.get("height"),
+                                        "hash": ci.get("hash"),
+                                        "type": ci.get("type", "image"),
+                                        "nsfwLevel": ci.get("browsingLevel", 1),
+                                        "hasMeta": bool(ci.get("meta")),
+                                        "hasPositivePrompt": bool(ci.get("meta", {}).get("prompt") if ci.get("meta") else False),
+                                    })
+                                    known_urls.add(ci["url"])
+                    except Exception as exc:
+                        logger.debug("autopopulate_community_images_failed", error=str(exc))
 
                 if images:
                     existing_urls = {img.url for img in existing_images}

@@ -34,6 +34,10 @@ from fastapi.testclient import TestClient
 import infrastructure.background_tasks as background_tasks
 from api.main import app, lifespan
 from core.events import EventType, event_bus
+from api.routes.models.maintenance import (
+    CIVITAI_FULL_RESYNC_INTERVAL_SECONDS,
+    CIVITAI_RANDOM_RESYNC_INTERVAL_SECONDS,
+)
 from infrastructure.scheduler import get_scheduler
 from services.job_queue import queue_manager
 from services.model_preview_service import PREVIEW_PREFETCH_INTERVAL_SECONDS
@@ -96,9 +100,9 @@ EXPECTED_SCHEDULED_JOBS = {
     "database_vacuum": 86400,
     "preview_prefetch": PREVIEW_PREFETCH_INTERVAL_SECONDS,
     "cleanup": 3600,
-    "civitai_resync_job": 86400,
+    "civitai_resync_job": CIVITAI_FULL_RESYNC_INTERVAL_SECONDS,
+    "civitai_resync_random": CIVITAI_RANDOM_RESYNC_INTERVAL_SECONDS,
     "in_process_reconcile": IN_PROCESS_RECONCILE_INTERVAL_SECONDS,
-    # Keeps the published provider-host set current. It belongs here rather than
     # on the request path: the address dialled can be a Docker container id that
     # changes on every recreate, and a boot-time snapshot plus a CRUD-triggered
     # refresh left a window where a dispatched job went out without the shared
@@ -264,6 +268,12 @@ def boot_fixture(monkeypatch):
         monkeypatch,
         "api.routes.models.maintenance.run_background_resync",
         sink("run_background_resync"),
+        is_async=True,
+    )
+    _spy(
+        monkeypatch,
+        "api.routes.models.maintenance.run_randomized_background_resync",
+        sink("run_randomized_background_resync"),
         is_async=True,
     )
 
@@ -446,6 +456,7 @@ async def test_scheduler_registers_jobs_without_running_the_slow_ones(boot):
     assert calls["vacuum_database"] == []
     assert calls["run_data_cleanup"] == []
     assert calls["run_background_resync"] == []
+    assert calls["run_randomized_background_resync"] == []
 
 
 async def test_app_serves_requests_after_boot(client, boot):
@@ -535,10 +546,10 @@ async def test_app_serves_requests_after_boot(client, boot):
     # status-card routes, the three load-balancer aliases, the `/api/v2/gallery`
     # alias, the two worker status routes and `POST /api/v2/voices/speak`.
     # Every one of them had zero callers.
-    assert len(spec["paths"]) == 298, (
+    assert len(spec["paths"]) == 301, (
         "route count changed; if routes were added deliberately, bump this"
     )
-    assert sum(len(ops) for ops in spec["paths"].values()) == 386
+    assert sum(len(ops) for ops in spec["paths"].values()) == 389
     assert "/api/ready" in spec["paths"]
     assert not any(path.startswith("/socket.io") for path in spec["paths"])
 

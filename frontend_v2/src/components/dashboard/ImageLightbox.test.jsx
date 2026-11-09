@@ -91,4 +91,63 @@ describe('ImageLightbox', () => {
         fireEvent.touchEnd(area, { changedTouches: [{ clientX: 200, clientY: 200 }] });
         expect(onNavigate).toHaveBeenLastCalledWith(1);
     });
+
+    it('renders elevated Reuse Parameters and Copy buttons when metadata is present', () => {
+        const onReuse = vi.fn();
+        const metadata = {
+            prompt: 'masterpiece, high quality illustration',
+            negativePrompt: 'blurry, low quality',
+            seed: 12345,
+            steps: 20,
+            cfg: 7,
+        };
+
+        render(
+            <ImageLightbox
+                image={mockImage}
+                images={mockImages}
+                currentIndex={0}
+                metadata={metadata}
+                onClose={() => {}}
+                onDelete={() => {}}
+                onReuseParameters={onReuse}
+            />
+        );
+
+        const reuseBtn = screen.getByRole('button', { name: 'Reuse parameters from this image' });
+        expect(reuseBtn).toBeInTheDocument();
+        fireEvent.click(reuseBtn);
+        expect(onReuse).toHaveBeenCalledTimes(1);
+
+        const copyPromptBtn = screen.getByRole('button', { name: 'Copy prompt' });
+        expect(copyPromptBtn).toBeInTheDocument();
+    });
+
+    it('renders elevated Generation Telemetry when timings are present', () => {
+        const metadata = {
+            prompt: 'masterpiece, high quality illustration',
+            timings: {
+                model_load_seconds: 1.1,
+                sampling_seconds: 2.2,
+                transfer_seconds: 0.5,
+                total_backend_seconds: 3.8,
+            },
+        };
+
+        render(
+            <ImageLightbox
+                image={mockImage}
+                images={mockImages}
+                currentIndex={0}
+                metadata={metadata}
+                onClose={() => {}}
+                onDelete={() => {}}
+            />
+        );
+
+        expect(screen.getByTestId('generation-telemetry')).toBeInTheDocument();
+        expect(screen.getAllByText('3.80s').length).toBeGreaterThanOrEqual(1);
+        expect(screen.getByText('1.10s')).toBeInTheDocument();
+        expect(screen.getByText('2.20s')).toBeInTheDocument();
+    });
 });

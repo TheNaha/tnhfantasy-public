@@ -94,6 +94,7 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build -V -d
 - Postgres/pgvector tests run only when `PGVECTOR_TEST_URL` is set (as it is in CI).
 - Tests that create DB sessions must override both `api.deps.get_session` and `infrastructure.database.get_session` — use the `session` fixture and never open your own session.
 - `docs/api.md` is generated; after changing any router, run `scripts/generate_api_docs.py` or `test_api_docs_contract.py` fails.
+- `tests/test_env_contracts.py` expects a checkout layout (`REPO = parents[2]`). From the container's `/app` bind-mount that resolves to `/` and the env-contract tests fail spuriously; `test_api_docs_contract.py` goes through `repo_paths.require_repo_root()` and skips cleanly instead. Run these two from the checkout root, or treat container failures as layout artefacts.
 - `ruff.toml` selects F only and F401 is on. Every `# noqa: F401` needs a stated reason. Run `ruff check .` from `backend_v2/` (the repo root reports ~450 unrelated errors).
 
 ## Hidden surface area (scripts, CLIs, background jobs)
@@ -130,4 +131,6 @@ Separate stack with its own compose file, `agentctl.sh`/`agentctl.bat`, and bina
 
 ### Background scheduler jobs (started in `api/lifecycle.py`)
 
-Registered at startup (see `startup_application`): provider-host refresh (60s), DB vacuum (24h), model-preview prefetch, data cleanup (1h), job reaper (5min), idle simulation (opt-in, default 10min), CivitAI resync (24h), in-process reconciliation, provider telemetry polling, provider monitor, WebSocket broadcast, asset migration (one-shot background thread), cross-process dispatch listener, world integration. `GET /api/settings/scheduler` exposes status and run history.
+Registered at startup (see `startup_application`): provider-host refresh (60s), DB vacuum (24h), model-preview prefetch, data cleanup (1h), job reaper (5min), idle simulation (opt-in, default 10min), CivitAI full resync (172800s / 48h) + randomized incremental resync (300s, batch size 5), in-process reconciliation, provider telemetry polling, provider monitor, WebSocket broadcast, asset migration (one-shot background thread), cross-process dispatch listener, world integration. Intervals come from `COMFY_CIVITAI_FULL_RESYNC_INTERVAL_SECONDS`, `COMFY_CIVITAI_RANDOM_RESYNC_INTERVAL_SECONDS`, `COMFY_CIVITAI_RANDOM_RESYNC_BATCH_SIZE` (see `.env.example`).
+
+`GET /api/settings/scheduler` exposes status and run history, plus live worker pools, active background tasks, and the CivitAI resync snapshot. `POST /api/settings/scheduler/{job_id}/run` triggers an immediate run and `PATCH /api/settings/scheduler/{job_id}` adjusts the interval or pauses/resumes a job. The frontend owns the surface: the Settings Scheduled Tasks panel links to the **BackgroundTasks** control centre at `/tasks` (`frontend_v2/src/pages/BackgroundTasks.jsx`).

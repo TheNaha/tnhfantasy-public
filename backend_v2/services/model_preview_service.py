@@ -35,7 +35,7 @@ PREVIEW_METADATA_TIMEOUT_SECONDS = resolve_env_float("COMFY_PREVIEW_METADATA_TIM
 PREVIEW_IMAGE_TIMEOUT_SECONDS = resolve_env_float("COMFY_PREVIEW_IMAGE_TIMEOUT_SECONDS", 30.0, 0.1)
 PREVIEW_FAILURE_TTL_SECONDS = resolve_env_int("COMFY_PREVIEW_FAILURE_TTL_SECONDS", 600, 0)
 PREVIEW_NOT_FOUND_TTL_SECONDS = resolve_env_int("COMFY_PREVIEW_NOT_FOUND_TTL_SECONDS", 21600, 0)
-PREVIEW_PREFETCH_ENABLED = resolve_env_bool("COMFY_PREVIEW_PREFETCH_ENABLED", False)
+PREVIEW_PREFETCH_ENABLED = resolve_env_bool("COMFY_PREVIEW_PREFETCH_ENABLED", True)
 PREVIEW_PREFETCH_INTERVAL_SECONDS = resolve_env_int("COMFY_PREVIEW_PREFETCH_INTERVAL_SECONDS", 300, 1)
 PREVIEW_PREFETCH_BATCH_SIZE = resolve_env_int("COMFY_PREVIEW_PREFETCH_BATCH_SIZE", 10, 1)
 PREVIEW_PREFETCH_MAX_CANDIDATES = resolve_env_int("COMFY_PREVIEW_PREFETCH_MAX_CANDIDATES", 50, 1)
@@ -133,7 +133,7 @@ def _select_preview_url(model_data: dict[str, Any], version_id: int | None, imag
 
     target_version = None
     if version_id is not None:
-        target_version = next((v for v in model_versions if v.get('id') == version_id), None)
+        target_version = next((v for v in model_versions if str(v.get('id')) == str(version_id)), None)
     if not target_version:
         target_version = model_versions[0]
 
@@ -303,13 +303,37 @@ async def fetch_civitai_preview(
         try:
             async def _fetch_base():
                 from services.external_model_service import ExternalModelService
-                external_service = ExternalModelService()
-                model_data = await external_service.get_civitai_model(model_id)
-        
-                image_url = _select_preview_url(model_data, version_id, image_index)
+
+                image_url = None
+                # Check local DB ModelImage first to avoid redundant Civitai network hits
+                try:
+                    from core.entities import ModelV2, ModelImage
+                    from infrastructure.database import get_session_sync
+                    from sqlmodel import select
+                    with get_session_sync() as db_session:
+                        m = db_session.exec(select(ModelV2).where(ModelV2.civitai_model_id == model_id)).first()
+                        if m and m.versions:
+                            v_target = None
+                            if version_id is not None:
+                                v_target = next((v for v in m.versions if str(v.civitai_version_id or v.id) == str(version_id)), None)
+                            if not v_target:
+                                v_target = m.versions[0]
+                            images = db_session.exec(
+                                select(ModelImage).where(ModelImage.version_id == v_target.id).order_by(ModelImage.sort_order)
+                            ).all()
+                            if images:
+                                safe_idx = min(max(image_index, 0), len(images) - 1)
+                                image_url = images[safe_idx].url
+                except Exception as db_exc:
+                    logger.debug("preview_db_lookup_fallback", error=str(db_exc))
+
+                if not image_url:
+                    external_service = ExternalModelService()
+                    model_data = await external_service.get_civitai_model(model_id)
+                    image_url = _select_preview_url(model_data, version_id, image_index)
+
                 if not image_url:
                     return None, None
-        
                 client = get_http_client()
                 img_response = await client.get(image_url, timeout=PREVIEW_IMAGE_TIMEOUT_SECONDS)
                 img_response.raise_for_status()

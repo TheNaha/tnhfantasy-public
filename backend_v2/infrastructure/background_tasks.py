@@ -56,3 +56,16 @@ async def cancel_background_tasks(timeout: float = 5.0) -> int:
         logger.warning("background_task_cancel_timeout", remaining=len(_background_tasks))
 
     return len(tasks)
+
+
+def get_active_background_tasks() -> list[dict[str, Any]]:
+    """Return metadata for all currently running tracked background tasks."""
+    return [
+        {
+            "name": task.get_name(),
+            "done": task.done(),
+            "cancelled": task.cancelled(),
+        }
+        for task in sorted(_background_tasks, key=lambda t: t.get_name())
+        if not task.done()
+    ]

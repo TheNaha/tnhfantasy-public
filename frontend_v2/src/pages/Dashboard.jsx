@@ -141,7 +141,8 @@ export default function Dashboard() {
     // on /settings is already in force here instead of after a reload — but the
     // live count is separate from the default, for the same reason as the view.
     const liveGridCols = useSettingsStore((state) => state.settings.ui.gridColumns);
-    const gridCols = liveGridCols || defaultGridColumns;
+    const isMobileViewport = typeof window !== 'undefined' && window.innerWidth < 640;
+    const gridCols = liveGridCols || (isMobileViewport ? 2 : defaultGridColumns);
     const setGridCols = useCallback((cols) => {
         useSettingsStore.getState().updateSetting('ui', 'gridColumns', cols);
     }, []);
@@ -171,6 +172,25 @@ export default function Dashboard() {
     }, [filters]);
     const { confirm } = useConfirmation();
 
+    const activeFacetAndDateCount = useMemo(() => {
+        const countCsv = (val) => (typeof val === 'string' ? val.split(',').map(s => s.trim()).filter(Boolean).length : 0);
+        return (
+            countCsv(filters.lora) +
+            countCsv(filters.tag) +
+            countCsv(filters.checkpoint) +
+            (filters.date_from ? 1 : 0) +
+            (filters.date_to ? 1 : 0)
+        );
+    }, [filters.lora, filters.tag, filters.checkpoint, filters.date_from, filters.date_to]);
+
+    const [insightsOpenOverride, setInsightsOpenOverride] = useState(null);
+    const isInsightsOpen = insightsOpenOverride ?? (activeFacetAndDateCount > 0);
+    const handleToggleInsights = useCallback(() => {
+        setInsightsOpenOverride(prev => {
+            const current = prev ?? (activeFacetAndDateCount > 0);
+            return !current;
+        });
+    }, [activeFacetAndDateCount]);
     const {
         selectedJobId,
         setSelectedJobId,
@@ -433,6 +453,35 @@ export default function Dashboard() {
         }
     }, [metadata, navigate, toastErrorDuration, toastSuccessDuration]);
 
+    const handleQuickReuse = useCallback(async (item) => {
+        if (reuseParametersLockRef.current) return;
+        const itemMeta = item?.metadata;
+        if (!itemMeta || Object.keys(itemMeta).length === 0) {
+            handleImageClick(item);
+            return;
+        }
+        reuseParametersLockRef.current = true;
+        setIsReusingParameters(true);
+        try {
+            const applied = await applyGeneratorStateFromMetadata(itemMeta);
+            if (!applied) {
+                toast.error('Could not parse reusable parameters from this image.', {
+                    icon: '⚠️',
+                    duration: toastErrorDuration,
+                });
+                return;
+            }
+            toast.success('Parameters loaded into Generator!', {
+                icon: '🎯',
+                duration: toastSuccessDuration,
+            });
+            navigate('/generate');
+        } finally {
+            reuseParametersLockRef.current = false;
+            setIsReusingParameters(false);
+        }
+    }, [handleImageClick, navigate, toastErrorDuration, toastSuccessDuration]);
+
     const handlePullToRefresh = useCallback(async () => {
         try {
             await refetch();
@@ -643,24 +692,27 @@ export default function Dashboard() {
                     isSessionView={isSessionView}
                     onOpenSessionPanel={() => setShowSessionPanel(true)}
                     onToggleViewMode={() => setViewMode(isSessionView ? 'grid' : SESSION_VIEW_MODE)}
-                />
-
-                {/* Faceted search. Both panels read page one only — the counts
-                    cannot change between pages of one scroll — and both write into
-                    the same `filters` the grid and the list already share, so
-                    there is one source of truth for what is being shown. */}
-                <GalleryDateRail
-                    filters={filters}
-                    onChange={setFilters}
-                />
-
-                <GalleryFilterPanel
-                    facets={data?.pages?.[0]?.facets}
-                    filters={filters}
-                    onChange={setFilters}
+                    isInsightsOpen={isInsightsOpen}
+                    onToggleInsights={handleToggleInsights}
+                    activeFilterCount={activeFacetAndDateCount}
                     totalMatched={data?.pages?.[0]?.totalMatched}
                 />
 
+                {/* Faceted search & timeline histogram drawer. Collapsed by default when no facet/date filter is active. */}
+                {isInsightsOpen && (
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                        <GalleryDateRail
+                            filters={filters}
+                            onChange={setFilters}
+                        />
+                        <GalleryFilterPanel
+                            facets={data?.pages?.[0]?.facets}
+                            filters={filters}
+                            onChange={setFilters}
+                            totalMatched={data?.pages?.[0]?.totalMatched}
+                        />
+                    </div>
+                )}
                 {sessionPlaceholder && (
                     <SessionViewPlaceholder
                         isLoading={sessionsQuery.isLoading}
@@ -694,6 +746,7 @@ export default function Dashboard() {
                         gridCols={gridCols}
                         onDelete={handleDelete}
                         onJobDelete={handleJobDelete}
+                        onQuickReuse={handleQuickReuse}
                         sentinelRef={sentinelRef}
                         isFetchingNextPage={isFetchingNextPage}
                         isRefreshing={isFetching && !isLoading}

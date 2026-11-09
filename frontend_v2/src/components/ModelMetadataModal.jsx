@@ -68,7 +68,7 @@ function ModelMetadataHeader({
     );
 }
 
-export default function ModelMetadataModal({ metadata, onClose, providers = [], providersLoading = false }) {
+export default function ModelMetadataModal({ metadata, onClose, providers = [], providersLoading = false, onAddTriggerWords = null }) {
     const [copied, setCopied] = useState(null);
     const [activeImage, setActiveImage] = useState(null);
     const [showSearchModal, setShowSearchModal] = useState(false);
@@ -136,23 +136,41 @@ export default function ModelMetadataModal({ metadata, onClose, providers = [], 
         ? (metadata.creator?.username ? metadata.creator : null)
         : metadata.creator;
 
+    const versionIdForPreview = metadata.civitai_version_id || metadata.version_id || metadata.modelVersions?.[0]?.id;
+
+    // Get gallery images - V2 format uses images array, V1 uses modelVersions
+    const rawGalleryImages = isV2Format
+        ? (metadata.images || [])
+        : (metadata.modelVersions?.[0]?.images || []);
+
+    const galleryItems = rawGalleryImages.map((img, index) => {
+        const directUrl = typeof img === 'string' ? img : img?.url;
+        let cachedUrl = null;
+        if (civitaiId) {
+            const params = new URLSearchParams({ image_index: String(index) });
+            if (versionIdForPreview) {
+                params.set('version_id', String(versionIdForPreview));
+            }
+            cachedUrl = `/api/v2/models/preview/${civitaiId}?${params.toString()}`;
+        }
+        return {
+            cachedUrl,
+            directUrl,
+            url: cachedUrl || directUrl,
+        };
+    }).filter(item => item.url);
+
     // Get preview image
     const getPreviewImage = () => {
         if (activeImage) return activeImage;
+        if (galleryItems.length > 0) return galleryItems[0].cachedUrl || galleryItems[0].directUrl;
         // V2 format
         if (isV2Format && metadata.preview) return metadata.preview;
-        if (metadata.images?.length > 0) return metadata.images[0].url;
         if (civitaiId) return `/api/v2/models/preview/${civitaiId}`;
         // V1 format  
         if (metadata.modelVersions?.[0]?.images?.[0]?.url) return metadata.modelVersions[0].images[0].url;
         return null;
     };
-
-    // Get gallery images - V2 format uses images array, V1 uses modelVersions
-    const galleryImages = isV2Format
-        ? (metadata.images || [])
-        : (metadata.modelVersions?.[0]?.images || []);
-
     const providerStatuses = metadata.provider_statuses && typeof metadata.provider_statuses === 'object'
         ? metadata.provider_statuses
         : {};
@@ -244,29 +262,43 @@ export default function ModelMetadataModal({ metadata, onClose, providers = [], 
                                     alt="Model Preview"
                                     className="w-full h-full object-contain"
                                     decoding="async"
-                                    onError={(e) => { e.target.style.display = 'none'; }}
+                                    onError={(e) => {
+                                        const fallback = galleryItems[0]?.directUrl || metadata.preview;
+                                        if (fallback && e.currentTarget.src !== fallback) {
+                                            e.currentTarget.src = fallback;
+                                            return;
+                                        }
+                                        e.target.style.display = 'none';
+                                    }}
                                 />
                             </div>
                         )}
 
                         {/* Gallery thumbnails - 3 cols on mobile (Vertical look) */}
-                        {galleryImages.length > 1 && (
+                        {galleryItems.length > 1 && (
                             <div className="grid grid-cols-3 gap-2">
-                                {galleryImages.slice(0, 9).map((img, i) => (
+                                {galleryItems.slice(0, 24).map((item, i) => (
                                     <button
                                         key={i}
-                                        onClick={() => setActiveImage(img.url)}
+                                        onClick={() => setActiveImage(item.cachedUrl || item.directUrl)}
                                         aria-label={`View image ${i + 1}`}
-                                        aria-pressed={activeImage === img.url}
-                                        className={`aspect-square rounded overflow-hidden border focus-visible:ring-2 focus-visible:ring-blue-500 outline-none ${activeImage === img.url ? 'border-blue-500' : 'border-gray-800'} hover:border-gray-600 transition-all`}
+                                        aria-pressed={activeImage === (item.cachedUrl || item.directUrl)}
+                                        className={`aspect-square rounded overflow-hidden border focus-visible:ring-2 focus-visible:ring-blue-500 outline-none ${activeImage === (item.cachedUrl || item.directUrl) ? 'border-blue-500' : 'border-gray-800'} hover:border-gray-600 transition-all`}
                                     >
                                         <img
-                                            src={img.url}
+                                            src={item.cachedUrl || item.directUrl}
                                             alt={`Preview ${i}`}
                                             className="w-full h-full object-cover"
                                             loading="lazy"
                                             decoding="async"
                                             fetchPriority="low"
+                                            onError={(e) => {
+                                                if (item.directUrl && e.currentTarget.src !== item.directUrl) {
+                                                    e.currentTarget.src = item.directUrl;
+                                                    return;
+                                                }
+                                                e.target.style.display = 'none';
+                                            }}
                                         />
                                     </button>
                                 ))}
@@ -381,20 +413,34 @@ export default function ModelMetadataModal({ metadata, onClose, providers = [], 
                                 <h3 className="text-sm font-medium text-gray-400 uppercase tracking-wider">Trigger Words</h3>
                                 <div className="flex flex-wrap gap-2">
                                     {trainedWords.map(word => (
-                                        <button
-                                            key={word}
-                                            onClick={() => handleCopy(word, `word-${word}`)}
-                                            aria-label={`Copy trigger word ${word}`}
-                                            className="group flex items-center gap-2 px-3 py-1.5 bg-blue-500/10 text-blue-300 rounded-lg text-sm border border-blue-500/20 hover:bg-blue-500/20 transition-all focus-visible:ring-2 focus-visible:ring-blue-500 outline-none"
-                                        >
-                                            {word}
-                                            {copied === `word-${word}` ? <Check size={12} aria-hidden="true" /> : <Copy size={12} className="opacity-0 group-hover:opacity-100 transition-opacity" aria-hidden="true" />}
-                                        </button>
+                                        <div key={word} className="flex items-center rounded-lg border border-blue-500/20 bg-blue-500/10 overflow-hidden">
+                                            <button
+                                                type="button"
+                                                onClick={() => handleCopy(word, `word-${word}`)}
+                                                aria-label={`Copy trigger word ${word}`}
+                                                className="flex items-center gap-1.5 px-3 py-1.5 text-blue-300 hover:bg-blue-500/20 transition-all text-sm outline-none"
+                                            >
+                                                {word}
+                                                {copied === `word-${word}` ? <Check size={12} aria-hidden="true" /> : <Copy size={12} className="opacity-60" aria-hidden="true" />}
+                                            </button>
+                                            {typeof onAddTriggerWords === 'function' && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                        onAddTriggerWords([word]);
+                                                        toast.success(`Added "${word}" to prompt!`);
+                                                    }}
+                                                    className="px-2 py-1.5 text-xs font-semibold bg-blue-500/20 hover:bg-blue-500/30 text-blue-200 border-l border-blue-500/20 transition-colors"
+                                                    title="Insert into prompt"
+                                                >
+                                                    + Insert
+                                                </button>
+                                            )}
+                                        </div>
                                     ))}
                                 </div>
                             </div>
                         )}
-
                         {/* Model Description */}
                         {description && (
                             <div className="space-y-2">

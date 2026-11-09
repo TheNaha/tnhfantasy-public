@@ -212,8 +212,16 @@ describe('SimpleGenerator wiring', () => {
         fireEvent.click(screen.getAllByTestId('simple-generate')[0]);
         await assertWired('generate-simple', true);
     });
-});
 
+    it('navigates to /gallery when clicking the Gallery header switch button', async () => {
+        const { default: SimpleGenerator } = await import('./SimpleGenerator');
+        renderInRouter(SimpleGenerator);
+        const galleryBtn = screen.getAllByTestId('generator-header-gallery-btn')[0];
+        expect(galleryBtn).toBeInTheDocument();
+        fireEvent.click(galleryBtn);
+        expect(mocks.navigate).toHaveBeenCalledWith('/gallery');
+    });
+});
 describe('SimpleGenerator seed variations', () => {
     async function generateVariations() {
         const { default: SimpleGenerator } = await import('./SimpleGenerator');

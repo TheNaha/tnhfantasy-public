@@ -13,6 +13,27 @@ export default function BatchResyncModal({ onClose }) {
     const [logs, setLogs] = useState([]);
     const queryClient = useQueryClient();
 
+    // Check if background resync is already running on mount
+    useEffect(() => {
+        let mounted = true;
+        api.get('/api/settings/scheduler')
+            .then(res => {
+                if (!mounted) return;
+                if (res?.resync_status?.in_progress) {
+                    setIsProcessing(true);
+                    setProgress({
+                        status: 'processing',
+                        processed: res.resync_status.processed || 0,
+                        total: res.resync_status.total || 1,
+                        current_model: res.resync_status.current_model || 'Resync in progress...',
+                        results: res.resync_status.results || { success: 0, failed: 0, errors: [] },
+                    });
+                }
+            })
+            .catch(() => {});
+        return () => { mounted = false; };
+    }, []);
+
     useEffect(() => {
         const handleProgress = (payload) => {
             setProgress(payload);
@@ -28,7 +49,6 @@ export default function BatchResyncModal({ onClose }) {
             }
             
             if (payload.results?.errors && payload.results.errors.length > 0) {
-                // Find the latest error that wasn't in the previous logs
                 const latestError = payload.results.errors[payload.results.errors.length - 1];
                 setLogs(prev => {
                     const errorMsg = `[ERROR] Failed to fetch: ${latestError.error}`;
@@ -44,23 +64,41 @@ export default function BatchResyncModal({ onClose }) {
         return () => ws.off('RESYNC_PROGRESS', handleProgress);
     }, [queryClient]);
 
-    const handleStartResync = async () => {
+    const handleStartResync = async (mode = 'full', sampleSize = null) => {
         setIsProcessing(true);
         try {
-            const res = await api.post('/api/v2/models/maintenance/resync-all');
+            const res = await api.post('/api/v2/models/maintenance/resync-all', {
+                mode,
+                sample_size: sampleSize,
+            });
             if (res.status === 'no_models') {
                 toast.success('No models need resyncing.');
                 setIsProcessing(false);
                 onClose();
+            } else if (res.status === 'already_running') {
+                toast('Resync is already in progress.', { icon: 'ℹ️' });
+                if (res.progress) {
+                    setProgress({
+                        status: 'processing',
+                        processed: res.progress.processed || 0,
+                        total: res.progress.total || 1,
+                        current_model: res.progress.current_model || 'Continuing...',
+                        results: res.progress.results || { success: 0, failed: 0, errors: [] },
+                    });
+                }
             } else if (res.status === 'processing') {
-                setProgress({ status: 'processing', processed: 0, total: res.count, current_model: 'Starting...' });
+                setProgress({
+                    status: 'processing',
+                    processed: 0,
+                    total: res.count,
+                    current_model: `Starting ${mode === 'random' ? 'quick batch' : 'full'} resync...`,
+                });
             }
         } catch (err) {
             toast.error('Failed to start batch resync: ' + err.message);
             setIsProcessing(false);
         }
     };
-
     return (
         <ModalOverlay onClose={onClose} className="z-[60] bg-black/80 backdrop-blur-sm">
             <div className="bg-gray-900 rounded-2xl border border-gray-700 w-full max-w-lg flex flex-col" onClick={e => e.stopPropagation()}>
@@ -123,18 +161,37 @@ export default function BatchResyncModal({ onClose }) {
                             </div>
                         </div>
                     ) : (
-                        <div className="text-center py-6">
-                            <p className="text-gray-300 mb-6">
-                                This will query CivitAI for the latest names, descriptions, and tags for all models in your database that are linked to a CivitAI ID.
+                        <div className="text-center py-4 space-y-6">
+                            <p className="text-gray-300 text-sm">
+                                Queries CivitAI for latest names, descriptions, triggers, and tags for installed models linked to a CivitAI ID.
                             </p>
-                            <button
-                                onClick={handleStartResync}
-                                disabled={isProcessing}
-                                className="px-6 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-xl font-medium transition-colors flex items-center gap-2 mx-auto"
-                            >
-                                {isProcessing ? <Loader2 size={18} className="animate-spin" /> : <RefreshCw size={18} />}
-                                Start Resync
-                            </button>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-md mx-auto">
+                                <button
+                                    onClick={() => handleStartResync('random', 5)}
+                                    disabled={isProcessing}
+                                    className="px-4 py-3 bg-gray-800 hover:bg-gray-700 border border-gray-700 hover:border-gray-600 disabled:opacity-50 text-white rounded-xl text-left transition-all group"
+                                >
+                                    <div className="font-semibold text-sm flex items-center justify-between">
+                                        <span>Random Batch</span>
+                                        <span className="text-xs text-blue-400 bg-blue-500/10 px-2 py-0.5 rounded border border-blue-500/20">5 Models</span>
+                                    </div>
+                                    <div className="text-xs text-gray-400 mt-1">Quick refresh of randomized installed models.</div>
+                                </button>
+                                <button
+                                    onClick={() => handleStartResync('full')}
+                                    disabled={isProcessing}
+                                    className="px-4 py-3 bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/40 hover:border-blue-500/60 disabled:opacity-50 text-white rounded-xl text-left transition-all group"
+                                >
+                                    <div className="font-semibold text-sm flex items-center justify-between">
+                                        <span>Full Deep Resync</span>
+                                        <span className="text-xs text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">All Models</span>
+                                    </div>
+                                    <div className="text-xs text-gray-400 mt-1">Deep crawl across all eligible installed models.</div>
+                                </button>
+                            </div>
+                            <p className="text-xs text-gray-500">
+                                Runs safely in the background. You can close this modal at any time.
+                            </p>
                         </div>
                     )}
                 </div>

@@ -63,9 +63,9 @@ export function useGeneratorJob(opts = {}) {
     const [currentJobId, setCurrentJobId] = useState(null);
     const [progress, setProgress] = useState(null);
     const [generating, setGenerating] = useState(false);
+    const [lastCompletedJob, setLastCompletedJob] = useState(null);
     const { data: jobData } = useJobStatus(currentJobId);
     const redirectTimerRef = useRef(null);
-
     // While this page is mounted it OWNS its job's terminal toast, so the
     // global useJobsRealtime does not double it ("Image generated!" +
     // "Generation complete!" for one completion). Released on clear/unmount:
@@ -120,9 +120,9 @@ export function useGeneratorJob(opts = {}) {
         if (jobData.status === 'completed') {
             setGenerating(false);
             setProgress(null);
+            setLastCompletedJob(jobData);
             setCurrentJobId(null);
             toast.success('Generation complete!', { icon: '✨' });
-            // No redirect here: `handleGenerate` already armed it at submit, and
             // this branch only runs for a page that stayed mounted through the
             // whole delay — in which case there is nothing left to redirect away
             // from mid-generation.
@@ -221,5 +221,7 @@ export function useGeneratorJob(opts = {}) {
         generating,
         setGenerating,
         handleGenerate,
+        lastCompletedJob,
+        setLastCompletedJob,
     };
 }

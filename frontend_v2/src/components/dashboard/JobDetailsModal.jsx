@@ -8,7 +8,7 @@ import { JOB_STATUS, isJobCancelled, isJobComplete, isJobFailed, isJobRunning, j
 import { memo } from 'react';
 import ModalOverlay from '../common/ModalOverlay';
 import { checkpointName } from '../../utils/modelDisplay';
-
+import GenerationTelemetry from '../common/GenerationTelemetry';
 // ⚡ Bolt: Wrap JobDetailsModal in React.memo to prevent unnecessary re-renders when parent Dashboard updates
 export default memo(function JobDetailsModal({ job, onClose, onCancel, onDelete, onRetry }) {
     const { confirm } = useConfirmation();
@@ -17,8 +17,8 @@ export default memo(function JobDetailsModal({ job, onClose, onCancel, onDelete,
 
     const meta = jobMetadata(job);
     const diagnostics = job.diagnostics || null;
+    const timings = job.timings || diagnostics?.timings || meta.timings || meta.job?.timings || job.metadata_?.diagnostics?.timings;
     const checkpoint = checkpointName(meta);
-    // The previous hand-written lists here carried four phantom statuses
     // ('processing', 'executing', 'progress', 'running') plus a 'queued'
     // pending state that `JobStatus` does not have, so an in-flight job could
     // render with no progress bars at all. The shared predicates cannot drift.
@@ -185,6 +185,11 @@ export default memo(function JobDetailsModal({ job, onClose, onCancel, onDelete,
                                 </ol>
                             )}
                         </div>
+                    )}
+
+                    {/* Generation Telemetry Breakdown */}
+                    {timings && (
+                        <GenerationTelemetry timings={timings} />
                     )}
 
                     {/* Progress Bars (if processing) */}

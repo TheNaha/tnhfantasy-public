@@ -1,6 +1,7 @@
 
 
 import asyncio
+from datetime import datetime, timezone
 import os
 import unicodedata
 from fastapi import APIRouter, BackgroundTasks, Depends
@@ -27,8 +28,27 @@ logger = model_logger()
 RESYNC_MAX_RETRIES = 8
 RESYNC_INITIAL_BACKOFF_SECONDS = 2.0
 RESYNC_MAX_BACKOFF_SECONDS = 60.0
-_RESYNC_IN_PROGRESS = False
 
+CIVITAI_FULL_RESYNC_INTERVAL_SECONDS = int(os.getenv("COMFY_CIVITAI_FULL_RESYNC_INTERVAL_SECONDS", "172800"))
+CIVITAI_RANDOM_RESYNC_INTERVAL_SECONDS = int(os.getenv("COMFY_CIVITAI_RANDOM_RESYNC_INTERVAL_SECONDS", "300"))
+CIVITAI_RANDOM_RESYNC_BATCH_SIZE = int(os.getenv("COMFY_CIVITAI_RANDOM_RESYNC_BATCH_SIZE", "5"))
+
+_RESYNC_IN_PROGRESS = False
+_RESYNC_STATE: dict[str, Any] = {
+    "in_progress": False,
+    "mode": None,
+    "processed": 0,
+    "total": 0,
+    "current_model": None,
+    "started_at": None,
+    "last_completed_at": None,
+    "results": {"success": 0, "failed": 0, "errors": []},
+}
+
+
+def get_resync_status() -> dict[str, Any]:
+    """Return a snapshot of the current metadata resync state."""
+    return dict(_RESYNC_STATE)
 router = APIRouter()
 
 # Tag provenance. CivitAI owns the rows it scraped and replaces them wholesale
@@ -150,7 +170,9 @@ def _apply_civitai_metadata(model, civitai_data: dict, session) -> None:
     model.stats_thumbs_up = stats.get("thumbsUpCount") or 0
     model.stats_thumbs_down = stats.get("thumbsDownCount") or 0
     model.stats_comments = stats.get("commentCount") or 0
-
+    now_utc = datetime.now(timezone.utc)
+    model.stats_updated_at = now_utc
+    model.updated_at = now_utc
     # Update tags - delete ONLY the CivitAI-owned rows. The previous blanket
     # delete by model_id destroyed every user-typed tag on every resync, and
     # there was no writer path to put one back.
@@ -466,161 +488,228 @@ def remove_user_model_tag_endpoint(
         raise NotFoundError("Model tag", f"No user tag '{tag}' on model '{model_id}'")
     return {"status": "success", "model_id": model_id, "tag": tag}
 
-async def run_background_resync():
-    """Run a full metadata resync for all eligible models.
+async def run_background_resync(sample_size: int | None = None, mode: str = "full") -> dict[str, Any]:
+    """Run a metadata resync for eligible models in the background.
 
-    Models are fetched strictly one at a time. CivitAI rate-limits bursts, so a
-    429 is backed off (honoring `Retry-After`) and retried until the limit
-    clears, rather than failing the sweep or hammering the API. Metadata is
-    applied off the event loop so a large library does not stall the app.
+    Args:
+        sample_size: If provided and > 0, randomly samples up to this many models.
+        mode: Identifier for the resync mode ("full" or "random").
     """
+    import random
     from api.deps import get_model_repo_v2
     from core.exceptions import ComfyError
+    from services.external_model_service import ExternalModelService
 
-    async with get_session_context() as bg_session:
-        repo = get_model_repo_v2(bg_session)
-        models = repo.get_models_for_resync()
+    global _RESYNC_IN_PROGRESS, _RESYNC_STATE
 
-        if not models:
-            return {"success": 0, "failed": 0, "errors": []}
+    if _RESYNC_IN_PROGRESS:
+        return {"status": "already_running", "success": 0, "failed": 0, "errors": []}
 
-        results = {"success": 0, "failed": 0, "errors": []}
-        total = len(models)
+    _RESYNC_IN_PROGRESS = True
+    _RESYNC_STATE["in_progress"] = True
+    _RESYNC_STATE["mode"] = mode
+    _RESYNC_STATE["processed"] = 0
+    _RESYNC_STATE["total"] = 0
+    _RESYNC_STATE["current_model"] = "Initializing..."
+    _RESYNC_STATE["started_at"] = datetime.now(timezone.utc).isoformat()
+    _RESYNC_STATE["results"] = {"success": 0, "failed": 0, "errors": []}
 
-        async def report(status, current_model, processed):
-            await broadcast_to_all("RESYNC_PROGRESS", {
-                "status": status,
-                "processed": processed,
-                "total": total,
-                "results": results,
-                "current_model": current_model,
-            })
+    try:
+        async with get_session_context() as bg_session:
+            repo = get_model_repo_v2(bg_session)
+            all_models = repo.get_models_for_resync()
 
-        await report("started", "Starting...", 0)
+            if not all_models:
+                _RESYNC_STATE["current_model"] = "No models eligible for resync"
+                return {"success": 0, "failed": 0, "errors": []}
 
-        http_client = get_http_client()
-        headers = _civitai_headers()
+            if sample_size is not None and sample_size > 0 and len(all_models) > sample_size:
+                models = random.sample(all_models, sample_size)
+            else:
+                models = all_models
 
-        async def fetch_one(model):
-            """Fetch one model's CivitAI metadata, backing off on 429 until clear, with civitai.red fallback on 404."""
-            domains = ["civitai.com", "civitai.red"]
-            last_error = None
+            results = {"success": 0, "failed": 0, "errors": []}
+            total = len(models)
+            _RESYNC_STATE["total"] = total
 
-            for domain in domains:
-                url = f"https://{domain}/api/v1/models/{model.civitai_model_id}"
-                domain_not_found = False
+            async def report(status, current_model, processed):
+                _RESYNC_STATE["current_model"] = current_model
+                _RESYNC_STATE["processed"] = processed
+                _RESYNC_STATE["results"] = results
+                await broadcast_to_all("RESYNC_PROGRESS", {
+                    "status": status,
+                    "mode": mode,
+                    "processed": processed,
+                    "total": total,
+                    "results": results,
+                    "current_model": current_model,
+                })
 
-                for attempt in range(RESYNC_MAX_RETRIES):
-                    try:
-                        response = await http_client.get(url, headers=headers, timeout=30.0)
-                    except TypeError:
-                        response = await http_client.get(url, timeout=30.0)
-                    except Exception as exc:
-                        return None, exc
+            await report("started", "Starting...", 0)
 
-                    if response.status_code == 429:
-                        retry_after = response.headers.get("Retry-After")
-                        if retry_after is not None:
-                            try:
-                                wait = float(retry_after)
-                            except ValueError:
-                                wait = RESYNC_INITIAL_BACKOFF_SECONDS
-                        else:
-                            wait = min(
-                                RESYNC_INITIAL_BACKOFF_SECONDS * (2 ** attempt),
-                                RESYNC_MAX_BACKOFF_SECONDS,
+            http_client = get_http_client()
+            headers = _civitai_headers()
+
+            async def fetch_one(model):
+                domains = ["civitai.com", "civitai.red"]
+                last_error = None
+
+                for domain in domains:
+                    url = f"https://{domain}/api/v1/models/{model.civitai_model_id}"
+                    domain_not_found = False
+
+                    for attempt in range(RESYNC_MAX_RETRIES):
+                        try:
+                            response = await http_client.get(url, headers=headers, timeout=30.0)
+                        except TypeError:
+                            response = await http_client.get(url, timeout=30.0)
+                        except Exception as exc:
+                            return None, exc
+
+                        if response.status_code == 429:
+                            retry_after = response.headers.get("Retry-After")
+                            if retry_after is not None:
+                                try:
+                                    wait = float(retry_after)
+                                except ValueError:
+                                    wait = RESYNC_INITIAL_BACKOFF_SECONDS
+                            else:
+                                wait = min(
+                                    RESYNC_INITIAL_BACKOFF_SECONDS * (2 ** attempt),
+                                    RESYNC_MAX_BACKOFF_SECONDS,
+                                )
+                            await report(
+                                "processing",
+                                f"{model.name or model.id} (rate limited, retrying in {int(wait)}s)",
+                                index_ref[0],
                             )
-                        # Keep the frontend informed instead of appearing stalled.
-                        await report(
-                            "processing",
-                            f"{model.name or model.id} (rate limited, retrying in {int(wait)}s)",
-                            index_ref[0],
-                        )
-                        await asyncio.sleep(wait)
-                        last_error = ComfyError("API error: 429")
-                        continue
+                            await asyncio.sleep(wait)
+                            last_error = ComfyError("API error: 429")
+                            continue
 
-                    if response.status_code == 404:
-                        domain_not_found = True
-                        last_error = ComfyError("API error: 404")
+                        if response.status_code == 404:
+                            domain_not_found = True
+                            last_error = ComfyError("API error: 404")
+                            break
+
+                        if response.status_code != 200:
+                            return None, ComfyError(f"API error: {response.status_code}")
+
+                        return response.json(), None
+
+                    if not domain_not_found:
                         break
 
-                    if response.status_code != 200:
-                        return None, ComfyError(f"API error: {response.status_code}")
+                return None, last_error
 
-                    return response.json(), None
+            index_ref = [0]
+            external_service = ExternalModelService()
 
-                if not domain_not_found:
-                    break
+            for index, model in enumerate(models):
+                index_ref[0] = index
+                model_id_str = str(model.id)
+                current_model = model.name or model_id_str
 
-            return None, last_error
+                await report("processing", current_model, index)
 
-        # Mutable so the nested `fetch_one` can report which model is being retried.
-        index_ref = [0]
+                civitai_data, error = await fetch_one(model)
 
-        for index, model in enumerate(models):
-            index_ref[0] = index
-            model_id_str = str(model.id)
-            current_model = model.name or model_id_str
+                if civitai_data is None:
+                    results["failed"] += 1
+                    results["errors"].append({"model_id": model_id_str, "error": str(error)})
+                    await report("processing", current_model, index + 1)
+                    continue
 
-            await report("processing", current_model, index)
+                # Community showcase images enrichment for versions with < 5 images
+                try:
+                    civitai_versions = civitai_data.get("modelVersions", [])
+                    for cv in civitai_versions:
+                        existing_cv_imgs = cv.get("images", [])
+                        if len(existing_cv_imgs) == 0 and model.civitai_model_id and cv.get("id"):
+                            community_imgs = await external_service.get_civitai_community_images(
+                                model.civitai_model_id,
+                                cv.get("id"),
+                                limit=10,
+                            )
+                            if community_imgs:
+                                seen_urls = {img.get("url") for img in existing_cv_imgs if img.get("url")}
+                                for c_img in community_imgs:
+                                    if c_img.get("url") and c_img["url"] not in seen_urls:
+                                        existing_cv_imgs.append(c_img)
+                                        seen_urls.add(c_img["url"])
+                                cv["images"] = existing_cv_imgs
+                except Exception as enrich_exc:
+                    logger.debug("community_images_enrichment_failed", model_id=model_id_str, error=str(enrich_exc))
 
-            civitai_data, error = await fetch_one(model)
+                def _apply_one():
+                    _apply_civitai_metadata(model, civitai_data, bg_session)
+                    bg_session.commit()
 
-            if civitai_data is None:
-                results["failed"] += 1
-                results["errors"].append({"model_id": model_id_str, "error": str(error)})
+                try:
+                    await asyncio.to_thread(_apply_one)
+                    results["success"] += 1
+                except Exception as exc:
+                    results["failed"] += 1
+                    results["errors"].append({"model_id": model_id_str, "error": str(exc)})
+
                 await report("processing", current_model, index + 1)
-                continue
 
-            # Off the loop: applying metadata and committing must not block the
-            # event loop between models.
-            def _apply_one():
-                _apply_civitai_metadata(model, civitai_data, bg_session)
-                bg_session.commit()
-
-            try:
-                await asyncio.to_thread(_apply_one)
-                results["success"] += 1
-            except Exception as exc:
-                results["failed"] += 1
-                results["errors"].append({"model_id": model_id_str, "error": str(exc)})
-
-            await report("processing", current_model, index + 1)
-
-        await report("completed", "Done", total)
-        return results
-
-async def _resync_with_guard():
-    try:
-        await run_background_resync()
+            await report("completed", "Done", total)
+            return results
     finally:
-        global _RESYNC_IN_PROGRESS
         _RESYNC_IN_PROGRESS = False
+        _RESYNC_STATE["in_progress"] = False
+        _RESYNC_STATE["last_completed_at"] = datetime.now(timezone.utc).isoformat()
+
+
+async def run_randomized_background_resync(batch_size: int = CIVITAI_RANDOM_RESYNC_BATCH_SIZE) -> dict[str, Any]:
+    """Run a rapid incremental metadata resync on a random batch of models."""
+    return await run_background_resync(sample_size=batch_size, mode="random")
+
+
+class ResyncAllRequest(BaseModel):
+    """Request options for triggering a metadata resync."""
+    mode: str = "full"
+    sample_size: int | None = None
+
 
 @router.post("/resync-all")
-def resync_all(background_tasks: BackgroundTasks, session: Session = Depends(get_session)):
-    """Fetch latest metadata from CivitAI for all non-auto-discovered models."""
+def resync_all(
+    payload: ResyncAllRequest | None = None,
+    session: Session = Depends(get_session),
+):
+    """Fetch latest metadata from CivitAI for eligible models in the background."""
+    from api.deps import get_model_repo_v2
+    from infrastructure.background_tasks import start_background_task
+
     global _RESYNC_IN_PROGRESS
 
     if _RESYNC_IN_PROGRESS:
-        return {"status": "already_running", "count": 0}
+        return {
+            "status": "already_running",
+            "count": _RESYNC_STATE.get("total", 0),
+            "progress": get_resync_status(),
+        }
 
-    _RESYNC_IN_PROGRESS = True
+    req_mode = (payload.mode if payload else "full") or "full"
+    sample_size = payload.sample_size if payload else None
+    if req_mode == "random" and not sample_size:
+        sample_size = CIVITAI_RANDOM_RESYNC_BATCH_SIZE
 
-    from api.deps import get_model_repo_v2
     repo = get_model_repo_v2(session)
-
-    # Get all models that are NOT auto-discovered and HAVE a civitai ID
     models = repo.get_models_for_resync(include_relations=False)
 
     if not models:
-        _RESYNC_IN_PROGRESS = False
         return {"status": "no_models", "count": 0}
 
-    background_tasks.add_task(_resync_with_guard)
+    count = min(sample_size, len(models)) if sample_size else len(models)
+    start_background_task(
+        run_background_resync(sample_size=sample_size, mode=req_mode),
+        task_name=f"civitai_resync_{req_mode}",
+        timeout=0,  # No timeout for deep sweeps
+    )
 
-    return {"status": "processing", "count": len(models)}
+    return {"status": "processing", "count": count, "mode": req_mode}
 
 
 # ============================================================================

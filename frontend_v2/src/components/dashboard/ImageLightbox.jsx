@@ -1,14 +1,15 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { X, Download, Trash2, Loader2, RefreshCw, ChevronLeft, ChevronRight, Clock, Server, Hash, Maximize2, Minimize2, Expand, Shrink } from 'lucide-react';
+import { X, Download, Trash2, Loader2, RefreshCw, ChevronLeft, ChevronRight, Clock, Server, Hash, Maximize2, Minimize2, Expand, Shrink, Copy, Check } from 'lucide-react';
 import ProgressiveImage from '../ProgressiveImage';
 import { getProviderDisplayName } from '../../utils/providerUtils';
 import { assetUrl, assetPath } from '../../utils/assetUrl';
 import { formatBytes } from '../../utils/bytes';
-
+import { copyToClipboard } from '../../utils/clipboard';
+import toast from 'react-hot-toast';
 import { memo } from 'react';
 import ModalOverlay from '../common/ModalOverlay';
 import AssetTagEditor from './AssetTagEditor';
-
+import GenerationTelemetry from '../common/GenerationTelemetry';
 // ⚡ Bolt: Wrap ImageLightbox in React.memo to prevent unnecessary re-renders when parent Dashboard updates
 // A dot per image is fine for a 4-image job batch and absurd for a 16k-image
 // gallery, so past this many the dots are replaced by the "12 / 340" counter
@@ -46,9 +47,8 @@ export default memo(function ImageLightbox({
     const dialogRef = useRef(null);
     const touchStartRef = useRef(null);
     // Set when next walks off the end of the loaded prefix; the effect below
-    // consumes it once the appended page arrives.
     const pendingAdvanceRef = useRef(false);
-
+    const timings = job?.timings || metadata?.timings || metadata?.job?.timings || job?.diagnostics?.timings || metadata?.diagnostics?.timings;
     // The Fullscreen API is absent on iPhone Safari and can be denied, so every
     // call is optional-chained and the UI simply does not light up without it.
     const supportsNativeFullscreen =
@@ -327,7 +327,7 @@ export default memo(function ImageLightbox({
                     focus mode, and the image container above keeps its own
                     navigation, so nothing becomes unreachable. */}
                 {!isFocusMode && (
-                <div className="w-full lg:w-80 h-1/3 lg:h-full bg-gray-900 border-t lg:border-t-0 lg:border-l border-gray-800 p-6 overflow-y-auto flex-shrink-0">
+                <div className="w-full lg:w-80 h-[42%] lg:h-full bg-gray-900 border-t lg:border-t-0 lg:border-l border-gray-800 p-4 lg:p-6 overflow-y-auto flex-shrink-0">
                     <div className="space-y-4 md:space-y-6">
                         <div>
                             <h3 className="font-bold text-lg mb-2">Details</h3>
@@ -335,20 +335,71 @@ export default memo(function ImageLightbox({
                             <p className="text-sm text-gray-500 mt-1">
                                 {Number.isFinite(Number(displayImage.size))
                                     ? formatBytes(Number(displayImage.size))
-                                    : /* No file size on this record. The session
-                                         * member endpoint has no `size` column and
-                                         * stat-ing every file to fill one is not
-                                         * worth a round trip per image — but the
-                                         * dimensions are right there, and "Unknown
-                                         * size" for an image whose 1024x1272 is
-                                         * known is strictly less useful. */
-                                      (Number.isFinite(Number(displayImage.width)) && Number.isFinite(Number(displayImage.height))
+                                    : (Number.isFinite(Number(displayImage.width)) && Number.isFinite(Number(displayImage.height))
                                           ? `${displayImage.width} x ${displayImage.height}`
                                           : 'Unknown size')}
                             </p>
                         </div>
 
-                        {/* Job Information - Issue 9 */}
+                        {/* Primary Top Action Group: Reuse Parameters & Copy Prompt */}
+                        <div className="space-y-2">
+                            {metadata && (
+                                <button
+                                    type="button"
+                                    onClick={onReuseParameters}
+                                    disabled={reuseInProgress}
+                                    aria-label="Reuse parameters from this image"
+                                    className="w-full bg-gradient-to-r from-blue-600 to-violet-600 hover:from-blue-500 hover:to-violet-500 disabled:opacity-60 disabled:cursor-not-allowed py-2.5 px-4 rounded-xl text-sm font-semibold text-white flex items-center justify-center gap-2 transition-all shadow-lg shadow-blue-900/20"
+                                >
+                                    {reuseInProgress ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
+                                    {reuseInProgress ? 'Loading Parameters...' : 'Reuse Parameters'}
+                                </button>
+                            )}
+
+                            <div className="flex gap-2">
+                                {metadata?.prompt && (
+                                    <button
+                                        type="button"
+                                        onClick={async () => {
+                                            const ok = await copyToClipboard(metadata.prompt);
+                                            if (ok) toast.success('Prompt copied to clipboard');
+                                            else toast.error('Failed to copy prompt');
+                                        }}
+                                        aria-label="Copy prompt"
+                                        title="Copy positive prompt"
+                                        className="flex-1 bg-gray-800 hover:bg-gray-700 py-2 px-3 rounded-lg text-sm font-medium flex items-center justify-center gap-1.5 transition-colors text-gray-200 hover:text-white"
+                                    >
+                                        <Copy size={15} aria-hidden="true" />
+                                        <span>Copy</span>
+                                    </button>
+                                )}
+                                <a
+                                    href={assetUrl(displayPath)}
+                                    download
+                                    aria-label="Download image"
+                                    className="flex-1 bg-gray-800 hover:bg-gray-700 py-2 px-3 rounded-lg text-sm font-medium flex items-center justify-center gap-1.5 transition-colors text-gray-200 hover:text-white"
+                                >
+                                    <Download size={15} aria-hidden="true" />
+                                    <span>Download</span>
+                                </a>
+                                <button
+                                    type="button"
+                                    onClick={() => onDelete(displayPath)}
+                                    aria-label="Delete image"
+                                    className="bg-red-900/20 hover:bg-red-900/40 text-red-400 p-2 rounded-lg text-sm font-medium flex items-center justify-center transition-colors"
+                                    title="Delete image"
+                                >
+                                    <Trash2 size={16} aria-hidden="true" />
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* Generation Telemetry Breakdown (Elevated to top of details) */}
+                        {timings && (
+                            <GenerationTelemetry timings={timings} />
+                        )}
+
+                        {/* Job Information */}
                         {job && (
                             <div className="bg-gray-800/50 p-4 rounded-lg border border-gray-700">
                                 <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Job Info</h4>
@@ -373,26 +424,7 @@ export default memo(function ImageLightbox({
                             </div>
                         )}
 
-                        <div className="flex gap-2">
-                            <a
-                                href={assetUrl(displayPath)}
-                                download
-                                aria-label="Download image"
-                                className="flex-1 bg-gray-800 hover:bg-gray-700 py-2 rounded-lg text-sm font-medium flex items-center justify-center gap-2 transition-colors"
-                            >
-                                <Download size={16} /> Download
-                            </a>
-                            <button
-                                onClick={() => onDelete(displayPath)}
-                                aria-label="Delete image"
-                                className="flex-1 bg-red-900/20 hover:bg-red-900/40 text-red-400 py-2 rounded-lg text-sm font-medium flex items-center justify-center gap-2 transition-colors"
-                            >
-                                <Trash2 size={16} /> Delete
-                            </button>
-                        </div>
-
                         <AssetTagEditor key={displayImage?.id || 'no-asset'} assetId={displayImage?.id} />
-
                         {loadingMeta ? (
                             <div className="flex justify-center py-4">
                                 <Loader2 className="animate-spin text-gray-500" />
@@ -446,101 +478,6 @@ export default memo(function ImageLightbox({
                                     </div>
                                 )}
 
-                                {/* Generation Telemetry Breakdown */}
-                                {(job?.timings || metadata.timings || metadata.job?.timings) && (
-                                    (() => {
-                                        const timings = job?.timings || metadata.timings || metadata.job?.timings;
-                                        const total = timings.total_e2e_seconds || timings.total_backend_seconds || timings.total_seconds || 0;
-                                        return (
-                                            <div className="bg-gray-800/60 p-3.5 rounded-lg border border-gray-700/80">
-                                                <div className="flex items-center justify-between mb-2">
-                                                    <h4 className="text-xs font-semibold text-cyan-400 uppercase tracking-wider flex items-center gap-1.5">
-                                                        <Clock size={13} />
-                                                        <span>Generation Telemetry</span>
-                                                    </h4>
-                                                    <span className="font-mono text-cyan-300 font-bold text-xs">
-                                                        {total.toFixed(2)}s
-                                                    </span>
-                                                </div>
-                                                <div className="w-full bg-gray-700/80 rounded-full h-1.5 overflow-hidden flex mb-2.5">
-                                                    {timings.queue_seconds > 0 && (
-                                                        <div
-                                                            style={{ width: `${Math.min(100, (timings.queue_seconds / (total || 1)) * 100)}%` }}
-                                                            className="bg-yellow-400 h-full"
-                                                            title={`Queue: ${timings.queue_seconds.toFixed(2)}s`}
-                                                        />
-                                                    )}
-                                                    {timings.model_load_seconds > 0 && (
-                                                        <div
-                                                            style={{ width: `${Math.min(100, (timings.model_load_seconds / (total || 1)) * 100)}%` }}
-                                                            className="bg-purple-400 h-full"
-                                                            title={`Model Load: ${timings.model_load_seconds.toFixed(2)}s`}
-                                                        />
-                                                    )}
-                                                    {timings.sampling_seconds > 0 && (
-                                                        <div
-                                                            style={{ width: `${Math.min(100, (timings.sampling_seconds / (total || 1)) * 100)}%` }}
-                                                            className="bg-blue-400 h-full"
-                                                            title={`Sampling: ${timings.sampling_seconds.toFixed(2)}s`}
-                                                        />
-                                                    )}
-                                                    {timings.transfer_seconds > 0 && (
-                                                        <div
-                                                            style={{ width: `${Math.min(100, (timings.transfer_seconds / (total || 1)) * 100)}%` }}
-                                                            className="bg-cyan-400 h-full"
-                                                            title={`Transfer: ${timings.transfer_seconds.toFixed(2)}s`}
-                                                        />
-                                                    )}
-                                                    {timings.processing_seconds > 0 && (
-                                                        <div
-                                                            style={{ width: `${Math.min(100, (timings.processing_seconds / (total || 1)) * 100)}%` }}
-                                                            className="bg-emerald-400 h-full"
-                                                            title={`Post-proc: ${timings.processing_seconds.toFixed(2)}s`}
-                                                        />
-                                                    )}
-                                                </div>
-                                                <div className="grid grid-cols-2 gap-1.5 text-xs font-mono">
-                                                    {timings.queue_seconds !== undefined && (
-                                                        <div className="flex justify-between bg-gray-900/40 px-2 py-1 rounded">
-                                                            <span className="text-yellow-400">Queue:</span>
-                                                            <span className="text-gray-300">{timings.queue_seconds.toFixed(2)}s</span>
-                                                        </div>
-                                                    )}
-                                                    {timings.model_load_seconds !== undefined && (
-                                                        <div className="flex justify-between bg-gray-900/40 px-2 py-1 rounded">
-                                                            <span className="text-purple-400">Model Load:</span>
-                                                            <span className="text-gray-300">{timings.model_load_seconds.toFixed(2)}s</span>
-                                                        </div>
-                                                    )}
-                                                    {timings.sampling_seconds !== undefined && (
-                                                        <div className="flex justify-between bg-gray-900/40 px-2 py-1 rounded">
-                                                            <span className="text-blue-400">Sampling:</span>
-                                                            <span className="text-gray-300">{timings.sampling_seconds.toFixed(2)}s</span>
-                                                        </div>
-                                                    )}
-                                                    {timings.transfer_seconds !== undefined && (
-                                                        <div className="flex justify-between bg-gray-900/40 px-2 py-1 rounded">
-                                                            <span className="text-cyan-400">Transfer:</span>
-                                                            <span className="text-gray-300">{timings.transfer_seconds.toFixed(2)}s</span>
-                                                        </div>
-                                                    )}
-                                                    {timings.processing_seconds !== undefined && (
-                                                        <div className="flex justify-between bg-gray-900/40 px-2 py-1 rounded">
-                                                            <span className="text-emerald-400">Post-proc:</span>
-                                                            <span className="text-gray-300">{timings.processing_seconds.toFixed(2)}s</span>
-                                                        </div>
-                                                    )}
-                                                    {timings.total_backend_seconds !== undefined && (
-                                                        <div className="flex justify-between bg-gray-900/40 px-2 py-1 rounded font-bold">
-                                                            <span className="text-gray-400">Backend:</span>
-                                                            <span className="text-white">{timings.total_backend_seconds.toFixed(2)}s</span>
-                                                        </div>
-                                                    )}
-                                                </div>
-                                            </div>
-                                        );
-                                    })()
-                                )}
 
                                 {/* LoRAs */}
                                 {metadata.loras?.length > 0 && (
@@ -627,25 +564,46 @@ export default memo(function ImageLightbox({
 
                                 {/* Prompts */}
                                 <div>
-                                    <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Prompt</h4>
+                                    <div className="flex items-center justify-between mb-2">
+                                        <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Prompt</h4>
+                                        {metadata.prompt && (
+                                            <button
+                                                type="button"
+                                                onClick={async () => {
+                                                    const ok = await copyToClipboard(metadata.prompt);
+                                                    if (ok) toast.success('Prompt copied');
+                                                }}
+                                                aria-label="Copy prompt text"
+                                                className="text-2xs text-gray-400 hover:text-white flex items-center gap-1 transition-colors"
+                                            >
+                                                <Copy size={11} aria-hidden="true" />
+                                                <span>Copy</span>
+                                            </button>
+                                        )}
+                                    </div>
                                     <p className="text-sm text-gray-300 bg-gray-800 p-3 rounded-lg border border-gray-700 max-h-40 overflow-y-auto">{metadata.prompt}</p>
                                 </div>
                                 {metadata.negativePrompt && (
                                     <div>
-                                        <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Negative Prompt</h4>
+                                        <div className="flex items-center justify-between mb-2">
+                                            <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Negative Prompt</h4>
+                                            <button
+                                                type="button"
+                                                onClick={async () => {
+                                                    const ok = await copyToClipboard(metadata.negativePrompt);
+                                                    if (ok) toast.success('Negative prompt copied');
+                                                }}
+                                                aria-label="Copy negative prompt text"
+                                                className="text-2xs text-gray-400 hover:text-white flex items-center gap-1 transition-colors"
+                                            >
+                                                <Copy size={11} aria-hidden="true" />
+                                                <span>Copy</span>
+                                            </button>
+                                        </div>
                                         <p className="text-sm text-gray-400 bg-gray-800 p-3 rounded-lg border border-gray-700 max-h-40 overflow-y-auto">{metadata.negativePrompt}</p>
                                     </div>
                                 )}
 
-                                <button
-                                    onClick={onReuseParameters}
-                                    disabled={reuseInProgress}
-                                    aria-label="Reuse parameters from this image"
-                                    className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-60 disabled:cursor-not-allowed py-3 rounded-lg text-sm font-medium flex items-center justify-center gap-2 transition-colors shadow-lg shadow-blue-900/20"
-                                >
-                                    {reuseInProgress ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
-                                    {reuseInProgress ? 'Loading Parameters...' : 'Reuse Parameters'}
-                                </button>
                             </div>
                         ) : (
                             <div className="text-center py-8 text-gray-500 text-sm">No metadata available</div>

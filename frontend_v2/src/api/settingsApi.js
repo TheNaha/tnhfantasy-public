@@ -39,6 +39,8 @@ export const settingsApi = {
     updateFavorites: (favorites) => api.post(`${BASE}/favorites`, { favorites }),
 
     getSchedulerStatus: (options = {}) => api.get(`${BASE}/scheduler`, options),
+    runSchedulerJob: (jobId) => api.post(`${BASE}/scheduler/${encodeURIComponent(jobId)}/run`),
+    updateSchedulerJob: (jobId, data) => api.patch(`${BASE}/scheduler/${encodeURIComponent(jobId)}`, data),
     reconcileChatReplies: (params = {}) => api.post('/api/jobs/reconcile-chat-replies', null, { params }),
 };
 

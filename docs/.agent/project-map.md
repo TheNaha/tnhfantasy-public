@@ -1,8 +1,9 @@
 # TNHFantasy — Project Map
 
-**Recorded commit:** `77e1426c0cc963fbfc0e37927d90fc08b174bf67`
-**Commit date:** 2026-10-30 13:53:07 +0700
-**Branch:** `master` (working directory clean except `.gitignore` edit per HEAD diff — see diff --stat shows only `.gitignore` changed vs HEAD, 4 insertions / 1 deletion).
+**Recorded commit:** `69e7148e`
+**Commit date:** 2026-11-08 12:09:18 +0700
+**Branch:** `master`. (Worktree carries the scheduler-observability feature set — `/tasks` page, `POST/PATCH /api/settings/scheduler/{job_id}`, CivitAI resync batching, model-preview DB fallback, `/api/files` `images` field.)
+**Env vars:** this map abbreviates the env list; `.env.example`, `.env.example.provider.engines` and `remote_agent/.env.example` are canonical. **Route groups:** see `docs/.agent/project-map.md` §2 and `docs/.audit/docs-audit-2026-11-09.md` for the re-recording notes.
 
 This map is dense and scannable, not a code dump. File/module paths are absolute under the repo root `/home/thenaha/containers/stacks/comfyui`. Claims marked `unverified` were not directly confirmed by reading code.
 

@@ -1014,9 +1014,53 @@ def get_presets(session: Session = Depends(get_session)):
     return {"presets": presets}
  
  
+class SchedulerJobUpdateRequest(BaseModel):
+    """Request body for updating a scheduled job's interval or pause state."""
+    interval_seconds: int | None = None
+    paused: bool | None = None
+
+
 @router.get("/scheduler")
 def get_scheduler_status() -> dict[str, Any]:
-    """Return status of all registered background scheduler jobs and their run history."""
+    """Return status of all registered background scheduler jobs, active tasks, and worker pools."""
+    from api.routes.models.maintenance import get_resync_status
+    from infrastructure.background_tasks import get_active_background_tasks
     from infrastructure.scheduler import get_jobs_status
-    return {"jobs": get_jobs_status()}
+    from services.job_queue import queue_manager
+
+    pools_info = {}
+    for name, queue in queue_manager.pools.items():
+        pools_info[name] = {
+            "max_workers": queue.max_workers,
+            "active_workers": queue.active_count,
+            "queued": queue.pending_count,
+        }
+
+    return {
+        "jobs": get_jobs_status(),
+        "active_tasks": get_active_background_tasks(),
+        "worker_pools": pools_info,
+        "resync_status": get_resync_status(),
+    }
+
+
+@router.post("/scheduler/{job_id}/run")
+async def run_scheduler_job(job_id: str) -> dict[str, Any]:
+    """Trigger an immediate background run of a scheduled job."""
+    from infrastructure.scheduler import trigger_job_now
+    return trigger_job_now(job_id)
+
+
+@router.patch("/scheduler/{job_id}")
+async def patch_scheduler_job(
+    job_id: str,
+    payload: SchedulerJobUpdateRequest,
+) -> dict[str, Any]:
+    """Dynamically adjust execution interval or pause/resume a scheduled job."""
+    from infrastructure.scheduler import update_scheduled_job
+    return update_scheduled_job(
+        job_id,
+        interval_seconds=payload.interval_seconds,
+        paused=payload.paused,
+    )
 

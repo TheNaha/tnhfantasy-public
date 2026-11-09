@@ -65,6 +65,11 @@ export default function DashboardHeaderToolbar({
 
     filters,
     onFilterChange,
+
+    isInsightsOpen,
+    onToggleInsights,
+    activeFilterCount,
+    totalMatched,
 }) {
     return (
         <div className="flex flex-col gap-4">
@@ -110,7 +115,14 @@ export default function DashboardHeaderToolbar({
                 </AnimatePresence>
             </div>
 
-            <FilterBar filters={filters} onFilterChange={onFilterChange} />
+            <FilterBar
+                filters={filters}
+                onFilterChange={onFilterChange}
+                isInsightsOpen={isInsightsOpen}
+                onToggleInsights={onToggleInsights}
+                activeFilterCount={activeFilterCount}
+                totalMatched={totalMatched}
+            />
         </div>
     );
 }

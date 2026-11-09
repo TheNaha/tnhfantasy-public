@@ -1,12 +1,10 @@
 import { useState, useEffect, useId, memo } from 'react';
-import { Search, X } from 'lucide-react';
+import { Search, X, SlidersHorizontal } from 'lucide-react';
 import { useDebouncedValue } from '../../hooks/useDebounce';
-
 // ⚡ Bolt: Wrap FilterBar in React.memo to prevent unnecessary re-renders when parent dashboard updates
-export const FilterBar = memo(function FilterBar({ filters, onFilterChange }) {
+export const FilterBar = memo(function FilterBar({ filters, onFilterChange, isInsightsOpen, onToggleInsights, activeFilterCount = 0, totalMatched }) {
     const [localFilters, setLocalFilters] = useState(filters);
     const [prevFilters, setPrevFilters] = useState(filters);
-
     // ⚡ Bolt: Derived state during render to avoid cascading re-renders and react-hooks/set-state-in-effect error
     if (filters !== prevFilters) {
         setPrevFilters(filters);
@@ -123,6 +121,33 @@ export const FilterBar = memo(function FilterBar({ filters, onFilterChange }) {
                                 </svg>
                             </button>
                         </div>
+                    )}
+
+                    {typeof onToggleInsights === 'function' && (
+                        <button
+                            type="button"
+                            onClick={onToggleInsights}
+                            aria-expanded={Boolean(isInsightsOpen)}
+                            data-testid="toggle-gallery-insights"
+                            className={`px-3 py-2.5 rounded-xl border text-sm font-medium flex items-center gap-2 transition-colors shrink-0 ${
+                                isInsightsOpen || activeFilterCount > 0
+                                    ? 'bg-blue-600/20 border-blue-500/40 text-blue-300'
+                                    : 'bg-gray-800 border-gray-700 text-gray-300 hover:bg-gray-700 hover:text-white'
+                            }`}
+                            title="Toggle timeline histogram and model/tag filters"
+                        >
+                            <SlidersHorizontal size={16} aria-hidden="true" />
+                            <span>Filters</span>
+                            {activeFilterCount > 0 ? (
+                                <span className="px-1.5 py-0.5 rounded-full bg-blue-500 text-white text-2xs font-bold">
+                                    {activeFilterCount}
+                                </span>
+                            ) : typeof totalMatched === 'number' ? (
+                                <span className="hidden sm:inline text-2xs text-gray-400">
+                                    ({totalMatched.toLocaleString()})
+                                </span>
+                            ) : null}
+                        </button>
                     )}
                 </div>
             </div>

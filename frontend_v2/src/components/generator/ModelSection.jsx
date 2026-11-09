@@ -12,6 +12,7 @@ import {
 } from '../../utils/embeddingHelpers';
 import { getModelWithVersion } from '../../utils/modelDisplay';
 import toast from 'react-hot-toast';
+const COLLAPSED_EMBEDDING_LIMIT = 6;
 
 const ModelSection = memo(function ModelSection({
     selectedCheckpoint,
@@ -46,6 +47,7 @@ const ModelSection = memo(function ModelSection({
     const [expandedTriggerGroups, setExpandedTriggerGroups] = useState({});
     const [embeddingSearch, setEmbeddingSearch] = useState('');
     const [activeWeightPopup, setActiveWeightPopup] = useState(null); // { name, target: 'pos' | 'neg' }
+    const [embeddingsExpanded, setEmbeddingsExpanded] = useState(false);
 
     useEffect(() => {
         function handleClickOutside(event) {
@@ -99,9 +101,38 @@ const ModelSection = memo(function ModelSection({
                         providers={providers}
                         providersLoading={providersLoading}
                     />
+                    {(() => {
+                        const words = selectedCheckpoint?.trained_words || selectedCheckpoint?.trainedWords || [];
+                        if (!words || words.length === 0) return null;
+                        const promptLower = (prompt || '').toLowerCase();
+                        return (
+                            <div className="flex items-center gap-1.5 flex-wrap pt-1.5">
+                                <span className="text-3xs uppercase tracking-wider text-purple-400 font-semibold flex items-center gap-1">
+                                    <Sparkles size={11} aria-hidden="true" /> Trigger words:
+                                </span>
+                                {words.slice(0, 6).map((word, i) => {
+                                    const inPrompt = promptLower.includes(word.toLowerCase());
+                                    return (
+                                        <button
+                                            key={i}
+                                            type="button"
+                                            onClick={() => handleAddTriggerWordsUI([word])}
+                                            className={`text-2xs px-2 py-0.5 rounded-md border transition-colors flex items-center gap-1 ${
+                                                inPrompt
+                                                    ? 'bg-purple-900/50 text-purple-200 border-purple-500/50'
+                                                    : 'bg-purple-900/20 hover:bg-purple-800/30 text-purple-300 border-purple-500/20'
+                                            }`}
+                                            title={inPrompt ? 'Already in prompt' : 'Add to prompt'}
+                                        >
+                                            <Plus size={10} aria-hidden="true" /> {word}
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        );
+                    })()}
                 </div>
             </div>
-
             <div className="space-y-1.5 group">
                 <label className="text-2xs font-bold text-purple-400 uppercase tracking-widest px-1">VAE</label>
                 <select
@@ -192,6 +223,19 @@ const ModelSection = memo(function ModelSection({
                       })
                     : embeddingModels;
 
+                const sortedEmbeddings = embeddingSearch.trim()
+                    ? filteredEmbeddings
+                    : [...filteredEmbeddings].sort((a, b) => {
+                          const aActive = getEmbeddingWeight(prompt, a.name) !== null || getEmbeddingWeight(negativePrompt, a.name) !== null;
+                          const bActive = getEmbeddingWeight(prompt, b.name) !== null || getEmbeddingWeight(negativePrompt, b.name) !== null;
+                          if (aActive === bActive) return 0;
+                          return aActive ? -1 : 1;
+                      });
+
+                const visibleEmbeddings = (embeddingsExpanded || embeddingSearch.trim() || sortedEmbeddings.length <= COLLAPSED_EMBEDDING_LIMIT)
+                    ? sortedEmbeddings
+                    : sortedEmbeddings.slice(0, COLLAPSED_EMBEDDING_LIMIT);
+
                 return (
                     <div className="space-y-2.5 pt-2 border-t border-white/5">
                         <div className="flex items-center justify-between gap-2">
@@ -229,10 +273,10 @@ const ModelSection = memo(function ModelSection({
                         </div>
 
                         <div className="flex flex-wrap gap-2">
-                            {filteredEmbeddings.length === 0 ? (
+                            {visibleEmbeddings.length === 0 ? (
                                 <p className="text-2xs text-gray-500 py-1">No embeddings match &ldquo;{embeddingSearch}&rdquo;</p>
                             ) : (
-                                filteredEmbeddings.map((emb) => {
+                                visibleEmbeddings.map((emb) => {
                                     const shortName = emb.display_name || getShortEmbeddingName(emb.name);
                                     const posWeight = getEmbeddingWeight(prompt, emb.name);
                                     const negWeight = getEmbeddingWeight(negativePrompt, emb.name);
@@ -432,6 +476,20 @@ const ModelSection = memo(function ModelSection({
                                 })
                             )}
                         </div>
+                        {sortedEmbeddings.length > COLLAPSED_EMBEDDING_LIMIT && !embeddingSearch.trim() && (
+                            <div className="pt-1">
+                                <button
+                                    type="button"
+                                    data-testid="embeddings-expand-toggle"
+                                    onClick={() => setEmbeddingsExpanded(v => !v)}
+                                    className="text-2xs text-purple-400 hover:text-purple-300 font-medium transition-colors"
+                                >
+                                    {embeddingsExpanded
+                                        ? 'Show fewer embeddings'
+                                        : `Show all ${sortedEmbeddings.length} embeddings (+${sortedEmbeddings.length - visibleEmbeddings.length} more)`}
+                                </button>
+                            </div>
+                        )}
                     </div>
                 );
             })()}

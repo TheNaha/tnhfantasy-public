@@ -55,15 +55,14 @@ Key conventions:
 
 ### Startup sequence (`api/main.py` lifespan → `api/lifecycle.py` `startup_application`)
 
-1. Initialize the database and run schema migrations; clean up provider-state artifacts.
-2. Configure the async job queue (worker pool) and reset interrupted reconciliations.
-3. Prime the known-provider-host set (used for outbound token attachment) and start a 60s refresh timer.
-4. Start the job queue and the provider-monitor background task.
-5. Start provider telemetry polling.
-6. Recover PENDING/RUNNING jobs (handles restarts — ordering is load-bearing; post-processing jobs are finalised before the sweep re-enqueues active ones).
-7. Start the scheduler: provider-host refresh, vacuum, preview prefetch, data cleanup, job reaper, idle simulation (opt-in), CivitAI resync, in-process reconciliation.
-8. Start the Socket.IO broadcast task and the cross-process dispatch listener (Postgres LISTEN).
-9. Start world integration and the asset-migration background task.
+1. Initialize the database and run schema migrations; clean up provider-state artifacts. Set the job-processor resolver, start the asset-migration relocation thread (`asset_migration` runs off the startup path), configure the worker pool, and reset interrupted reconciliations.
+2. Prime the known-provider-host set (used for outbound token attachment) and start a 60s refresh timer.
+3. Start the job queue and the provider-monitor background task.
+4. Start provider telemetry polling.
+5. Recover PENDING/RUNNING jobs (handles restarts — ordering is load-bearing; post-processing jobs are finalised before the sweep re-enqueues active ones).
+6. Start the scheduler: provider-host refresh, vacuum, preview prefetch, data cleanup, job reaper, idle simulation (opt-in), CivitAI full resync (172800s) + randomized incremental resync (300s, batch 5), in-process reconciliation.
+7. Start the Socket.IO broadcast task and the cross-process dispatch listener (Postgres LISTEN).
+8. Start world integration.
 
 The full phase list (with `startup_init` phase markers) is the source of truth in `api/lifecycle.py`; `backend.md` keeps the expanded version.
 

@@ -12,6 +12,7 @@ import { useNavigate } from 'react-router-dom';
 import UnifiedGeneratorLayout from '../components/generator/UnifiedGeneratorLayout';
 import ResolutionSettings from '../components/generator/ResolutionSettings';
 import GenerateButtonBar from '../components/generator/GenerateButtonBar';
+import GenerationTelemetry from '../components/common/GenerationTelemetry';
 
 export default function SimpleGenerator() {
     const navigate = useNavigate();
@@ -51,6 +52,7 @@ export default function SimpleGenerator() {
         generating,
         setGenerating,
         handleGenerate,
+        lastCompletedJob,
     } = useGeneratorJob({
         runSubmission,
         type: 'simple',
@@ -135,9 +137,7 @@ export default function SimpleGenerator() {
                         <div>
                             <p className="text-sm text-amber-200 font-medium">No checkpoint selected</p>
                             <p className="text-xs text-amber-300 mt-0.5 leading-relaxed">
-                                Pick a model on the <strong>Installed Models</strong> page, or select one from the
-                                Checkpoint dropdown below, before generating. The Generate button stays disabled until
-                                a checkpoint is chosen.
+                                Select a model in the <strong>Models</strong> card below before generating. The Generate button stays disabled until a checkpoint is chosen.
                             </p>
                         </div>
                     </div>
@@ -177,6 +177,31 @@ export default function SimpleGenerator() {
                 runwayTitle="Generation Runway"
                 runwayHint="Provider health and model checks before you commit a generation."
                 rightColumnMiddle={<ResolutionSettings />}
+                rightColumnExtra={
+                    (() => {
+                        const lastTimings = lastCompletedJob?.timings
+                            || lastCompletedJob?.diagnostics?.timings
+                            || lastCompletedJob?.metadata_?.diagnostics?.timings;
+                        if (!lastTimings) return null;
+                        return (
+                            <div className="space-y-2">
+                                <GenerationTelemetry
+                                    timings={lastTimings}
+                                    title="Last Generation Speed"
+                                    collapsible={true}
+                                    defaultExpanded={true}
+                                />
+                                <button
+                                    type="button"
+                                    onClick={() => navigate('/gallery')}
+                                    className="w-full py-2 px-3 bg-gray-800/80 hover:bg-gray-700/80 border border-white/10 rounded-xl text-xs font-semibold text-gray-300 hover:text-white flex items-center justify-center gap-1.5 transition-colors"
+                                >
+                                    <span>View Result in Gallery →</span>
+                                </button>
+                            </div>
+                        );
+                    })()
+                }
                 rightColumnBottom={
                     <GenerateButtonBar
                         generating={generating}

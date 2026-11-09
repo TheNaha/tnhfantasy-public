@@ -74,6 +74,7 @@ This avoids requiring eager image hydration just to display collection counts or
 - **Image gallery:** visual display of generated images fetched from the backend.
 - **Provider management:** shared provider status, reconciliation, and storage state via `/api/v2/providers`.
 - **Generation parameters:** interfaces for adjusting prompts, negative prompts, steps, CFG scale, models, and LoRAs.
+- **Background tasks (`/tasks`):** scheduler control centre (`frontend_v2/src/pages/BackgroundTasks.jsx`). Reads `GET /api/settings/scheduler` (job metadata, run history, live worker pools, active background tasks, resync snapshot) and controls jobs via `POST /run` / `PATCH /{job_id}` (trigger, interval, pause/resume). The Settings Scheduled Tasks panel links here; the legacy `/settings/background-tasks` route redirects to it.
 - **Optimistic updates:** immediate UI feedback for actions like deleting a job before the server confirms.
 
 ## Reaching the backend

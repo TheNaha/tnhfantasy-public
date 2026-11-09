@@ -182,15 +182,18 @@ async def _reap_wedged_jobs() -> None:
             stranded = await service.fail_stranded_pending_jobs()
         finally:
             session.close()
+        count_stale = len(stale) if stale else 0
+        count_stranded = len(stranded) if stranded else 0
         if stale or stranded:
             logger.info(
                 "job_reaper_failed_wedged_jobs",
-                stale=len(stale),
-                stranded=len(stranded),
+                stale=count_stale,
+                stranded=count_stranded,
             )
+        return {"stale_reaped": count_stale, "stranded_reaped": count_stranded}
     except Exception as exc:
         logger.warning("job_reaper_failed", error=str(exc))
-
+        return {"error": str(exc)}
 
 async def run_data_cleanup() -> None:
     """Run all periodic data cleanup tasks in one pass."""
@@ -198,6 +201,7 @@ async def run_data_cleanup() -> None:
     from infrastructure.repositories.model_repo_v2 import ModelRepositoryV2
 
     logger.info("data_cleanup_start")
+    removed_orphans = 0
     try:
         cleanup_provider_state_artifacts(stale_downloading_after_minutes=120)
     except Exception as exc:
@@ -214,6 +218,7 @@ async def run_data_cleanup() -> None:
             model_repo = ModelRepositoryV2(session)
             orphaned = model_repo.cleanup_orphaned_models()
             if orphaned > 0:
+                removed_orphans = orphaned
                 logger.info("data_cleanup_orphaned_models", removed=orphaned)
         finally:
             session.close()
@@ -221,7 +226,7 @@ async def run_data_cleanup() -> None:
         logger.warning("data_cleanup_orphaned_failed", error=str(exc))
 
     logger.info("data_cleanup_complete")
-
+    return {"orphaned_models_removed": removed_orphans, "status": "completed"}
 
 async def prune_stale_providers() -> None:
     """Remove provider records that have not sent a discovery heartbeat in 24 hours."""
@@ -432,15 +437,26 @@ async def startup_application(process_job, ws_manager):
     else:
         logger.info("idle_simulation_disabled")
     logger.info("startup_init", phase="civitai_resync")
-    from api.routes.models.maintenance import run_background_resync
-    # Run a full CivitAI resync every 24 hours
+    from api.routes.models.maintenance import (
+        CIVITAI_FULL_RESYNC_INTERVAL_SECONDS,
+        CIVITAI_RANDOM_RESYNC_INTERVAL_SECONDS,
+        run_background_resync,
+        run_randomized_background_resync,
+    )
+    # Run a deep CivitAI resync across all eligible models
     add_interval_job(
         run_background_resync,
-        interval_seconds=86400,
+        interval_seconds=CIVITAI_FULL_RESYNC_INTERVAL_SECONDS,
         job_id="civitai_resync_job",
         start_immediately=False,
     )
-
+    # Run rapid incremental resyncs on random batches of models
+    add_interval_job(
+        run_randomized_background_resync,
+        interval_seconds=CIVITAI_RANDOM_RESYNC_INTERVAL_SECONDS,
+        job_id="civitai_resync_random",
+        start_immediately=False,
+    )
     logger.info("startup_init", phase="in_process_reconcile")
     from services.in_process_reconciliation import (
         IN_PROCESS_RECONCILE_INTERVAL_SECONDS,

@@ -464,12 +464,56 @@ class TestSchedulerEndpoint:
         data = response.json()
         assert "jobs" in data
         assert isinstance(data["jobs"], list)
+        assert "active_tasks" in data
+        assert isinstance(data["active_tasks"], list)
+        assert "worker_pools" in data
+        assert isinstance(data["worker_pools"], dict)
+        assert "resync_status" in data
+        assert isinstance(data["resync_status"], dict)
         for job in data["jobs"]:
             assert "id" in job
+            assert "title" in job
+            assert "category" in job
             assert "trigger" in job
             assert "last_status" in job
 
+    def test_scheduler_patch_job_and_run_endpoint(self, client):
+        from infrastructure.scheduler import add_interval_job, remove_job
 
+        calls = []
+
+        def dummy_job():
+            calls.append(1)
+
+        add_interval_job(dummy_job, interval_seconds=120, job_id="test_dummy_job", start_immediately=False)
+        try:
+            # Trigger run
+            run_res = client.post("/api/settings/scheduler/test_dummy_job/run")
+            assert run_res.status_code == 200
+            assert run_res.json()["status"] in ("triggered", "already_running")
+
+            # Update interval
+            patch_res = client.patch(
+                "/api/settings/scheduler/test_dummy_job",
+                json={"interval_seconds": 360, "paused": True},
+            )
+            assert patch_res.status_code == 200
+            updated_job = patch_res.json()
+            assert updated_job["interval_seconds"] == 360
+            assert updated_job["paused"] is True
+
+            # Interval bounds rejection (< 10s)
+            bad_res = client.patch(
+                "/api/settings/scheduler/test_dummy_job",
+                json={"interval_seconds": 5},
+            )
+            assert bad_res.status_code in (400, 422)
+
+            # Unknown job 404
+            unknown_res = client.post("/api/settings/scheduler/non_existent_job_123/run")
+            assert unknown_res.status_code == 404
+        finally:
+            remove_job("test_dummy_job")
 class TestJobsCleanupAndCharGenPrompts:
     def test_jobs_cleanup_persists(self, client):
         response = client.put("/api/settings", json={
