@@ -1538,6 +1538,51 @@ class ModelRepositoryV2:
                 result[directory] = []
             result[directory].append(d)
         return result
+    def get_storage_breakdown(self) -> dict[str, Any]:
+        """Aggregate total storage bytes and model counts grouped by directory."""
+        stmt = (
+            select(
+                ModelV2.directory,
+                func.count(func.distinct(ModelV2.id)).label("model_count"),
+                func.count(func.distinct(ModelFile.id)).label("file_count"),
+                func.sum(ModelFile.size_kb).label("total_size_kb"),
+            )
+            .join(ModelVersion, ModelVersion.model_id == ModelV2.id)
+            .join(ModelFile, ModelFile.version_id == ModelVersion.id)
+            .where(or_(ModelVersion.is_enabled == True, ModelVersion.is_enabled == None))
+            .group_by(ModelV2.directory)
+        )
+        rows = self.session.exec(stmt).all()
+        categories = []
+        total_bytes = 0
+        total_models = 0
+        total_files = 0
+        for directory, model_count, file_count, total_size_kb in rows:
+            size_bytes = int((total_size_kb or 0) * 1024)
+            total_bytes += size_bytes
+            total_models += int(model_count or 0)
+            total_files += int(file_count or 0)
+            categories.append({
+                "directory": directory,
+                "total_bytes": size_bytes,
+                "total_models": int(model_count or 0),
+                "total_files": int(file_count or 0),
+            })
+
+        for cat in categories:
+            cat["percentage"] = (
+                round((cat["total_bytes"] / total_bytes * 100), 1) if total_bytes > 0 else 0.0
+            )
+
+        categories.sort(key=lambda c: c["total_bytes"], reverse=True)
+
+        return {
+            "total_bytes": total_bytes,
+            "total_models": total_models,
+            "total_files": total_files,
+            "categories": categories,
+        }
+
     
     def migrate_unet_only_models(self) -> dict[str, Any]:
         """

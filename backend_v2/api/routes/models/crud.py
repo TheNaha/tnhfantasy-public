@@ -103,6 +103,14 @@ def get_catalog():
     }
 
 
+@router.get("/storage-breakdown")
+async def get_storage_breakdown(
+    repo: ModelRepositoryV2 = Depends(get_model_repo_v2),
+):
+    """Aggregate total storage bytes and model counts by model directory/type."""
+    return await asyncio.to_thread(repo.get_storage_breakdown)
+
+
 @router.get("/check-installed/{civitai_model_id}")
 def check_installed_versions(
     civitai_model_id: int,

@@ -5,7 +5,7 @@ import pytest
 from sqlmodel import Session, SQLModel, create_engine
 from sqlmodel.pool import StaticPool
 
-from core.entities import ModelV2, ModelVersion, ProviderVersionStatus
+from core.entities import ModelFile, ModelV2, ModelVersion, ProviderVersionStatus
 from infrastructure.repositories.model_repo_v2 import (
     ModelRepositoryV2,
     parse_civitai_datetime,
@@ -449,3 +449,34 @@ class TestModelRepositoryV2BaseModelMatching:
 
         sdxl_10_results = repo.get_models_by_directory("checkpoints", base_model="SDXL 1.0")
         assert any(m.id == m_sdxl.id for m in sdxl_10_results)
+
+
+class TestModelRepositoryV2StorageBreakdown:
+    def test_get_storage_breakdown(self, repo, session):
+        m_ckpt = ModelV2(name="TestCkpt", type="Checkpoint", directory="checkpoints")
+        m_lora = ModelV2(name="TestLora", type="LORA", directory="loras")
+        session.add_all([m_ckpt, m_lora])
+        session.flush()
+
+        v_ckpt = ModelVersion(model_id=m_ckpt.id, name="v1", is_enabled=True)
+        v_lora = ModelVersion(model_id=m_lora.id, name="v1", is_enabled=True)
+        session.add_all([v_ckpt, v_lora])
+        session.flush()
+
+        f_ckpt = ModelFile(version_id=v_ckpt.id, original_filename="c.safetensors", storage_filename="c.safetensors", size_kb=2048.0)
+        f_lora = ModelFile(version_id=v_lora.id, original_filename="l.safetensors", storage_filename="l.safetensors", size_kb=1024.0)
+        session.add_all([f_ckpt, f_lora])
+        session.commit()
+
+        breakdown = repo.get_storage_breakdown()
+        assert breakdown["total_bytes"] == (2048 + 1024) * 1024
+        assert breakdown["total_models"] == 2
+        assert breakdown["total_files"] == 2
+        assert len(breakdown["categories"]) == 2
+        ckpt_cat = next(c for c in breakdown["categories"] if c["directory"] == "checkpoints")
+        assert ckpt_cat["total_bytes"] == 2048 * 1024
+        assert ckpt_cat["total_models"] == 1
+        assert ckpt_cat["percentage"] == 66.7
+        lora_cat = next(c for c in breakdown["categories"] if c["directory"] == "loras")
+        assert lora_cat["total_bytes"] == 1024 * 1024
+        assert lora_cat["percentage"] == 33.3

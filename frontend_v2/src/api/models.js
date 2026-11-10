@@ -29,6 +29,9 @@ const tagPath = (modelId, tag) =>
 export const modelsApi = {
     // Delete model with provider sync (V2).
     deleteV2: (modelId) => api.delete(`${M}/${modelId}`),
+    // Get full library storage breakdown by directory/type
+    getStorageBreakdown: () => api.get(`${M}/storage-breakdown`),
+
 
     /**
      * Every tag on a model, with the provenance that decides who may remove it.

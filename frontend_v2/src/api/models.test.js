@@ -36,6 +36,12 @@ describe('modelsApi', () => {
         modelsApi.deleteV2('abc-123');
         expect(deleteMock).toHaveBeenCalledWith('/api/v2/models/abc-123');
     });
+    it('calls /api/v2/models/storage-breakdown for library storage stats', async () => {
+        getMock.mockResolvedValue({ total_bytes: 1000, categories: [] });
+        await modelsApi.getStorageBreakdown();
+        expect(getMock).toHaveBeenCalledWith('/api/v2/models/storage-breakdown');
+    });
+
 
     describe('tags', () => {
         it('lists tags from the maintenance endpoint', async () => {

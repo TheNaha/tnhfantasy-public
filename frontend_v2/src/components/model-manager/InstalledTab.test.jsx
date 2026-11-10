@@ -25,6 +25,37 @@ vi.mock('@tanstack/react-query', async (importOriginal) => {
 vi.mock('../../hooks/useProvidersPageData', () => ({
     default: () => ({ providers: [], providersLoading: false })
 }));
+vi.mock('../../api', async (importOriginal) => {
+    const actual = await importOriginal();
+    return {
+        ...actual,
+        modelsApi: {
+            ...actual.modelsApi,
+            getStorageBreakdown: vi.fn().mockResolvedValue({
+                total_bytes: 150000000000,
+                total_models: 650,
+                total_files: 700,
+                categories: [
+                    {
+                        directory: 'checkpoints',
+                        total_bytes: 100000000000,
+                        total_models: 15,
+                        total_files: 19,
+                        percentage: 66.7,
+                    },
+                    {
+                        directory: 'loras',
+                        total_bytes: 50000000000,
+                        total_models: 635,
+                        total_files: 681,
+                        percentage: 33.3,
+                    },
+                ],
+            }),
+        },
+    };
+});
+
 
 import InstalledTab from './InstalledTab';
 
@@ -56,5 +87,22 @@ describe('InstalledTab image rendering', () => {
         expect(screen.getByText('Alpha Checkpoint')).toBeInTheDocument();
         // Image count badge shows 3
         expect(screen.getByText('3')).toBeInTheDocument();
+    });
+
+    it('renders storage breakdown button and toggles breakdown grid', async () => {
+        const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+        render(
+            <QueryClientProvider client={queryClient}>
+                <InstalledTab />
+            </QueryClientProvider>
+        );
+
+        expect(screen.getByText('Library Storage')).toBeInTheDocument();
+        const breakdownBtn = await screen.findByRole('button', { name: /breakdown/i });
+        expect(breakdownBtn).toBeInTheDocument();
+        breakdownBtn.click();
+        expect(await screen.findByText('66.7%')).toBeInTheDocument();
+        expect(await screen.findByText('33.3%')).toBeInTheDocument();
+        expect(screen.getAllByText('LoRAs').length).toBeGreaterThanOrEqual(2);
     });
 });

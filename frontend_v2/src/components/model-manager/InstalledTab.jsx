@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, memo } from 'react';
-import { Search, Loader2, RotateCw, Trash2, HardDrive, Globe, Wand2, Check, CheckSquare, Download, X, Database, Images } from 'lucide-react';
+import { Search, Loader2, RotateCw, Trash2, HardDrive, Globe, Wand2, Check, CheckSquare, Download, X, Database, Images, ChevronDown, ChevronUp, PieChart } from 'lucide-react';
 import ProgressiveImage from '../ProgressiveImage';
 import { getOptimizedImageUrl } from '../../utils/imageOptimization';
 import { modelListKey } from '../../constants/queryKeys';
@@ -8,7 +8,7 @@ import { nextOffsetPageParam } from '../../utils/pagination';
 import toast from 'react-hot-toast';
 import { filesApi, api, modelsApi, providersApi } from '../../api';
 import { useInfiniteScroll } from '../../hooks/useInfiniteScroll';
-import { useInfiniteQuery } from '@tanstack/react-query';
+import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import useProvidersPageData from '../../hooks/useProvidersPageData';
 import { MODEL_MANAGER_CATEGORIES } from '../../constants/modelDirectories';
 import { getProviderDisplayName } from '../../utils/providerUtils';
@@ -24,6 +24,31 @@ import BatchResyncModal from './BatchResyncModal';
 import { QueryErrorState } from '../common/QueryState';
 
 const CATEGORIES = MODEL_MANAGER_CATEGORIES;
+
+const CATEGORY_STYLES = {
+    checkpoints: { bar: 'bg-blue-500', hex: '#3b82f6', text: 'text-blue-400', badge: 'bg-blue-500/10 border-blue-500/20' },
+    loras: { bar: 'bg-purple-500', hex: '#a855f7', text: 'text-purple-400', badge: 'bg-purple-500/10 border-purple-500/20' },
+    unet: { bar: 'bg-indigo-500', hex: '#6366f1', text: 'text-indigo-400', badge: 'bg-indigo-500/10 border-indigo-500/20' },
+    clip: { bar: 'bg-cyan-500', hex: '#06b6d4', text: 'text-cyan-400', badge: 'bg-cyan-500/10 border-cyan-500/20' },
+    controlnet: { bar: 'bg-emerald-500', hex: '#10b981', text: 'text-emerald-400', badge: 'bg-emerald-500/10 border-emerald-500/20' },
+    vae: { bar: 'bg-amber-500', hex: '#f59e0b', text: 'text-amber-400', badge: 'bg-amber-500/10 border-amber-500/20' },
+    upscale_models: { bar: 'bg-rose-500', hex: '#f43f5e', text: 'text-rose-400', badge: 'bg-rose-500/10 border-rose-500/20' },
+    embeddings: { bar: 'bg-teal-500', hex: '#14b8a6', text: 'text-teal-400', badge: 'bg-teal-500/10 border-teal-500/20' },
+    adetailer: { bar: 'bg-orange-500', hex: '#f97316', text: 'text-orange-400', badge: 'bg-orange-500/10 border-orange-500/20' },
+    motion_modules: { bar: 'bg-pink-500', hex: '#ec4899', text: 'text-pink-400', badge: 'bg-pink-500/10 border-pink-500/20' },
+    llm: { bar: 'bg-yellow-500', hex: '#eab308', text: 'text-yellow-400', badge: 'bg-yellow-500/10 border-yellow-500/20' },
+};
+
+const getCategoryMeta = (dir) => {
+    const match = CATEGORIES.find(c => c.id === dir || c.path === `models/${dir}` || c.path === dir);
+    if (match) return match;
+    if (dir === 'upscale_models') return { id: 'upscale_models', label: 'Upscalers', path: 'models/upscale_models' };
+    return {
+        id: dir,
+        label: dir.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
+        path: `models/${dir}`,
+    };
+};
 
 /**
  * One row of the installed-model grid.
@@ -222,6 +247,15 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
     const [isSelectMode, setIsSelectMode] = useState(false);
     const [selectedFiles, setSelectedFiles] = useState([]);
     const [showBatchSyncModal, setShowBatchSyncModal] = useState(false);
+    const [showBreakdown, setShowBreakdown] = useState(false);
+    const queryClient = useQueryClient();
+
+    const { data: storageBreakdown } = useQuery({
+        queryKey: ['models', 'storage-breakdown'],
+        queryFn: () => modelsApi.getStorageBreakdown(),
+        staleTime: 30000,
+    });
+
 
     const path = CATEGORIES.find(c => c.id === category)?.path;
 
@@ -288,6 +322,23 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
     const totalStorageBytes = useMemo(() => {
         return filteredFiles.reduce((acc, f) => acc + (f.size || 0), 0);
     }, [filteredFiles]);
+    const totalLibraryBytes = storageBreakdown?.total_bytes ?? totalStorageBytes;
+    const totalLibraryModels = storageBreakdown?.total_models ?? filteredFiles.length;
+
+    const activeCategoryMeta = useMemo(() => {
+        return CATEGORIES.find(c => c.id === category);
+    }, [category]);
+
+    const activeCategoryData = useMemo(() => {
+        if (!storageBreakdown?.categories) return null;
+        const targetDir = activeCategoryMeta?.path?.replace('models/', '') || category;
+        return storageBreakdown.categories.find(
+            c => c.directory === targetDir || c.directory === category
+        );
+    }, [storageBreakdown, activeCategoryMeta, category]);
+
+    const activeCategoryBytes = activeCategoryData ? activeCategoryData.total_bytes : totalStorageBytes;
+    const activeCategoryModelCount = activeCategoryData ? activeCategoryData.total_models : filteredFiles.length;
 
     const loading = isFetching && !isFetchingNextPage;
     const loadingMore = isFetchingNextPage;
@@ -324,6 +375,7 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
 
     const handleRefresh = () => {
         refetch();
+        queryClient?.invalidateQueries?.({ queryKey: ['models', 'storage-breakdown'] });
     };
 
     const sentinelRef = useInfiniteScroll({
@@ -353,6 +405,7 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
                 toast.success("Deleted " + displayName);
             }
             refetch();
+            queryClient?.invalidateQueries?.({ queryKey: ['models', 'storage-breakdown'] });
         } catch {
             toast.error("Error deleting model");
         }
@@ -399,6 +452,7 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
             toast.success(`Deleted ${selectedFiles.length} models`);
             setSelectedFiles([]);
             refetch();
+            queryClient?.invalidateQueries?.({ queryKey: ['models', 'storage-breakdown'] });
         } catch {
             toast.error("Error during batch delete");
         }
@@ -422,24 +476,51 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
     return (
         <div className="space-y-4 md:space-y-6">
             {/* Storage Footprint Analytics Bar */}
-            <div className="bg-[#0B0E14]/70 border border-white/5 rounded-2xl p-4 shadow-inner">
+            <div className="bg-[#0B0E14]/70 border border-white/5 rounded-2xl p-4 shadow-inner space-y-3">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                     <div className="flex items-center gap-3">
                         <div className="p-2.5 rounded-xl bg-blue-500/10 border border-blue-500/20 text-blue-400 shadow-inner">
                             <HardDrive size={20} />
                         </div>
                         <div>
-                            <div className="text-2xs font-bold text-gray-500 uppercase tracking-widest">Library Storage</div>
-                            <div className="text-sm font-black text-white flex items-center gap-2">
-                                <span>{formatBytes(totalStorageBytes)}</span>
+                            <div className="text-2xs font-bold text-gray-500 uppercase tracking-widest flex items-center gap-1.5">
+                                <span>Library Storage</span>
+                                {storageBreakdown?.categories && (
+                                    <span className="text-3xs font-semibold px-1.5 py-0.2 rounded-full bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                                        {storageBreakdown.categories.length} Types
+                                    </span>
+                                )}
+                            </div>
+                            <div className="text-sm font-black text-white flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                                <span>{formatBytes(totalLibraryBytes)}</span>
                                 <span className="text-xs font-normal text-gray-500">
-                                    • {filteredFiles.length} models visible
+                                    • {totalLibraryModels} models in library
                                 </span>
+                                {activeCategoryMeta && (
+                                    <span className="text-xs font-normal text-blue-400/90 pl-1 border-l border-white/10">
+                                        {activeCategoryMeta.label}: {formatBytes(activeCategoryBytes)} ({activeCategoryModelCount} models{filteredFiles.length !== activeCategoryModelCount ? ` • ${filteredFiles.length} visible` : ''})
+                                    </span>
+                                )}
                             </div>
                         </div>
                     </div>
 
                     <div className="flex items-center gap-2">
+                        {storageBreakdown?.categories?.length > 0 && (
+                            <button
+                                onClick={() => setShowBreakdown(!showBreakdown)}
+                                className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-all flex items-center gap-1.5 ${
+                                    showBreakdown
+                                        ? 'bg-blue-600/20 text-blue-400 border-blue-500 shadow-[0_0_10px_rgba(59,130,246,0.2)]'
+                                        : 'bg-[#0B0E14] text-gray-300 border-white/10 hover:border-white/20'
+                                }`}
+                                title="Toggle comprehensive storage breakdown by model type"
+                            >
+                                <PieChart size={13} />
+                                <span>Breakdown</span>
+                                {showBreakdown ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+                            </button>
+                        )}
                         <button
                             onClick={() => {
                                 setIsSelectMode(!isSelectMode);
@@ -456,6 +537,87 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
                         </button>
                     </div>
                 </div>
+
+                {/* Multi-segment visual storage distribution bar */}
+                {storageBreakdown?.categories?.length > 0 && (
+                    <div className="space-y-1.5 pt-1">
+                        <div className="h-2 w-full bg-white/5 rounded-full overflow-hidden flex shadow-inner">
+                            {storageBreakdown.categories.map((cat) => {
+                                const meta = getCategoryMeta(cat.directory);
+                                const style = CATEGORY_STYLES[cat.directory] || CATEGORY_STYLES[meta.id] || { bar: 'bg-gray-500', text: 'text-gray-400' };
+                                const widthPct = Math.max(cat.percentage, 0.5);
+                                return (
+                                    <div
+                                        key={cat.directory}
+                                        style={{ width: `${widthPct}%` }}
+                                        className={`${style.bar} h-full transition-all duration-300 hover:brightness-125 cursor-pointer`}
+                                        title={`${meta.label}: ${formatBytes(cat.total_bytes)} (${cat.percentage}%) • ${cat.total_models} models - Click to view`}
+                                        onClick={() => {
+                                            if (meta.id) {
+                                                setCategory(meta.id);
+                                                setSelectedFiles([]);
+                                            }
+                                        }}
+                                    />
+                                );
+                            })}
+                        </div>
+                    </div>
+                )}
+
+                {/* Expandable Comprehensive Breakdown Cards */}
+                {showBreakdown && storageBreakdown?.categories?.length > 0 && (
+                    <div className="pt-3 border-t border-white/5 animate-fadeIn">
+                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2.5">
+                            {storageBreakdown.categories.map((cat) => {
+                                const meta = getCategoryMeta(cat.directory);
+                                const style = CATEGORY_STYLES[cat.directory] || CATEGORY_STYLES[meta.id] || { bar: 'bg-gray-500', text: 'text-gray-400', badge: 'bg-gray-500/10 border-gray-500/20' };
+                                const isCurrent = category === meta.id || category === cat.directory;
+                                return (
+                                    <div
+                                        key={cat.directory}
+                                        onClick={() => {
+                                            if (meta.id) {
+                                                setCategory(meta.id);
+                                                setSelectedFiles([]);
+                                            }
+                                        }}
+                                        className={`p-2.5 rounded-xl border transition-all cursor-pointer ${
+                                            isCurrent
+                                                ? 'bg-blue-600/15 border-blue-500/60 shadow-[0_0_12px_rgba(59,130,246,0.2)]'
+                                                : 'bg-black/30 border-white/5 hover:border-white/20 hover:bg-white/[0.02]'
+                                        }`}
+                                    >
+                                        <div className="flex items-center justify-between gap-1 mb-1">
+                                            <div className="flex items-center gap-1.5 min-w-0">
+                                                <div className={`w-2 h-2 rounded-full ${style.bar} shrink-0`} />
+                                                <span className="text-xs font-bold text-gray-200 truncate" title={meta.label}>
+                                                    {meta.label}
+                                                </span>
+                                            </div>
+                                            <span className={`text-3xs font-extrabold px-1 py-0.2 rounded border ${style.badge || 'border-white/10'} ${style.text}`}>
+                                                {cat.percentage}%
+                                            </span>
+                                        </div>
+                                        <div className="text-sm font-black text-white tracking-tight">
+                                            {formatBytes(cat.total_bytes)}
+                                        </div>
+                                        <div className="text-3xs text-gray-400 mt-0.5 flex items-center justify-between">
+                                            <span>{cat.total_models} models</span>
+                                            <span className="text-gray-500">{cat.total_files} files</span>
+                                        </div>
+                                        <div className="w-full bg-white/5 h-1 rounded-full mt-2 overflow-hidden">
+                                            <div
+                                                style={{ width: `${Math.min(cat.percentage, 100)}%` }}
+                                                className={`h-full ${style.bar} rounded-full`}
+                                            />
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+                )}
             </div>
 
             {/* Category Tabs */}
