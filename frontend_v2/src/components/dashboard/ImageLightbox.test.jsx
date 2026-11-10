@@ -150,4 +150,33 @@ describe('ImageLightbox', () => {
         expect(screen.getByText('1.10s')).toBeInTheDocument();
         expect(screen.getByText('2.20s')).toBeInTheDocument();
     });
+
+    it('fetches and renders telemetry from linked job when metadata.job_id is present', async () => {
+        const { jobsApi } = await import('../../api/jobs');
+        vi.spyOn(jobsApi, 'get').mockResolvedValue({
+            id: 'job-xyz-999',
+            provider_id: 'colab-one',
+            timings: {
+                model_load_seconds: 4.5,
+                sampling_seconds: 12.0,
+                total_backend_seconds: 16.5,
+            },
+        });
+
+        render(
+            <ImageLightbox
+                image={mockImage}
+                images={mockImages}
+                currentIndex={0}
+                metadata={{ job_id: 'job-xyz-999', steps: 25 }}
+                onClose={() => {}}
+                onDelete={() => {}}
+            />
+        );
+
+        expect(await screen.findByTestId('generation-telemetry')).toBeInTheDocument();
+        expect(await screen.findByText('12.00s')).toBeInTheDocument();
+        expect(screen.getByText(/25 steps @/)).toBeInTheDocument();
+        expect(screen.getAllByText('colab-one').length).toBeGreaterThanOrEqual(1);
+    });
 });

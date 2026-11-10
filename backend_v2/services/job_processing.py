@@ -415,6 +415,36 @@ async def finalize_persisted_job_outputs(
                     event_extra=event_extra,
                     timings=enriched_timings,
                 )
+                try:
+                    from core.entities import Asset
+                    from sqlmodel import or_, select
+
+                    output_filenames = [
+                        out.get("filename")
+                        for out in (outputs or [])
+                        if isinstance(out, dict) and out.get("filename")
+                    ]
+                    stmt = select(Asset).where(
+                        or_(
+                            Asset.job_id == job_id,
+                            Asset.filename.in_(output_filenames) if output_filenames else False,
+                        )
+                    )
+                    assets = reconcile_session.exec(stmt).all()
+                    for asset in assets:
+                        meta = dict(asset.metadata_ or {})
+                        meta["timings"] = enriched_timings
+                        if provider_id and not meta.get("provider"):
+                            meta["provider"] = provider_id
+                        asset.metadata_ = meta
+                        if asset.duration_seconds is None and enriched_timings.get("total_backend_seconds"):
+                            asset.duration_seconds = float(enriched_timings["total_backend_seconds"])
+                        reconcile_session.add(asset)
+                    if assets:
+                        reconcile_session.commit()
+                except Exception as asset_err:
+                    logger.debug("asset_timings_enrich_failed", job_id=job_id, error=str(asset_err))
+
                 logger.info("job_completed", job_id=job_id, outputs=len(outputs), provider_id=provider_id)
             except Exception as exc:
                 logger.error("job_finalize_failed", job_id=job_id, provider_id=provider_id, error=str(exc), exc_info=True)
@@ -1317,6 +1347,7 @@ async def _finalize_image_job(
     outputs: list,
     process_image_background_fn,
     timings: dict[str, Any] | None = None,
+    await_completion: bool = False,
 ) -> None:
     event_extra: dict[str, Any] | None = None
     metadata = job.metadata_ or {}
@@ -1382,6 +1413,7 @@ async def _finalize_image_job(
         process_image_background_fn=process_image_background_fn,
         event_extra=event_extra,
         timings=timings,
+        await_completion=await_completion,
     )
 
 
@@ -1448,7 +1480,7 @@ async def finalize_successful_job(
     # --- image path: normalize provider images into persisted output records ---
     if "images" in final_result:
         images = final_result.get("images", [])
-        outputs = await asyncio.to_thread(build_job_outputs, job, images, provider_id)
+        outputs = await asyncio.to_thread(build_job_outputs, job, images, provider_id, None, final_result.get("timings"))
     elif "outputs" in final_result:
         # Already-persisted artifacts (e.g. direct_url providers on a shared
         # mount) carry only filename/subfolder; resolve real paths so

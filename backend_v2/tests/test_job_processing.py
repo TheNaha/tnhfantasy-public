@@ -593,3 +593,52 @@ def test_classify_story_illustrate_prompt():
 def test_classify_suggest_reply():
     job = _llm_job(workflow={"type": "suggest_reply"}, metadata={"type": "suggest_reply"})
     assert _classify_llm_job_type(job, {}) == "suggest_reply"
+
+
+@pytest.mark.asyncio
+async def test_complete_and_persist_job_enriches_asset_timings(session: Session, monkeypatch):
+    from core.entities import Asset
+    from services.job_processing import _finalize_image_job
+
+    monkeypatch.setattr("services.job_processing.get_session_context", _async_session_override(session))
+    monkeypatch.setattr("services.job_processing.wait_for_gallery_outputs", AsyncMock())
+
+    job_service = JobService(session)
+    job = await job_service.create_job(workflow={"3": {"class_id": "KSampler"}}, metadata={"steps": 20}, task_type="image")
+    await job_service.update_job(job.id, status=JobStatus.SENT_TO_PROVIDER)
+    await job_service.update_job(job.id, status=JobStatus.GENERATING)
+    job = await job_service.get_job(job.id)
+    asset = Asset(
+        user_id="default_user",
+        filename="test_render.png",
+        relative_path="default_user/main/test_render.png",
+        job_id=job.id,
+        metadata_={"prompt": "test prompt", "steps": 20},
+    )
+    session.add(asset)
+    session.commit()
+
+    timings_payload = {
+        "sampling_seconds": 10.5,
+        "model_load_seconds": 2.0,
+        "total_seconds": 15.0,
+    }
+
+    await _finalize_image_job(
+        job_id=job.id,
+        job=job,
+        job_service=job_service,
+        load_balancer=None,
+        provider_id="colab-one",
+        outputs=[{"type": "image", "filename": "test_render.png", "relative_path": "default_user/main/test_render.png"}],
+        process_image_background_fn=None,
+        timings=timings_payload,
+        await_completion=True,
+    )
+    session.refresh(asset)
+    assert asset.metadata_ is not None
+    assert "timings" in asset.metadata_
+    assert asset.metadata_["timings"]["sampling_seconds"] == 10.5
+    assert asset.metadata_["provider"] == "colab-one"
+    assert asset.duration_seconds is not None
+    assert asset.duration_seconds >= 15.0

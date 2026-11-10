@@ -33,7 +33,7 @@ import tempfile
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, File, Query, Request, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from typing import Optional
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 from sqlmodel import Session, select
@@ -1578,6 +1578,56 @@ def _view_file_sync(path: str) -> FileResponse:
                     "Content-Disposition": f"attachment; {encode_filename_for_header(os.path.basename(local_path))}"
                 }
             )
+        # If a metadata JSON was requested for an image but no sidecar exists on disk,
+        # extract metadata from the underlying image or DB asset index
+        if filename.endswith(".json"):
+            base_filename = filename[:-5]
+            img_path = None
+            try:
+                direct_img = get_safe_path(OUTPUT_DIR, base_filename)
+                if os.path.exists(direct_img):
+                    img_path = direct_img
+            except ValidationError:
+                pass
+            if not img_path:
+                img_path = _resolve_asset_path(base_filename)
+            if img_path and os.path.exists(img_path):
+                from infrastructure.image_processor import read_image_metadata
+                meta = {}
+                try:
+                    meta = read_image_metadata(img_path)
+                except Exception:
+                    pass
+                try:
+                    with _sync_session() as session:
+                        asset = session.exec(select(Asset).where(
+                            (Asset.relative_path == base_filename.lstrip("/\\"))
+                            | (Asset.filename == os.path.basename(base_filename))
+                        ).where(Asset.deleted_at.is_(None))).first()
+                        if asset:
+                            if asset.metadata_:
+                                meta = {**dict(asset.metadata_), **meta}
+                            if asset.job_id:
+                                if not meta.get("job_id"):
+                                    meta["job_id"] = asset.job_id
+                                if "timings" not in meta:
+                                    from core.entities import Job
+                                    job_row = session.exec(select(Job).where(Job.id == asset.job_id)).first()
+                                    if job_row and isinstance(job_row.metadata_, dict):
+                                        job_timings = (
+                                            job_row.metadata_.get("diagnostics", {}).get("timings")
+                                            or job_row.metadata_.get("timings")
+                                        )
+                                        if job_timings:
+                                            meta["timings"] = job_timings
+                                        if job_row.provider_id and not meta.get("provider"):
+                                            meta["provider"] = job_row.provider_id
+                            if asset.duration_seconds and "duration_seconds" not in meta:
+                                meta.setdefault("job", {})["duration_seconds"] = asset.duration_seconds
+                except Exception:
+                    pass
+                if meta:
+                    return JSONResponse(content=meta)
 
         # Resolve via the DB-backed asset index (partitioned layout aware)
         indexed_path = _resolve_asset_path(filename)

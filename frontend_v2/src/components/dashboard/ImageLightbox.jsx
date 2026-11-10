@@ -1,12 +1,13 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef, memo } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { X, Download, Trash2, Loader2, RefreshCw, ChevronLeft, ChevronRight, Clock, Server, Hash, Maximize2, Minimize2, Expand, Shrink, Copy, Check } from 'lucide-react';
+import { jobsApi } from '../../api/jobs';
 import ProgressiveImage from '../ProgressiveImage';
 import { getProviderDisplayName } from '../../utils/providerUtils';
 import { assetUrl, assetPath } from '../../utils/assetUrl';
 import { formatBytes } from '../../utils/bytes';
 import { copyToClipboard } from '../../utils/clipboard';
 import toast from 'react-hot-toast';
-import { memo } from 'react';
 import ModalOverlay from '../common/ModalOverlay';
 import AssetTagEditor from './AssetTagEditor';
 import GenerationTelemetry from '../common/GenerationTelemetry';
@@ -48,8 +49,22 @@ export default memo(function ImageLightbox({
     const touchStartRef = useRef(null);
     // Set when next walks off the end of the loaded prefix; the effect below
     const pendingAdvanceRef = useRef(false);
-    const timings = job?.timings || metadata?.timings || metadata?.job?.timings || job?.diagnostics?.timings || metadata?.diagnostics?.timings;
-    // The Fullscreen API is absent on iPhone Safari and can be denied, so every
+
+    const indexedImage = images.length > 0 ? images[imgIndex] : undefined;
+    const displayImage = indexedImage || image;
+    const displayPath = assetPath(displayImage);
+
+    const activeJobId = job?.id || metadata?.job_id || displayImage?.metadata?.job_id;
+    const { data: fetchedJob } = useQuery({
+        queryKey: ['job', activeJobId],
+        queryFn: () => jobsApi.get(activeJobId),
+        enabled: !job && !!activeJobId,
+        staleTime: 60000,
+    });
+
+    const effectiveJob = job || fetchedJob;
+    const timings = effectiveJob?.timings || metadata?.timings || displayImage?.metadata?.timings || metadata?.job?.timings || effectiveJob?.diagnostics?.timings || metadata?.diagnostics?.timings;
+    const effectiveProvider = effectiveJob?.provider_id || metadata?.provider || displayImage?.metadata?.provider || timings?.provider_id;
     // call is optional-chained and the UI simply does not light up without it.
     const supportsNativeFullscreen =
         typeof document !== 'undefined' && typeof document.documentElement?.requestFullscreen === 'function';
@@ -97,9 +112,6 @@ export default memo(function ImageLightbox({
     // a null render would return early here while `useSelectedImageState` still
     // held the body scroll lock, leaving an unscrollable page with no lightbox
     // on it.
-    const indexedImage = images.length > 0 ? images[imgIndex] : undefined;
-    const displayImage = indexedImage || image;
-    const displayPath = assetPath(displayImage);
     // A single loaded image is still navigable when more pages exist.
     const hasMultiple = images.length > 1 || hasMore;
     const isFirst = imgIndex <= 0;
@@ -187,9 +199,9 @@ export default memo(function ImageLightbox({
 
     // Calculate job duration if available
     const getJobDuration = () => {
-        if (!job?.started_at || !job?.completed_at) return null;
-        const start = new Date(job.started_at);
-        const end = new Date(job.completed_at);
+        if (!effectiveJob?.started_at || !effectiveJob?.completed_at) return null;
+        const start = new Date(effectiveJob.started_at);
+        const end = new Date(effectiveJob.completed_at);
         const diffMs = end - start;
         if (isNaN(diffMs) || diffMs < 0) return null;
         const seconds = Math.floor(diffMs / 1000);
@@ -396,22 +408,26 @@ export default memo(function ImageLightbox({
 
                         {/* Generation Telemetry Breakdown (Elevated to top of details) */}
                         {timings && (
-                            <GenerationTelemetry timings={timings} />
+                            <GenerationTelemetry
+                                timings={timings}
+                                steps={metadata?.steps || displayImage?.metadata?.steps || effectiveJob?.metadata?.steps}
+                                providerId={effectiveProvider}
+                            />
                         )}
 
                         {/* Job Information */}
-                        {job && (
+                        {effectiveJob ? (
                             <div className="bg-gray-800/50 p-4 rounded-lg border border-gray-700">
                                 <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Job Info</h4>
                                 <div className="space-y-2 text-sm">
                                     <div className="flex items-center gap-2 text-gray-400">
                                         <Hash size={14} className="text-gray-500" />
-                                        <span className="font-mono text-xs">{job.id?.substring(0, 8)}...</span>
+                                        <span className="font-mono text-xs">{effectiveJob.id?.substring(0, 8)}...</span>
                                     </div>
-                                    {job.provider_id && (
+                                    {effectiveJob.provider_id && (
                                         <div className="flex items-center gap-2 text-purple-400">
                                             <Server size={14} />
-                                            <span>{getProviderDisplayName(job.provider_id)}</span>
+                                            <span>{getProviderDisplayName(effectiveJob.provider_id)}</span>
                                         </div>
                                     )}
                                     {getJobDuration() && (
@@ -422,7 +438,25 @@ export default memo(function ImageLightbox({
                                     )}
                                 </div>
                             </div>
-                        )}
+                        ) : (metadata?.job_id || metadata?.provider || displayImage?.metadata?.job_id || displayImage?.metadata?.provider) ? (
+                            <div className="bg-gray-800/50 p-4 rounded-lg border border-gray-700">
+                                <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Job Info</h4>
+                                <div className="space-y-2 text-sm">
+                                    {(metadata?.job_id || displayImage?.metadata?.job_id) && (
+                                        <div className="flex items-center gap-2 text-gray-400">
+                                            <Hash size={14} className="text-gray-500" />
+                                            <span className="font-mono text-xs">{(metadata?.job_id || displayImage?.metadata?.job_id).substring(0, 8)}...</span>
+                                        </div>
+                                    )}
+                                    {(metadata?.provider || displayImage?.metadata?.provider) && (
+                                        <div className="flex items-center gap-2 text-purple-400">
+                                            <Server size={14} />
+                                            <span>{getProviderDisplayName(metadata?.provider || displayImage?.metadata?.provider)}</span>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        ) : null}
 
                         <AssetTagEditor key={displayImage?.id || 'no-asset'} assetId={displayImage?.id} />
                         {loadingMeta ? (
@@ -456,28 +490,6 @@ export default memo(function ImageLightbox({
                                         </span>
                                     </div>
                                 </div>
-
-                                {/* Job Info from Metadata (if not provided via props) */}
-                                {!job && (metadata.job_id || metadata.provider) && (
-                                    <div className="bg-gray-800/50 p-4 rounded-lg border border-gray-700">
-                                        <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Job Info</h4>
-                                        <div className="space-y-2 text-sm">
-                                            {metadata.job_id && (
-                                                <div className="flex items-center gap-2 text-gray-400">
-                                                    <Hash size={14} className="text-gray-500" />
-                                                    <span className="font-mono text-xs">{metadata.job_id.substring(0, 8)}...</span>
-                                                </div>
-                                            )}
-                                            {metadata.provider && (
-                                                <div className="flex items-center gap-2 text-purple-400">
-                                                    <Server size={14} />
-                                                    <span>{getProviderDisplayName(metadata.provider)}</span>
-                                                </div>
-                                            )}
-                                        </div>
-                                    </div>
-                                )}
-
 
                                 {/* LoRAs */}
                                 {metadata.loras?.length > 0 && (

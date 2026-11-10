@@ -71,6 +71,7 @@ def build_job_outputs(
     images: list[dict[str, Any]],
     provider_id: str,
     duration_seconds: float | None = None,
+    timings: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Persist worker images and return normalized job outputs.
 
@@ -146,7 +147,9 @@ def build_job_outputs(
                 ]:
                     if key in job.metadata_:
                         full_metadata[key] = job.metadata_[key]
-            if "timings" not in full_metadata and isinstance(job.metadata_, dict):
+            if timings:
+                full_metadata["timings"] = timings
+            elif "timings" not in full_metadata and isinstance(job.metadata_, dict):
                 diag_timings = job.metadata_.get("diagnostics", {}).get("timings")
                 if diag_timings:
                     full_metadata["timings"] = diag_timings
