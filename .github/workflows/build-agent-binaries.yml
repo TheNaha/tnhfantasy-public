@@ -13,7 +13,7 @@ on:
       - "remote_agent/**"
       - "remote_agent/provider_core/**"
       - ".github/workflows/build-agent-binaries.yml"
-    branches: [main, master]
+    branches: [master]
 
 jobs:
   build:

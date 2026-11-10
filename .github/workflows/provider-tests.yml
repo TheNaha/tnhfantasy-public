@@ -2,7 +2,7 @@ name: Provider Tests
 
 on:
   push:
-    branches: [ "main", "master" ]
+    branches: [ "master" ]
     paths:
       # `remote_agent/` (incl. `remote_agent/provider_core/`) is the remaining
       # provider-surface that still ships an image and runs its own tests via
@@ -25,7 +25,7 @@ on:
       # The root `.dockerignore` governs the remote agent's build context.
       - '.dockerignore'
   pull_request:
-    branches: [ "main", "master" ]
+    branches: [ "master" ]
     paths:
       - 'remote_agent/**'
       - 'docker-compose*.yml'

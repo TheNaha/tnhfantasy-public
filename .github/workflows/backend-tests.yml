@@ -2,7 +2,7 @@ name: Backend Tests
 
 on:
   push:
-    branches: [ "main", "master" ]
+    branches: [ "master" ]
     paths:
       - 'backend_v2/**'
       # `docs/api.md` is GENERATED from `app.openapi()` by
@@ -23,7 +23,7 @@ on:
       - 'deployables/**'
       - 'remote_agent/**'
   pull_request:
-    branches: [ "main", "master" ]
+    branches: [ "master" ]
     paths:
       - 'backend_v2/**'
       # `docs/api.md` is GENERATED from `app.openapi()` by

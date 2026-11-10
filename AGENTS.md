@@ -82,7 +82,7 @@ bun run test:e2e                                 # Playwright; starts its own de
 
 ## CI
 
-Workflows run on push or PR to `main`/`master`, filtered by path:
+Workflows run on push or PR to `master`, filtered by path:
 - `backend_v2/**` or `docs/api.md` → `backend-tests.yml`: Python 3.13, ruff, pytest, with a pgvector service.
 - `frontend_v2/**` → `frontend-tests.yml`: lint, then vitest, then build.
 - `frontend_v2/**` or `backend_v2/**` → `frontend-e2e.yml`.
