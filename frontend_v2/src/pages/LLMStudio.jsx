@@ -42,6 +42,7 @@ import { settingsApi } from '../api/settingsApi';
 import { useConfirmation } from '../store/confirmationStore';
 import { QueryErrorState } from '../components/common/QueryState';
 import { copyToClipboard } from '../utils/clipboard';
+import { CHAR_GEN_PROMPTS } from '../constants/charGenPrompts';
 import WorkflowTab from '../components/llm/WorkflowTab';
 import LayaQuestionsTab from '../components/llm/LayaQuestionsTab';
 import DecisionTraceTab from '../components/llm/DecisionTraceTab';
@@ -143,14 +144,7 @@ const SYSTEM_PROMPT_DEFAULTS = {
     world_tick: 'You are a world simulation engine. Given the current world state, active locations, and resident character statuses, simulate the passage of time: generate world events, faction rumors, and location atmosphere shifts. Return strictly valid JSON.',
     vision_avatar_analysis: 'You are an expert anime and fantasy art analyzer. Carefully examine the character image and output a detailed description of their physical appearance, hair, eyes, expression, clothing style, accessories, and a comma-separated list of Danbooru visual tags. Return strictly valid JSON.',
     magic_prompt: 'You are an expert AI prompt engineer specializing in Anime, Fantasy, and Cinematic digital art. Given a short user concept, expand it into a rich, comma-separated Danbooru and ComfyUI image prompt with detailed visual tags for subject, hair, eyes, clothing, expression, dynamic pose, cinematic lighting, intricate backdrop, and masterwork quality modifiers. Output ONLY the comma-separated prompt text.',
-    charGenDescriptionPrompt: 'You are an expert character creator. Expand the provided character details into a rich, detailed background description. Return ONLY the text for the description, no markdown or extra chat.',
-    charGenPersonalityPrompt: 'You are an expert character creator. Expand the provided character details into a detailed personality profile covering traits, quirks, and mannerisms. Return ONLY the text, no markdown.',
-    charGenScenarioPrompt: 'You are an expert character creator. Create an engaging scenario/setting for this character based on their details. Return ONLY the text, no markdown.',
-    charGenFirstMesPrompt: 'You are an expert character creator. Write an engaging first message/greeting from this character in their unique voice. Return ONLY the text, no markdown.',
-    charGenMesExamplePrompt: 'You are an expert character creator. Write a few short dialogue examples showing how this character speaks. Use <START> to separate examples. Return ONLY the text, no markdown.',
-    charGenSystemPromptPrompt: 'You are an expert character creator. Write a custom system prompt that instructs an AI how to play this character. Return ONLY the text, no markdown.',
-    charGenVisualTagsPrompt: 'You are an expert character creator. Generate a comma-separated list of Danbooru-style visual tags that describe this character\'s appearance. Return ONLY the tags, no markdown.',
-    charGenEnrichPrompt: 'You are an expert character creator. Read the provided character details and fill in ALL missing fields to enrich the character profile. Output MUST be valid JSON matching exactly these keys: "description", "personality", "scenario", "first_mes", "mes_example", "default_time", "default_location". Do not include markdown code blocks, just raw JSON.',
+    ...CHAR_GEN_PROMPTS,
 };
 
 const SYSTEM_PROMPT_METADATA = [

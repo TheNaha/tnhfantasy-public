@@ -28,6 +28,7 @@ import CharacterCardImportReport from '../components/characters/CharacterCardImp
 import CharacterCardImportPreview from '../components/characters/CharacterCardImportPreview';
 import { useWorldVaultStore } from '../store/worldVaultStore';
 import useSettingsStore from '../store/settingsStore';
+import { CHAR_GEN_PROMPTS } from '../constants/charGenPrompts';
 import EmptyState from '../components/EmptyState';
 import { useConfirmation } from '../store/confirmationStore';
 import filesApi from '../api/files';
@@ -321,7 +322,7 @@ export function CharacterModal({ isOpen, onClose, character, onSave, activeTab: 
             case 'visual_tags': promptKey = 'charGenVisualTagsPrompt'; break;
             default: return;
         }
-        const sysPrompt = aiSettings[promptKey] || '';
+        const sysPrompt = aiSettings[promptKey] || CHAR_GEN_PROMPTS[promptKey];
         
         let context = `Name: ${form.name}\n`;
         if (form.description && fieldKey !== 'description') context += `Description: ${form.description}\n`;
@@ -365,7 +366,7 @@ export function CharacterModal({ isOpen, onClose, character, onSave, activeTab: 
             return;
         }
 
-        const sysPrompt = settings.ai?.charGenEnrichPrompt || 'You are an expert character creator. Read the provided character details and fill in ALL missing fields to enrich the character profile. Output MUST be valid JSON matching exactly these keys: "description", "personality", "scenario", "first_mes", "mes_example", "default_time", "default_location". Do not include markdown code blocks, just raw JSON.';
+        const sysPrompt = settings.ai?.charGenEnrichPrompt || CHAR_GEN_PROMPTS.charGenEnrichPrompt;
         let context = `Name: ${form.name}\n`;
         if (form.description) context += `Description: ${form.description}\n`;
         if (form.personality) context += `Personality: ${form.personality}\n`;
