@@ -445,7 +445,7 @@ export default memo(function ImageLightbox({
                                     {(metadata?.job_id || displayImage?.metadata?.job_id) && (
                                         <div className="flex items-center gap-2 text-gray-400">
                                             <Hash size={14} className="text-gray-500" />
-                                            <span className="font-mono text-xs">{(metadata?.job_id || displayImage?.metadata?.job_id).substring(0, 8)}...</span>
+                                            <span className="font-mono text-xs">{(metadata?.job_id || displayImage?.metadata?.job_id)?.substring(0, 8)}...</span>
                                         </div>
                                     )}
                                     {(metadata?.provider || displayImage?.metadata?.provider) && (

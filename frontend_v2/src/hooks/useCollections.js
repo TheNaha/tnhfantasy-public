@@ -6,6 +6,7 @@ import {
     importCollections, moveImagesBetweenCollections
 } from '../api/collectionsApi';
 import { buildQueryKey, QUERY_KEYS } from '../constants/queryKeys';
+import { reportError } from './useWorldVaultResource';
 import useStore from '../store/useStore';
 
 const MIGRATION_KEY = 'comfy-collections-migrated';
@@ -108,7 +109,8 @@ export function useCreateCollection() {
         },
         onSuccess: () => {
             invalidateAllCollections(queryClient);
-        }
+        },
+        onError: (error) => reportError('create collection', error),
     });
 }
 
@@ -124,7 +126,8 @@ export function useDeleteCollection() {
                 useStore.getState().setActiveCollection(null);
             }
             invalidateAllCollections(queryClient);
-        }
+        },
+        onError: (error) => reportError('delete collection', error),
     });
 }
 
@@ -136,7 +139,8 @@ export function useRenameCollection() {
         },
         onSuccess: () => {
             invalidateAllCollections(queryClient);
-        }
+        },
+        onError: (error) => reportError('rename collection', error),
     });
 }
 
@@ -149,7 +153,8 @@ export function useAddImagesToCollection() {
         onSuccess: (_, { collectionId }) => {
             invalidateAllCollections(queryClient);
             queryClient.invalidateQueries({ queryKey: ['collections', collectionId, 'images'] });
-        }
+        },
+        onError: (error) => reportError('add images to collection', error),
     });
 }
 
@@ -187,6 +192,7 @@ export function useMoveImagesBetweenCollections() {
             invalidateAllCollections(queryClient);
             queryClient.invalidateQueries({ queryKey: ['collections', fromCollectionId, 'images'] });
             queryClient.invalidateQueries({ queryKey: ['collections', toCollectionId, 'images'] });
-        }
+        },
+        onError: (error) => reportError('move images between collections', error),
     });
 }

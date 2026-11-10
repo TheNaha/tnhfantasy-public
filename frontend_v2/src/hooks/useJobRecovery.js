@@ -11,6 +11,7 @@ import { useCallback } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { jobsApi } from '../api';
 import { refetchNewestGalleryPage } from './useGallery';
+import { reportError } from './useWorldVaultResource';
 
 export const FAILED_JOBS_QUERY_KEY = ['jobs', 'failed'];
 
@@ -71,16 +72,19 @@ export function useJobRecovery({
     const retryMutation = useMutation({
         mutationFn: (jobId) => jobsApi.retry(jobId),
         onSuccess: invalidateJobViews(queryClient),
+        onError: (error) => reportError('retry job', error),
     });
 
     const cancelMutation = useMutation({
         mutationFn: ({ jobId, reason } = {}) => jobsApi.cancel(jobId, reason ?? null),
         onSuccess: invalidateJobViews(queryClient),
+        onError: (error) => reportError('cancel job', error),
     });
 
     const recoverMutation = useMutation({
         mutationFn: (options = {}) => jobsApi.recover(options),
         onSuccess: invalidateJobViews(queryClient),
+        onError: (error) => reportError('recover jobs', error),
     });
 
     /**
@@ -91,12 +95,14 @@ export function useJobRecovery({
         mutationFn: ({ jobId, acknowledged = true } = {}) =>
             jobsApi.acknowledge(jobId, acknowledged),
         onSuccess: invalidateJobViews(queryClient),
+        onError: (error) => reportError('acknowledge job', error),
     });
 
     const acknowledgeAllMutation = useMutation({
         mutationFn: ({ acknowledged = true, taskType = null } = {}) =>
             jobsApi.acknowledgeAll({ acknowledged, taskType }),
         onSuccess: invalidateJobViews(queryClient),
+        onError: (error) => reportError('acknowledge all jobs', error),
     });
 
     /**
