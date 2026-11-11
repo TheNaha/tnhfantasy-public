@@ -277,6 +277,7 @@ def get_checkpoint_recommendations(session: Session) -> dict[str, Any]:
             .where(ModelVersion.is_enabled == True)  # noqa: E712
             .where(or_(*conds))
             .order_by(ModelFile.is_primary.desc(), ModelVersion.is_default.desc())
+            .limit(1)
         )
         lora_row = session.exec(stmt_lora_model).first()
         if lora_row:
