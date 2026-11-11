@@ -182,6 +182,12 @@ const ContextMenu = memo(function ContextMenu({
     const handleTouchMove = useCallback(() => {
         handleTouchEnd();
     }, [handleTouchEnd]);
+    useEffect(() => {
+        return () => {
+            clearTimeout(longPressTimer.current);
+            longPressTimer.current = null;
+        };
+    }, []);
 
     // Close menu
     const handleClose = useCallback(() => {

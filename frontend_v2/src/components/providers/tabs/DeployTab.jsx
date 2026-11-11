@@ -47,6 +47,7 @@ const TARGET_DETAILS = {
 export default function DeployTab({ provider }) {
     const queryClient = useQueryClient();
     const consoleRef = useRef(null);
+    const deployAbortRef = useRef(null);
     const [dryRun, setDryRun] = useState(false);
     const [elapsedSeconds, setElapsedSeconds] = useState(0);
     const [copied, setCopied] = useState(false);
@@ -98,6 +99,14 @@ export default function DeployTab({ provider }) {
             if (timer) clearInterval(timer);
         };
     }, [isDeploying]);
+    useEffect(() => {
+        return () => {
+            if (deployAbortRef.current) {
+                deployAbortRef.current.abort();
+            }
+        };
+    }, []);
+
 
     const handleDeploy = async (overrideDryRun = null) => {
         if (!target || isDeploying) return;
@@ -110,6 +119,8 @@ export default function DeployTab({ provider }) {
 
         try {
             if (providersApi.deployStream) {
+                const controller = new AbortController();
+                deployAbortRef.current = controller;
                 await providersApi.deployStream(
                     {
                         target,
@@ -117,10 +128,12 @@ export default function DeployTab({ provider }) {
                         provider_id: provider?.id,
                     },
                     {
+                        signal: controller.signal,
                         onChunk: (chunk) => {
                             setStreamOutput((prev) => prev + chunk);
                         },
                         onFinish: (result) => {
+                            deployAbortRef.current = null;
                             setIsDeploying(false);
                             setStreamResult(result);
                             queryClient.invalidateQueries({ queryKey: ['provider-logs', provider?.id] });
@@ -133,6 +146,7 @@ export default function DeployTab({ provider }) {
                             }
                         },
                         onError: (err) => {
+                            deployAbortRef.current = null;
                             setIsDeploying(false);
                             setStreamError(err.message);
                             toast.error(err.message || 'Deployment failed to start');

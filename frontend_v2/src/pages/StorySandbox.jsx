@@ -224,7 +224,9 @@ export default function StorySandbox() {
 
     useEffect(() => {
         titlePollCancelledRef.current = true;
-     
+        return () => {
+            titlePollCancelledRef.current = true;
+        };
     }, [activeChapterId]);
 
 

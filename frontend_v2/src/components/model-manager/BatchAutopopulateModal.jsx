@@ -137,30 +137,37 @@ export default function BatchAutopopulateModal({ onClose }) {
     const loading = isPendingLoading || isBatchLoading;
 
     useEffect(() => {
+        let timer = null;
         if (isAutoPopulatingAll && statusData && statusData.needs_population === 0) {
             toast.success('Batch autopopulation complete!');
             setIsAutoPopulatingAll(false);
-            setTimeout(() => {
+            timer = setTimeout(() => {
                 onClose();
             }, 1500);
         }
+        return () => {
+            clearTimeout(timer);
+        };
     }, [isAutoPopulatingAll, statusData, onClose]);
 
     useEffect(() => {
+        let timer = null;
         const handleProgress = (payload) => {
             setAutoProgress(payload);
             if (payload.status === 'completed') {
                 toast.success('Batch autopopulation complete!');
                 setIsAutoPopulatingAll(false);
-                setTimeout(() => {
+                timer = setTimeout(() => {
                     onClose(); // close modal when done
                 }, 1500);
             }
         };
         ws.on('AUTOPOPULATE_PROGRESS', handleProgress);
-        return () => ws.off('AUTOPOPULATE_PROGRESS', handleProgress);
+        return () => {
+            ws.off('AUTOPOPULATE_PROGRESS', handleProgress);
+            clearTimeout(timer);
+        };
     }, [onClose]);
-
 
     const handleDecision = async (modelId, civitaiId, action) => {
         if (action === 'approve') {
