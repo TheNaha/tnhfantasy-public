@@ -852,7 +852,7 @@ class JobService:
         event_type: EventType | None = None,
         include_full_metadata: bool = True,
         **updates,
-    ) -> Job:
+    ) -> Job | None:
         """
         Update a job.
 

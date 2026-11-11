@@ -157,6 +157,7 @@ export default function BatchAutopopulateModal({ onClose }) {
             if (payload.status === 'completed') {
                 toast.success('Batch autopopulation complete!');
                 setIsAutoPopulatingAll(false);
+                clearTimeout(timer);
                 timer = setTimeout(() => {
                     onClose(); // close modal when done
                 }, 1500);
