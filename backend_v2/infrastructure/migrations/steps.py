@@ -939,6 +939,17 @@ def _migration_add_jobs_claimed_at(conn) -> bool:
                     "CREATE INDEX IF NOT EXISTS ix_jobs_claim "
                     "ON jobs (task_type, status) WHERE status = 'PENDING' AND claimed_at IS NULL"
                 ))
+        return True
+
+    if conn.dialect.name == "postgresql":
+        conn.execute(text("ALTER TABLE jobs ADD COLUMN claimed_at TIMESTAMPTZ"))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_jobs_claim "
+            "ON jobs (task_type, status) WHERE status = 'PENDING' AND claimed_at IS NULL"
+        ))
+    else:
+        conn.execute(text("ALTER TABLE jobs ADD COLUMN claimed_at DATETIME"))
+    logger.info("migration_claimed_at_added", table="jobs")
     return True
 
 
@@ -1004,17 +1015,6 @@ def _migration_099_world_edges(conn) -> bool:
         )
     )
 
-    return True
-
-    if conn.dialect.name == "postgresql":
-        conn.execute(text("ALTER TABLE jobs ADD COLUMN claimed_at TIMESTAMPTZ"))
-        conn.execute(text(
-            "CREATE INDEX IF NOT EXISTS ix_jobs_claim "
-            "ON jobs (task_type, status) WHERE status = 'PENDING' AND claimed_at IS NULL"
-        ))
-    else:
-        conn.execute(text("ALTER TABLE jobs ADD COLUMN claimed_at DATETIME"))
-    logger.info("migration_claimed_at_added", table="jobs")
     return True
 
 
@@ -4963,6 +4963,8 @@ def _migration_087_asset_seed_bigint(conn) -> bool:
     created as INTEGER (31-bit signed on Postgres), which overflows on seeds
     like 3173361303086572. ALTER TYPE ... USING handles existing data in-place.
     """
+    if conn.dialect.name != "postgresql":
+        return True
     tables = set(inspect(conn).get_table_names())
     if "assets" not in tables:
         return False
