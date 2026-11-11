@@ -82,7 +82,8 @@ async def test_create_and_enqueue_job_success(session, monkeypatch):
     svc = JobSubmissionService(session)
     job = await svc.create_and_enqueue_job(_empty_workflow(), {"prompt": "hi"})
     assert job.task_type == "image"
-    assert job.metadata_ == {"prompt": "hi"}
+    assert job.metadata_["prompt"] == "hi"
+    assert "enqueued_at" in job.metadata_
 
     enqueue.assert_awaited_once_with(job.id, task_type="image")
     assert session.get(Job, job.id) is not None

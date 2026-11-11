@@ -546,10 +546,12 @@ async def test_app_serves_requests_after_boot(client, boot):
     # status-card routes, the three load-balancer aliases, the `/api/v2/gallery`
     # alias, the two worker status routes and `POST /api/v2/voices/speak`.
     # Every one of them had zero callers.
-    assert len(spec["paths"]) == 301, (
+    # 301 -> 302 (operations 389 -> 390) for `/api/v2/models/storage-breakdown`
+    # (commit 10a01176: model manager library storage category breakdown).
+    assert len(spec["paths"]) == 302, (
         "route count changed; if routes were added deliberately, bump this"
     )
-    assert sum(len(ops) for ops in spec["paths"].values()) == 389
+    assert sum(len(ops) for ops in spec["paths"].values()) == 390
     assert "/api/ready" in spec["paths"]
     assert not any(path.startswith("/socket.io") for path in spec["paths"])
 
