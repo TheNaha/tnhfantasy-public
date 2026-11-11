@@ -230,7 +230,6 @@ class _BeamLLMEngineBase(BeamEngine):
                     event.setdefault("job_id", job_id)
                     yield event
                     if event.get("event") in TERMINAL_EVENTS:
-                        task.cancel()
                         return
         except asyncio.TimeoutError:
             yield {
@@ -262,6 +261,14 @@ class _BeamLLMEngineBase(BeamEngine):
                 "message": f"Beam {self.ws_path.lstrip('/')} stream error: {exc}",
                 "retryable": True,
             }
+        finally:
+            self.register_abort(job_id, None)
+            if not task.done():
+                task.cancel()
+                try:
+                    await task
+                except (asyncio.CancelledError, Exception):
+                    pass
 
     # ------------------------------------------------------------------
     # Model lifecycle. A hosted LLM/TTS endpoint has no model tree, so these
