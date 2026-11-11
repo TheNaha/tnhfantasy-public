@@ -984,7 +984,7 @@ class JobService:
                     if status in (JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED):
                         duration = None
                         if job.started_at and job.completed_at:
-                            duration = max((job.completed_at - job.started_at).total_seconds(), 0.0)
+                            duration = max((as_utc(job.completed_at) - as_utc(job.started_at)).total_seconds(), 0.0)
                         metrics.track_job_completed(status_value, duration)
                 return job, status, updates
 
@@ -994,6 +994,8 @@ class JobService:
             return _execute(active_session, active_repo)
 
         job, status, updates = await run_db(_db_work)
+        if job is None:
+            return None
         try:
             self.session.expire_all()
         except Exception:
