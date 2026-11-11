@@ -409,7 +409,7 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
         } catch {
             toast.error("Error deleting model");
         }
-    }, [openConfirm, refetch]);
+    }, [openConfirm, refetch, queryClient]);
 
     // Multi-Selection Handlers
     const handleToggleSelect = useCallback((file) => {
@@ -456,7 +456,7 @@ export default function InstalledTab({ openConfirm, itemsPerPage = 20 }) {
         } catch {
             toast.error("Error during batch delete");
         }
-    }, [openConfirm, refetch, selectedFiles]);
+    }, [openConfirm, refetch, selectedFiles, queryClient]);
 
     const handleBatchSyncSubmit = async (providerId) => {
         if (selectedFiles.length === 0 || !providerId) return;
