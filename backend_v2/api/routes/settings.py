@@ -1045,14 +1045,14 @@ def get_scheduler_status() -> dict[str, Any]:
 
 
 @router.post("/scheduler/{job_id}/run")
-async def run_scheduler_job(job_id: str) -> dict[str, Any]:
+def run_scheduler_job(job_id: str) -> dict[str, Any]:
     """Trigger an immediate background run of a scheduled job."""
     from infrastructure.scheduler import trigger_job_now
     return trigger_job_now(job_id)
 
 
 @router.patch("/scheduler/{job_id}")
-async def patch_scheduler_job(
+def patch_scheduler_job(
     job_id: str,
     payload: SchedulerJobUpdateRequest,
 ) -> dict[str, Any]:
