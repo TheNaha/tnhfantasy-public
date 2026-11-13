@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api';
 import { buildQueryKey, QUERY_KEYS } from '../constants/queryKeys';
+import { reportError } from './useWorldVaultResource';
 
 /**
  * Backend bound, mirrored here: `search_entities` declares
@@ -102,6 +103,7 @@ export const useSaveGraphLayout = () => {
         onSuccess: (_, { name = 'default' }) => {
             queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.GRAPH_LAYOUT, name) });
         },
+        onError: (error) => reportError('save graph layout', error),
     });
 };
 
@@ -122,6 +124,7 @@ export const useDeleteGraphLayout = () => {
             queryClient.setQueryData(buildQueryKey(QUERY_KEYS.GRAPH_LAYOUT, name), null);
             queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.GRAPH_LAYOUT, name) });
         },
+        onError: (error) => reportError('reset graph layout', error),
     });
 };
 
@@ -146,6 +149,7 @@ export const useCreateGraphEdge = () => {
             queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.GRAPH_EDGES) });
             queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.RELATIONSHIPS) });
         },
+        onError: (error) => reportError('create relationship link', error),
     });
 };
 
@@ -158,5 +162,6 @@ export const useDeleteGraphEdge = () => {
             queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.GRAPH_EDGES) });
             queryClient.invalidateQueries({ queryKey: buildQueryKey(QUERY_KEYS.RELATIONSHIPS) });
         },
+        onError: (error) => reportError('delete relationship link', error),
     });
 };

@@ -1512,7 +1512,7 @@ function AISettings({ settings, onUpdate, onSync, onReset }) {
     const { data: runtimeDefaults } = useLLMRuntimeDefaults();
     const [aiSyncState, setAiSyncState] = useState('idle');
 
-    const llmProviders = providers.filter(p => p.worker_type === 'llm' || p.worker_type === 'hybrid' || (Array.isArray(p.capabilities) && p.capabilities.includes('llm')) || p.id.startsWith('llm'));
+    const llmProviders = providers.filter(p => p.worker_type === 'llm' || p.worker_type === 'hybrid' || (Array.isArray(p.capabilities) && p.capabilities.includes('llm')) || p.id?.startsWith?.('llm'));
 
     const [providerId, setProviderId] = useState('');
     const [modelId, setModelId] = useState('');
@@ -1533,35 +1533,28 @@ function AISettings({ settings, onUpdate, onSync, onReset }) {
         }
     };
 
-    // Seed local sliders from backend config (config.json ai block) so the
-    // UI reflects the values actually used by chat/story generation.
+    // Seed local sliders from backend config (config.json ai block) via the
+    // shared React Query cache so the UI reflects values used by chat/story generation.
+    const { data: configResponse } = useSettingsConfig();
+    const syncedAiConfigRef = useRef(false);
     useEffect(() => {
-        let cancelled = false;
-        (async () => {
-            try {
-                const res = await settingsApi.get();
-                const ai = res?.settings?.ai;
-                if (ai && !cancelled) {
-                    const patch = {};
-                    if (ai.maxContextTokens) patch.maxContextTokens = Number(ai.maxContextTokens);
-                    if (ai.temperature != null) patch.temperature = Number(ai.temperature);
-                    if (ai.top_p != null) patch.topP = Number(ai.top_p);
-                    if (ai.max_output_tokens != null) patch.maxOutputTokens = Number(ai.max_output_tokens);
-                    if (ai.frequency_penalty != null) patch.frequencyPenalty = Number(ai.frequency_penalty);
-                    if (ai.presence_penalty != null) patch.presencePenalty = Number(ai.presence_penalty);
-                    if (ai.ragEnabled != null) patch.ragEnabled = !!ai.ragEnabled;
-                    if (ai.memoryExtractionEnabled != null) patch.memoryExtractionEnabled = !!ai.memoryExtractionEnabled;
-                    if (ai.idleSimEnabled != null) patch.idleSimEnabled = !!ai.idleSimEnabled;
-                    if (ai.idleSimIntervalSeconds != null) patch.idleSimIntervalSeconds = Number(ai.idleSimIntervalSeconds);
-                    if (Object.keys(patch).length > 0) onSync(patch);
-                }
-            } catch {
-                // Backend unreachable — keep local defaults.
-            }
-        })();
-        return () => { cancelled = true; };
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
+        if (syncedAiConfigRef.current) return;
+        const ai = configResponse?.settings?.ai;
+        if (!ai) return;
+        syncedAiConfigRef.current = true;
+        const patch = {};
+        if (ai.maxContextTokens) patch.maxContextTokens = Number(ai.maxContextTokens);
+        if (ai.temperature != null) patch.temperature = Number(ai.temperature);
+        if (ai.top_p != null) patch.topP = Number(ai.top_p);
+        if (ai.max_output_tokens != null) patch.maxOutputTokens = Number(ai.max_output_tokens);
+        if (ai.frequency_penalty != null) patch.frequencyPenalty = Number(ai.frequency_penalty);
+        if (ai.presence_penalty != null) patch.presencePenalty = Number(ai.presence_penalty);
+        if (ai.ragEnabled != null) patch.ragEnabled = !!ai.ragEnabled;
+        if (ai.memoryExtractionEnabled != null) patch.memoryExtractionEnabled = !!ai.memoryExtractionEnabled;
+        if (ai.idleSimEnabled != null) patch.idleSimEnabled = !!ai.idleSimEnabled;
+        if (ai.idleSimIntervalSeconds != null) patch.idleSimIntervalSeconds = Number(ai.idleSimIntervalSeconds);
+        if (Object.keys(patch).length > 0) onSync(patch);
+    }, [configResponse, onSync]);
 
     const handleSaveAiBackend = async () => {
         setAiSyncState('saving');

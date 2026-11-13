@@ -447,6 +447,8 @@ export default function Dashboard() {
                 duration: toastSuccessDuration
             });
             navigate('/generate');
+        } catch (err) {
+            toast.error(err?.message || 'Failed to load parameters from image.');
         } finally {
             reuseParametersLockRef.current = false;
             setIsReusingParameters(false);
@@ -476,6 +478,8 @@ export default function Dashboard() {
                 duration: toastSuccessDuration,
             });
             navigate('/generate');
+        } catch (err) {
+            toast.error(err?.message || 'Failed to load parameters from image.');
         } finally {
             reuseParametersLockRef.current = false;
             setIsReusingParameters(false);

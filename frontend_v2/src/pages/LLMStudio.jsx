@@ -2538,6 +2538,14 @@ function AgentAvatarField({ agent }) {
     const uploadAvatar = useUploadAgentAvatar();
     const inputRef = useRef(null);
     const [preview, setPreview] = useState(null);
+    useEffect(() => {
+        return () => {
+            if (preview && preview.startsWith('blob:')) {
+                URL.revokeObjectURL(preview);
+            }
+        };
+    }, [preview]);
+
 
     // The saved avatar is served by the backend; the local preview is only
     // there so the image appears the instant it is picked, before the

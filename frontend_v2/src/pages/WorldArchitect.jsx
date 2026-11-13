@@ -1,5 +1,5 @@
 import clsx from 'clsx';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
     Sparkles, Upload, FileText, Globe2, Users, MapPin, BookOpen, Shield, Clock,
@@ -92,6 +92,8 @@ export default function WorldArchitect() {
     const [launchChat, setLaunchChat] = useState(true);
     const [launchStory, setLaunchStory] = useState(false);
     const [errorMsg, setErrorMsg] = useState('');
+    const autoStepTimerRef = useRef(null);
+    useEffect(() => () => clearTimeout(autoStepTimerRef.current), []);
 
     // Right Pane Tab Navigation
     const [activeIntegrationTab, setActiveIntegrationTab] = useState('cast');
@@ -246,7 +248,7 @@ export default function WorldArchitect() {
                 scenario_text: char.scenario || '',
                 first_mes: char.first_mes || '',
                 alternate_greetings: blueprint.source_card?.alternate_greetings || [],
-                default_location: worldRes.locations?.[0]?.name || char.default_location || 'Starting Area',
+                default_location: worldRes?.locations?.[0]?.name || char.default_location || 'Starting Area',
                 default_time: char.default_time || 'Evening',
                 use_llm: true,
             });
@@ -257,8 +259,8 @@ export default function WorldArchitect() {
                 if (nextChars.length > 0) {
                     nextChars[0] = {
                         ...nextChars[0],
-                        visual_tags: visRes.visual_tags || nextChars[0].visual_tags,
-                        wardrobe: visRes.wardrobe_presets || nextChars[0].wardrobe,
+                        visual_tags: visRes?.visual_tags || nextChars[0].visual_tags,
+                        wardrobe: visRes?.wardrobe_presets || nextChars[0].wardrobe,
                     };
                 }
                 return {
@@ -266,21 +268,25 @@ export default function WorldArchitect() {
                     characters: nextChars,
                     world: {
                         ...prev.world,
-                        name: worldRes.world_name || prev.world?.name,
-                        description: worldRes.world_description || prev.world?.description,
+                        name: worldRes?.world_name || prev.world?.name,
+                        description: worldRes?.world_description || prev.world?.description,
                     },
-                    locations: worldRes.locations || prev.locations,
-                    lorebook: worldRes.lorebook || prev.lorebook,
-                    scenarios: scenRes.scenarios || prev.scenarios,
+                    locations: worldRes?.locations || prev.locations,
+                    lorebook: worldRes?.lorebook || prev.lorebook,
+                    scenarios: scenRes?.scenarios || prev.scenarios,
                     initial_state_snapshot: {
                         ...prev.initial_state_snapshot,
-                        ...(stateRes.initial_state_snapshot || {}),
+                        ...(stateRes?.initial_state_snapshot || {}),
                     },
                 };
             });
 
             setAutoArchitectStep('✨ Auto-Architect complete! All sections updated.');
-            setTimeout(() => setAutoArchitectStep(''), 3000);
+            clearTimeout(autoStepTimerRef.current);
+            autoStepTimerRef.current = setTimeout(() => {
+                autoStepTimerRef.current = null;
+                setAutoArchitectStep('');
+            }, 3000);
         } catch (err) {
             setErrorMsg(err?.message || 'Auto-Architect pipeline failed.');
             setAutoArchitectStep('');

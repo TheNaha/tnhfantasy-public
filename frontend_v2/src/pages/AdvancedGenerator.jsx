@@ -21,7 +21,7 @@ export default function AdvancedGenerator() {
     const autoRandomizeSeed = useSettingsStore((s) => s.settings?.generator?.autoRandomizeSeed);
     const workflowRef = useRef(null);
     const { providers: allProviders = [], isLoading: providersLoading } = useProvidersPageData();
-    const providers = useMemo(() => allProviders.filter(p => !(p.type === 'llm' || p.worker_type === 'llm' || p.id.startsWith('llm'))), [allProviders]);
+    const providers = useMemo(() => allProviders.filter(p => !(p.type === 'llm' || p.worker_type === 'llm' || p.id?.startsWith?.('llm'))), [allProviders]);
     // `object_info` must come from a provider that can actually answer it. The
     // list is not ordered by usability, so `providers[0]` was whichever
     // provider happened to sort first — measured on the live stack as

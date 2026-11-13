@@ -7,6 +7,7 @@
  */
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, API_V2_BASE } from '../api';
+import { reportError } from './useWorldVaultResource';
 
 export const LLM_PROVIDERS_KEY = ['llm', 'providers'];
 export const LLM_MODELS_KEY = ['llm', 'available-models'];
@@ -229,6 +230,7 @@ export function useSetActiveModels() {
             queryClient.invalidateQueries({ queryKey: LLM_CATALOG_KEY });
             queryClient.invalidateQueries({ queryKey: LLM_ROUTING_KEY });
         },
+        onError: (error) => reportError('update active models', error),
     });
 }
 
@@ -236,6 +238,7 @@ export function useSetActiveModels() {
 export function useEvaluateDirectorDecisions() {
     return useMutation({
         mutationFn: (payload) => api.post(`${API_V2_BASE}/llm/decisions/evaluate`, payload),
+        onError: (error) => reportError('evaluate director decisions', error),
     });
 }
 

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -26,6 +26,14 @@ export default function ImageToStory() {
     const [genre, setGenre] = useState('');
 
     const [storyId, setStoryId] = useState(null);
+    useEffect(() => {
+        return () => {
+            if (imagePreview && imagePreview.startsWith('blob:')) {
+                URL.revokeObjectURL(imagePreview);
+            }
+        };
+    }, [imagePreview]);
+
 
     const generateMutation = useMutation({
         mutationFn: async (formData) => {

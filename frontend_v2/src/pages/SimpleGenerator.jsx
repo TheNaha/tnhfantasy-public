@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { FolderOpen, Settings2, AlertCircle } from 'lucide-react';
 import { useGeneratorCore } from '../hooks/useGeneratorCore';
 import toast from 'react-hot-toast';
@@ -18,8 +18,6 @@ export default function SimpleGenerator() {
     const navigate = useNavigate();
     const { store: { prompt, randomizeSeed, selectedCheckpoint } } = useGeneratorCore();
     const autoRandomizeSeed = useSettingsStore(state => state.settings.generator.autoRandomizeSeed);
-    const redirectAfterGenerate = useSettingsStore(state => state.settings.generator.redirectAfterGenerate);
-    const redirectDelay = useSettingsStore(state => state.settings.generator.redirectDelay);
 
     // Simple mode hides advanced sampling parameters (steps, CFG, sampler,
     // scheduler, clip skip, seed) behind a toggle. Locking on those parameters
@@ -53,6 +51,7 @@ export default function SimpleGenerator() {
         setGenerating,
         handleGenerate,
         lastCompletedJob,
+        scheduleRedirect,
     } = useGeneratorJob({
         runSubmission,
         type: 'simple',
@@ -61,37 +60,6 @@ export default function SimpleGenerator() {
         autoRandomizeSeed,
     });
 
-    // The variations path used to `navigate('/gallery')` the instant the queue
-    // acknowledged, ignoring both `redirectAfterGenerate` and `redirectDelay`:
-    // the two settings that are documented to control exactly this, and the two
-    // every other generate button on the page honours. It also bypassed
-    // `useGeneratorJob` entirely, so it got none of the redirect-timer
-    // handling — including the unmount cleanup, which is what makes a delayed
-    // navigation actually fire instead of being cancelled by the page it
-    // unmounts.
-    //
-    // Duplicated from `useGeneratorJob` rather than imported: that hook owns
-    // its timer privately and `src/hooks/` belongs to another workstream. The
-    // two blocks should collapse into one when that file is next touched.
-    const redirectTimerRef = useRef(null);
-    useEffect(() => () => {
-        if (redirectTimerRef.current) {
-            clearTimeout(redirectTimerRef.current);
-            redirectTimerRef.current = null;
-        }
-    }, []);
-
-    const scheduleGalleryRedirect = () => {
-        if (!redirectAfterGenerate) return;
-        const delayMs = Number.isFinite(Number(redirectDelay))
-            ? Math.max(0, Number(redirectDelay))
-            : 0;
-        if (redirectTimerRef.current) clearTimeout(redirectTimerRef.current);
-        redirectTimerRef.current = setTimeout(() => {
-            redirectTimerRef.current = null;
-            navigate('/gallery');
-        }, delayMs);
-    };
 
     const handleGenerateVariations = async (count) => {
         setGenerating(true);
@@ -119,7 +87,7 @@ export default function SimpleGenerator() {
             await Promise.all(jobs);
             toast.success(`Queued ${count} variations!`, { icon: '🎲' });
             if (autoRandomizeSeed) randomizeSeed();
-            scheduleGalleryRedirect();
+            scheduleRedirect();
         } catch (e) {
             toast.error("Error: " + e.message);
         } finally {

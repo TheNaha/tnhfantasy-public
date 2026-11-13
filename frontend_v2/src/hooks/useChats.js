@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 import { api } from '../api';
-import { useCreateResource, useDeleteResource, invalidateVaultAggregates } from './useWorldVaultResource';
+import { reportError, useCreateResource, useDeleteResource, invalidateVaultAggregates } from './useWorldVaultResource';
 import { buildQueryKey, QUERY_KEYS } from '../constants/queryKeys';
 import { isActiveJobStatus } from '../utils/jobStatus';
 
@@ -241,6 +241,7 @@ export const useUpdateChat = () => {
                     queryClient.setQueryData(key, value);
                 }
             });
+            reportError('update chat', err);
         },
         onSettled: (data, error, variables) => {
             // The list prefix-matches every cached list variant; the detail key
@@ -321,6 +322,7 @@ export const useEvaluateChatDirector = () => {
             queryClient.invalidateQueries({ queryKey: CHAT_LIST_KEY });
             invalidateVaultAggregates(queryClient);
         },
+        onError: (err) => reportError('evaluate director', err),
     });
 };
 

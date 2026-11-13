@@ -2,6 +2,7 @@
  * Utility to extract PNG Info and generation parameters from image files.
  * Uses the backend's `/api/generate/interrogate` endpoint.
  */
+import { api } from '../api/client';
 
 export async function extractPngInfo(file) {
     if (!file) throw new Error('No file provided');
@@ -9,16 +10,7 @@ export async function extractPngInfo(file) {
     const formData = new FormData();
     formData.append('file', file);
 
-    const response = await fetch('/api/generate/interrogate', {
-        method: 'POST',
-        body: formData,
-    });
-
-    if (!response.ok) {
-        throw new Error(`Failed to extract metadata: ${response.statusText}`);
-    }
-
-    const data = await response.json();
+    const data = await api.post('/api/generate/interrogate', formData);
     return {
         prompt: data.prompt || '',
         negativePrompt: data.negative_prompt || '',

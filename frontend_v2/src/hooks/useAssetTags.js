@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { assetsApi } from '../api';
 import { refetchNewestGalleryPage } from './useGallery';
+import { reportError } from './useWorldVaultResource';
 
 /**
  * One image's tags, with the provenance the panel groups by.
@@ -105,6 +106,7 @@ export function useAddAssetTag(assetId) {
     return useMutation({
         mutationFn: (tag) => assetsApi.addAssetTag(assetId, tag),
         onSuccess: invalidate,
+        onError: (error) => reportError('add tag', error),
     });
 }
 
@@ -113,5 +115,6 @@ export function useRemoveAssetTag(assetId) {
     return useMutation({
         mutationFn: (tag) => assetsApi.removeAssetTag(assetId, tag),
         onSuccess: invalidate,
+        onError: (error) => reportError('remove tag', error),
     });
 }

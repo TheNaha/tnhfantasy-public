@@ -1,5 +1,5 @@
 import { Wrench, Zap, Brain, RefreshCw, CheckCircle, XCircle, Loader2, Rocket, Cpu, Trash2 } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { LineChart, Line, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
@@ -165,6 +165,8 @@ export default function RuntimeTab({
     const [liveTelemetry, setLiveTelemetry] = useState(null);
     const [freeingVram, setFreeingVram] = useState(false);
     const queryClient = useQueryClient();
+    const pingTimerRef = useRef(null);
+    useEffect(() => () => clearTimeout(pingTimerRef.current), []);
 
     const isLLM = provider.worker_type === 'llm';
     const isHybridOrRemote = provider.worker_type === 'hybrid' || provider.type === 'remote_hybrid' || provider.type === 'direct_comfy';
@@ -221,13 +223,21 @@ export default function RuntimeTab({
                         components: data.details?.components,
                     });
                 }
-                setTimeout(() => setPingStatus(null), 3500);
+                clearTimeout(pingTimerRef.current);
+                pingTimerRef.current = setTimeout(() => {
+                    pingTimerRef.current = null;
+                    setPingStatus(null);
+                }, 3500);
             } else {
                 throw new Error(data?.error || 'Test failed');
             }
         } catch {
             setPingStatus('error');
-            setTimeout(() => setPingStatus(null), 3500);
+            clearTimeout(pingTimerRef.current);
+            pingTimerRef.current = setTimeout(() => {
+                pingTimerRef.current = null;
+                setPingStatus(null);
+            }, 3500);
         }
     };
 

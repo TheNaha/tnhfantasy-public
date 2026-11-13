@@ -656,7 +656,7 @@ export default function RelationshipGraph() {
                     source={linkDialog.source}
                     target={linkDialog.target}
                     onClose={() => setLinkDialog(null)}
-                    onCreate={createEdge.mutate}
+                    onCreate={createEdge.mutateAsync}
                 />
             )}
 

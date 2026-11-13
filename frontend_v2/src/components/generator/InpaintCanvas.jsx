@@ -18,6 +18,7 @@ export default function InpaintCanvas({
     const canvasRef = useRef(null);
     const maskCanvasRef = useRef(null);
     const containerRef = useRef(null);
+    const loadedImageRef = useRef(null);
 
     const [tool, setTool] = useState('brush');
     const [brushSize, setBrushSize] = useState(30);
@@ -32,6 +33,7 @@ export default function InpaintCanvas({
     useEffect(() => {
         if (!sourceImageUrl || !canvasRef.current || !maskCanvasRef.current) return;
 
+        let cancelled = false;
         const displayCanvas = canvasRef.current;
         const maskCanvas = maskCanvasRef.current;
 
@@ -39,6 +41,8 @@ export default function InpaintCanvas({
         const img = new Image();
         img.crossOrigin = 'anonymous';
         img.onload = () => {
+            if (cancelled) return;
+            loadedImageRef.current = img;
             // Set canvas dimensions
             displayCanvas.width = sourceWidth;
             displayCanvas.height = sourceHeight;
@@ -68,36 +72,37 @@ export default function InpaintCanvas({
 
             setImageLoaded(true);
         };
+        img.onerror = () => {
+            if (!cancelled) {
+                loadedImageRef.current = null;
+                setImageLoaded(false);
+            }
+        };
         img.src = sourceImageUrl;
 
         return () => {
+            cancelled = true;
+            loadedImageRef.current = null;
             setImageLoaded(false);
         };
     }, [sourceImageUrl, sourceWidth, sourceHeight]);
 
     // Redraw display canvas with mask overlay
     const redrawCanvas = useCallback(() => {
-        if (!canvasRef.current || !maskCanvasRef.current || !imageLoaded) return;
+        if (!canvasRef.current || !maskCanvasRef.current || !imageLoaded || !loadedImageRef.current) return;
 
         const displayCanvas = canvasRef.current;
         const maskCanvas = maskCanvasRef.current;
         const ctx = displayCanvas.getContext('2d');
 
-        // Reload source image
-        const img = new Image();
-        img.crossOrigin = 'anonymous';
-        img.onload = () => {
-            // Clear and draw image
-            ctx.clearRect(0, 0, sourceWidth, sourceHeight);
-            ctx.drawImage(img, 0, 0, sourceWidth, sourceHeight);
+        ctx.clearRect(0, 0, sourceWidth, sourceHeight);
+        ctx.drawImage(loadedImageRef.current, 0, 0, sourceWidth, sourceHeight);
 
-            // Overlay mask with transparency
-            ctx.globalAlpha = 0.5;
-            ctx.drawImage(maskCanvas, 0, 0);
-            ctx.globalAlpha = 1.0;
-        };
-        img.src = sourceImageUrl;
-    }, [sourceImageUrl, sourceWidth, sourceHeight, imageLoaded]);
+        // Overlay mask with transparency
+        ctx.globalAlpha = 0.5;
+        ctx.drawImage(maskCanvas, 0, 0);
+        ctx.globalAlpha = 1.0;
+    }, [sourceWidth, sourceHeight, imageLoaded]);
 
     // Save mask state to history
     const saveToHistory = useCallback(() => {

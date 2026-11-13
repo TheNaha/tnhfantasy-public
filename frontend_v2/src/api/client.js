@@ -161,7 +161,7 @@ async function request(endpoint, options = {}) {
         detachUserSignal();
 
         // Handle non-JSON responses (like file downloads)
-        const contentType = response.headers.get('content-type');
+        const contentType = response.headers?.get?.('content-type');
         if (contentType && !contentType.includes('application/json')) {
             if (!response.ok) {
                 throw new ApiError('Request failed', response.status);

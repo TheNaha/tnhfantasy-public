@@ -118,17 +118,26 @@ export function connect() {
 function _waitForReconnect(existing) {
     return new Promise((resolve, reject) => {
         let settled = false;
-        const settle = (fn, value) => {
-            if (!settled) { settled = true; fn(value); }
-        };
+        let timerId = null;
         const onConnect = () => settle(resolve, existing);
         const onError = (err) => settle(reject, err instanceof Error ? err : new Error(err?.message || 'reconnect error'));
+        const cleanup = () => {
+            clearTimeout(timerId);
+            timerId = null;
+            existing.off('connect', onConnect);
+            existing.off('connect_error', onError);
+        };
+        const settle = (fn, value) => {
+            if (!settled) {
+                settled = true;
+                cleanup();
+                fn(value);
+            }
+        };
         existing.once('connect', onConnect);
         existing.once('connect_error', onError);
-        setTimeout(() => {
-            if (!settled) {
-                settle(reject, new Error('Reconnect timeout'));
-            }
+        timerId = setTimeout(() => {
+            settle(reject, new Error('Reconnect timeout'));
         }, 30000);
     });
 }

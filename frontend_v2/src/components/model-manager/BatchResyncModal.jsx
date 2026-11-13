@@ -4,6 +4,7 @@ import toast from 'react-hot-toast';
 import { QUERY_KEYS } from '../../constants/queryKeys';
 import ModalOverlay from '../common/ModalOverlay';
 import { api } from '../../api';
+import { settingsApi } from '../../api/settingsApi';
 import * as ws from '../../api/websocket';
 import { useQueryClient } from '@tanstack/react-query';
 
@@ -16,7 +17,7 @@ export default function BatchResyncModal({ onClose }) {
     // Check if background resync is already running on mount
     useEffect(() => {
         let mounted = true;
-        api.get('/api/settings/scheduler')
+        settingsApi.getSchedulerStatus()
             .then(res => {
                 if (!mounted) return;
                 if (res?.resync_status?.in_progress) {
@@ -30,7 +31,9 @@ export default function BatchResyncModal({ onClose }) {
                     });
                 }
             })
-            .catch(() => {});
+            .catch((err) => {
+                if (mounted) toast.error(err?.message || 'Failed to load scheduler status');
+            });
         return () => { mounted = false; };
     }, []);
 

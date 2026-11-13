@@ -189,10 +189,16 @@ export function CharacterModal({ isOpen, onClose, character, onSave, activeTab: 
 
             // Convert image to file for avatar upload
             const imgRes = await fetch(img.preview);
+            if (!imgRes.ok) {
+                throw new Error(`Failed to fetch gallery image (${imgRes.status})`);
+            }
             const blob = await imgRes.blob();
             const file = new File([blob], img.name, { type: blob.type });
-            
-            setPreview(URL.createObjectURL(file));
+
+            setPreview((prev) => {
+                if (prev && prev.startsWith('blob:')) URL.revokeObjectURL(prev);
+                return URL.createObjectURL(file);
+            });
             
             if (isEditing && character?.id) {
                 await uploadAvatarMutation.mutateAsync({ characterId: character.id, file });

@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api';
 import { buildQueryKey, QUERY_KEYS } from '../constants/queryKeys';
-import { useCreateResource, useDeleteResource, useUpdateResource, invalidateVaultAggregates } from './useWorldVaultResource';
+import { reportError, useCreateResource, useDeleteResource, useUpdateResource, invalidateVaultAggregates } from './useWorldVaultResource';
 
 const LOREBOOKS_KEY = buildQueryKey(QUERY_KEYS.LOREBOOKS);
 // There is no lorebook *detail* query. This key is nevertheless not a no-op:
@@ -97,7 +97,8 @@ export const useDeleteEntry = () => {
  */
 export const useSearchEntries = () => {
     return useMutation({
-        mutationFn: ({ lorebookId, q, limit }) => api.get(`/api/v2/lorebooks/${lorebookId}/search`, { params: { q, limit } })
+        mutationFn: ({ lorebookId, q, limit }) => api.get(`/api/v2/lorebooks/${lorebookId}/search`, { params: { q, limit } }),
+        onError: (err) => reportError('search lorebook entries', err),
     });
 };
 

@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useCallback } from 'react';
 import { settingsApi } from '../api/settingsApi';
+import toast from 'react-hot-toast';
 
 const EMPTY_ARRAY = [];
 
@@ -27,7 +28,8 @@ export function useFavorites() {
       return { previousFavorites };
     },
     onError: (err, newFavorites, context) => {
-      queryClient.setQueryData(['favorites'], context.previousFavorites);
+      queryClient.setQueryData(['favorites'], context?.previousFavorites);
+      toast.error(err?.message ? `Failed to update favorites: ${err.message}` : 'Failed to update favorites');
     },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ['favorites'] });

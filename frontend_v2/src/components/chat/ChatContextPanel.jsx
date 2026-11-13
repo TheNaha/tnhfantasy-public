@@ -1,5 +1,5 @@
 import clsx from 'clsx';
-import { memo, useMemo, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
     User, Clock, Activity, Sparkles, ImageIcon, Loader2, BookOpen, Check, MessageSquare, Brain, ChevronDown, NotebookPen,
@@ -1157,6 +1157,8 @@ function DirectorStatekeeperSection({ chat, onSave }) {
     const [fastTravelLocInput, setFastTravelLocInput] = useState('');
     const [actionFeedback, setActionFeedback] = useState('');
     const [showDecisionInspector, setShowDecisionInspector] = useState(false);
+    const feedbackTimerRef = useRef(null);
+    useEffect(() => () => clearTimeout(feedbackTimerRef.current), []);
 
     if (!chat?.id) return null;
 
@@ -1193,8 +1195,12 @@ function DirectorStatekeeperSection({ chat, onSave }) {
         : allLocations.slice(0, 12);
 
     const flashFeedback = (msg) => {
+        clearTimeout(feedbackTimerRef.current);
         setActionFeedback(msg);
-        setTimeout(() => setActionFeedback(''), 3500);
+        feedbackTimerRef.current = setTimeout(() => {
+            feedbackTimerRef.current = null;
+            setActionFeedback('');
+        }, 3500);
     };
 
     const handleFieldSave = (key, val) => {

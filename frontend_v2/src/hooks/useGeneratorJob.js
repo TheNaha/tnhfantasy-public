@@ -91,7 +91,8 @@ export function useGeneratorJob(opts = {}) {
         ? Math.max(0, Number(redirectDelay))
         : 0;
 
-    const scheduleRedirect = useCallback(() => {
+    const scheduleRedirect = useCallback((shouldRedirect = redirectAfterGenerate) => {
+        if (!shouldRedirect) return;
         if (redirectTimerRef.current) {
             clearTimeout(redirectTimerRef.current);
         }
@@ -99,7 +100,7 @@ export function useGeneratorJob(opts = {}) {
             redirectTimerRef.current = null;
             navigate(GENERATOR_REDIRECT_TARGET);
         }, redirectDelayMs);
-    }, [navigate, redirectDelayMs]);
+    }, [navigate, redirectAfterGenerate, redirectDelayMs]);
 
     // ---- WebSocket / REST job subscription -> toast + state (verbatim port) ----
     useEffect(() => {
@@ -196,7 +197,7 @@ export function useGeneratorJob(opts = {}) {
                     toast.success('Added to queue!', { icon: '➕' });
                 }
 
-                if (shouldRedirect) scheduleRedirect();
+                if (shouldRedirect) scheduleRedirect(true);
                 if (autoRandomizeSeed) randomizeSeed?.();
             }
         } catch (e) {
@@ -222,6 +223,7 @@ export function useGeneratorJob(opts = {}) {
         setGenerating,
         handleGenerate,
         lastCompletedJob,
+        scheduleRedirect,
         setLastCompletedJob,
     };
 }
