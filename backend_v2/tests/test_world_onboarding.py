@@ -320,3 +320,37 @@ class TestWorldOnboardingStudioRoutes:
         assert story_resp.status_code == 200, story_resp.text
         assert story_resp.json()["story_id"]
         assert story_resp.json()["chapter_id"]
+
+
+class TestOnboardingCanonicalTaskEvents:
+    async def test_run_llm_json_and_text_parse_canonical_delta_and_completed_events(self, session: Session, monkeypatch):
+        from core.entities import Provider
+        from services.world_onboarding_service import _run_llm_json, _run_llm_text
+
+        provider = Provider(
+            id="llm-onboard-test",
+            name="LLM Test",
+            type="openai_compat",
+            worker_type="llm",
+            enabled=True,
+            priority=1,
+        )
+        session.add(provider)
+        session.commit()
+
+        class FakeEngine:
+            async def run_inference(self, workflow, **kwargs):
+                yield {"event": "delta", "text": '{"world_name": '}
+                yield {"event": "completed", "outputs": [{"role": "assistant", "content": '{"world_name": "Eldoria"}'}]}
+
+        monkeypatch.setattr("services.world_onboarding_service.resolve_default_provider", lambda s: ("llm-onboard-test", "m1"))
+        monkeypatch.setattr("services.world_onboarding_service.model_for_kind", lambda kind, ov, s: "m1")
+        monkeypatch.setattr("services.engines.engine_factory.get_engine", lambda pid, prov=None: FakeEngine())
+
+        parsed, label = await _run_llm_json(session, kind="world_tick", system_prompt="sys", user_content="usr")
+        assert parsed == {"world_name": "Eldoria"}
+        assert label == "llm:llm-onboard-test:m1"
+
+        text, text_label = await _run_llm_text(session, kind="world_tick", system_prompt="sys", user_content="usr")
+        assert text == '{"world_name": "Eldoria"}'
+        assert text_label == "llm:llm-onboard-test:m1"

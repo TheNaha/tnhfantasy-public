@@ -289,6 +289,30 @@ class HybridRemoteEngine(InProcessEngine):
                 return True
         return False
 
+    async def _stream_child(
+        self,
+        child_engine: InProcessEngine,
+        workflow: Dict[str, Any],
+        job_id: Optional[str],
+        use_snapshot: bool,
+        timeout: float,
+        **kwargs: Any,
+    ) -> AsyncIterator[Dict[str, Any]]:
+        """Stream from a child engine while tracking `job_id` in its active set."""
+        if job_id:
+            child_engine._cancelled_jobs.discard(job_id)
+            child_engine._active_jobs.add(job_id)
+        try:
+            async for event in child_engine.inference(
+                workflow, job_id=job_id, use_snapshot=use_snapshot, timeout=timeout, **kwargs
+            ):
+                yield event
+        finally:
+            if job_id:
+                child_engine._active_jobs.discard(job_id)
+                child_engine._cancelled_jobs.discard(job_id)
+                child_engine.register_abort(job_id, None)
+
     async def inference(
         self,
         workflow: Dict[str, Any],
@@ -310,8 +334,8 @@ class HybridRemoteEngine(InProcessEngine):
                         await self._prepare_agent_vram("tts")
                     self._last_workload = "tts"
                     try:
-                        async for event in self.image_engine.inference(
-                            workflow, job_id=job_id, use_snapshot=use_snapshot, timeout=timeout, **kwargs
+                        async for event in self._stream_child(
+                            self.image_engine, workflow, job_id, use_snapshot, timeout, **kwargs
                         ):
                             yield event
                     finally:
@@ -321,8 +345,8 @@ class HybridRemoteEngine(InProcessEngine):
                         await self._prepare_agent_vram("image")
                     self._last_workload = "image"
                     try:
-                        async for event in self.image_engine.inference(
-                            workflow, job_id=job_id, use_snapshot=use_snapshot, timeout=timeout, **kwargs
+                        async for event in self._stream_child(
+                            self.image_engine, workflow, job_id, use_snapshot, timeout, **kwargs
                         ):
                             yield event
                     finally:
@@ -337,8 +361,8 @@ class HybridRemoteEngine(InProcessEngine):
                         )
                         self._last_workload = "llm"
                     try:
-                        async for event in self.llm_engine.inference(
-                            workflow, job_id=job_id, use_snapshot=use_snapshot, timeout=timeout, **kwargs
+                        async for event in self._stream_child(
+                            self.llm_engine, workflow, job_id, use_snapshot, timeout, **kwargs
                         ):
                             yield event
                     finally:
@@ -354,44 +378,44 @@ class HybridRemoteEngine(InProcessEngine):
                         model=workflow.get("model") if isinstance(workflow, dict) else None,
                     )
                     try:
-                        async for event in self.llm_engine.inference(
-                            workflow, job_id=job_id, use_snapshot=use_snapshot, timeout=timeout, **kwargs
+                        async for event in self._stream_child(
+                            self.llm_engine, workflow, job_id, use_snapshot, timeout, **kwargs
                         ):
                             yield event
                     finally:
                         await self._release_agent_vram("llm")
             else:
                 if is_tts:
-                    async for event in self.image_engine.inference(
-                        workflow, job_id=job_id, use_snapshot=use_snapshot, timeout=timeout, **kwargs
+                    async for event in self._stream_child(
+                        self.image_engine, workflow, job_id, use_snapshot, timeout, **kwargs
                     ):
                         yield event
                 elif is_image:
-                    async for event in self.image_engine.inference(
-                        workflow, job_id=job_id, use_snapshot=use_snapshot, timeout=timeout, **kwargs
+                    async for event in self._stream_child(
+                        self.image_engine, workflow, job_id, use_snapshot, timeout, **kwargs
                     ):
                         yield event
                 else:
-                    async for event in self.llm_engine.inference(
-                        workflow, job_id=job_id, use_snapshot=use_snapshot, timeout=timeout, **kwargs
+                    async for event in self._stream_child(
+                        self.llm_engine, workflow, job_id, use_snapshot, timeout, **kwargs
                     ):
                         yield event
 
         else:
             # Concurrent mode (A100-80GB / H100): parallel pass-through
             if is_tts:
-                async for event in self.image_engine.inference(
-                    workflow, job_id=job_id, use_snapshot=use_snapshot, timeout=timeout, **kwargs
+                async for event in self._stream_child(
+                    self.image_engine, workflow, job_id, use_snapshot, timeout, **kwargs
                 ):
                     yield event
             elif is_image:
-                async for event in self.image_engine.inference(
-                    workflow, job_id=job_id, use_snapshot=use_snapshot, timeout=timeout, **kwargs
+                async for event in self._stream_child(
+                    self.image_engine, workflow, job_id, use_snapshot, timeout, **kwargs
                 ):
                     yield event
             else:
-                async for event in self.llm_engine.inference(
-                    workflow, job_id=job_id, use_snapshot=use_snapshot, timeout=timeout, **kwargs
+                async for event in self._stream_child(
+                    self.llm_engine, workflow, job_id, use_snapshot, timeout, **kwargs
                 ):
                     yield event
 

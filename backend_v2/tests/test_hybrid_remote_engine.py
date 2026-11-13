@@ -402,4 +402,42 @@ async def test_hybrid_list_voices():
 
 
 
+@pytest.mark.asyncio
+async def test_hybrid_cancel_job_propagates_to_active_child_engine():
+    import asyncio
+
+    engine = HybridRemoteEngine("hyb-cancel", base_url="http://node", concurrency_policy="concurrent")
+    started = asyncio.Event()
+    aborted = False
+
+    async def slow_llm_inference(wf, job_id=None, **kwargs):
+        def _abort():
+            nonlocal aborted
+            aborted = True
+
+        engine.llm_engine.register_abort(job_id, _abort)
+        started.set()
+        yield {"event": "delta", "text": "part"}
+        while not engine.llm_engine.is_cancelled(job_id):
+            await asyncio.sleep(0.01)
+        yield {"event": "cancelled", "job_id": job_id}
+
+    engine.llm_engine.inference = slow_llm_inference
+
+    events = []
+
+    async def _consume():
+        async for ev in engine.run_inference({"messages": [{"role": "user", "content": "hi"}]}, job_id="job-hyb-1"):
+            events.append(ev)
+
+    consumer = asyncio.create_task(_consume())
+    await started.wait()
+    cancelled = await engine.cancel_job("job-hyb-1")
+    await consumer
+
+    assert cancelled is True
+    assert aborted is True
+    assert any(ev.get("event") == "cancelled" for ev in events)
+
+
 

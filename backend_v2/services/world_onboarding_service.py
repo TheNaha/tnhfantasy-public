@@ -94,21 +94,17 @@ def _extract_json_object(raw_text: str) -> Optional[Dict[str, Any]]:
         return None
 
 
-async def _run_llm_json(
+async def _run_llm_completion(
     session: Session,
     *,
     kind: str,
     system_prompt: str,
     user_content: Any,
-    max_output_tokens: int = 1200,
-    temperature: float = 0.2,
-    timeout: float = 25.0,
-) -> tuple[Optional[Dict[str, Any]], str]:
-    """Run a structured JSON request against the active LLM provider for `kind`.
-
-    Returns `(parsed_dict_or_None, engine_label)`. Never raises so callers can
-    fall back cleanly to deterministic extraction when no provider is online.
-    """
+    max_output_tokens: int,
+    temperature: float,
+    timeout: float,
+) -> tuple[Optional[str], str]:
+    """Execute one LLM request and return `(raw_text_or_None, engine_label)`."""
     resolved = resolve_default_provider(session)
     if not resolved:
         return None, "heuristic"
@@ -136,10 +132,27 @@ async def _run_llm_json(
             "max_output_tokens": max_output_tokens,
         }
         full_text = ""
-        async for event in engine.inference(workflow, timeout=timeout):
+        async for event in engine.run_inference(workflow, timeout=timeout):
             if not isinstance(event, dict):
                 continue
-            if event.get("event") == "token" and event.get("text"):
+            event_kind = event.get("event")
+            if event_kind == "delta":
+                if event.get("text"):
+                    full_text += str(event["text"])
+            elif event_kind == "completed":
+                outputs = event.get("outputs") or []
+                first = outputs[0] if outputs and isinstance(outputs[0], dict) else {}
+                content = first.get("content") or first.get("text")
+                if content:
+                    full_text = str(content)
+            elif event_kind in ("failed", "error"):
+                logger.debug(
+                    "world_onboarding_llm_error_event",
+                    kind=kind,
+                    error=event.get("message") or event.get("error"),
+                )
+                return None, "heuristic"
+            elif event_kind == "token" and event.get("text"):
                 full_text += str(event["text"])
             elif event.get("status") == "success":
                 output = event.get("output") or {}
@@ -148,12 +161,43 @@ async def _run_llm_json(
                 elif event.get("text"):
                     full_text = str(event["text"])
 
-        parsed = _extract_json_object(full_text)
-        if parsed is not None:
-            return parsed, f"llm:{provider_id}:{model_id}"
+        cleaned = full_text.strip()
+        if cleaned:
+            return cleaned, f"llm:{provider_id}:{model_id}"
     except Exception as exc:
         logger.debug("world_onboarding_llm_fallback", kind=kind, error=str(exc))
 
+    return None, "heuristic"
+
+
+async def _run_llm_json(
+    session: Session,
+    *,
+    kind: str,
+    system_prompt: str,
+    user_content: Any,
+    max_output_tokens: int = 1200,
+    temperature: float = 0.2,
+    timeout: float = 25.0,
+) -> tuple[Optional[Dict[str, Any]], str]:
+    """Run a structured JSON request against the active LLM provider for `kind`.
+
+    Returns `(parsed_dict_or_None, engine_label)`. Never raises so callers can
+    fall back cleanly to deterministic extraction when no provider is online.
+    """
+    raw_text, engine_label = await _run_llm_completion(
+        session,
+        kind=kind,
+        system_prompt=system_prompt,
+        user_content=user_content,
+        max_output_tokens=max_output_tokens,
+        temperature=temperature,
+        timeout=timeout,
+    )
+    if raw_text is not None:
+        parsed = _extract_json_object(raw_text)
+        if parsed is not None:
+            return parsed, engine_label
     return None, "heuristic"
 
 
@@ -171,52 +215,15 @@ async def _run_llm_text(
 
     Returns `(text_or_None, engine_label)`. Never raises so callers fall back cleanly.
     """
-    resolved = resolve_default_provider(session)
-    if not resolved:
-        return None, "heuristic"
-    provider_id, _ = resolved
-    provider = session.get(Provider, provider_id)
-    if not provider or not provider.enabled:
-        return None, "heuristic"
-
-    try:
-        from services.engines.engine_factory import get_engine
-
-        engine = get_engine(provider.id, provider)
-        if engine is None:
-            return None, "heuristic"
-
-        model_id = model_for_kind(kind, None, session)
-        workflow = {
-            "type": kind,
-            "model": model_id,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_content},
-            ],
-            "temperature": temperature,
-            "max_output_tokens": max_output_tokens,
-        }
-        full_text = ""
-        async for event in engine.inference(workflow, timeout=timeout):
-            if not isinstance(event, dict):
-                continue
-            if event.get("event") == "token" and event.get("text"):
-                full_text += str(event["text"])
-            elif event.get("status") == "success":
-                output = event.get("output") or {}
-                if isinstance(output, dict) and output.get("text"):
-                    full_text = str(output["text"])
-                elif event.get("text"):
-                    full_text = str(event["text"])
-
-        cleaned = full_text.strip()
-        if cleaned:
-            return cleaned, f"llm:{provider_id}:{model_id}"
-    except Exception as exc:
-        logger.debug("world_onboarding_llm_text_fallback", kind=kind, error=str(exc))
-
-    return None, "heuristic"
+    return await _run_llm_completion(
+        session,
+        kind=kind,
+        system_prompt=system_prompt,
+        user_content=user_content,
+        max_output_tokens=max_output_tokens,
+        temperature=temperature,
+        timeout=timeout,
+    )
 
 
 async def _analyze_avatar_with_vision(

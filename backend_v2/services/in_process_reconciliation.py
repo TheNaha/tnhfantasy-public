@@ -66,6 +66,18 @@ def _write_provider_status(model_service, **kwargs) -> None:
     model_service.repo.update_provider_status(**kwargs)
     model_service.invalidate_availability_caches()
 
+def _write_provider_status_isolated(**kwargs) -> None:
+    """Open a thread-local Session to update provider status safely under gather()."""
+    from api import deps as api_deps
+
+    thread_session = api_deps.get_session_sync()
+    try:
+        thread_model_service = api_deps.get_model_service_v2(thread_session)
+        _write_provider_status(thread_model_service, **kwargs)
+    finally:
+        thread_session.close()
+
+
 
 def _delete_orphans_enabled() -> bool:
     return os.getenv("RECONCILIATION_DELETE_ORPHANS", "false").strip().lower() in ("true", "1", "yes")
@@ -205,12 +217,20 @@ async def _push_with_retry(provider_service: Any, provider_id: str, updates: dic
     backoff): a transient DB hiccup mid-run must not lose the whole state.
     Raises on final failure so the run fails loudly instead of stalling.
     """
+    from api import deps as api_deps
+
+    def _push_once() -> None:
+        thread_session = api_deps.get_session_sync()
+        try:
+            svc = api_deps.get_provider_service(thread_session)
+            svc.upsert_reconciliation_state(provider_id, updates)
+        finally:
+            thread_session.close()
+
     last_exc: Exception | None = None
     for attempt in range(3):
         try:
-            await asyncio.to_thread(
-                provider_service.upsert_reconciliation_state, provider_id, updates
-            )
+            await asyncio.to_thread(_push_once)
             return
         except Exception as exc:
             last_exc = exc
@@ -682,7 +702,7 @@ async def _run_reconciliation(
                                     eta = int((expected_size - current_bytes) / speed)
 
                                 def _update_progress() -> None:
-                                    _write_provider_status(model_service,
+                                    _write_provider_status_isolated(
                                         file_id=file_id,
                                         provider_id=provider_id,
                                         status="downloading",
@@ -717,8 +737,7 @@ async def _run_reconciliation(
                             error=str(exc),
                         )
                         def _mark_failed(_err: str = str(exc)) -> None:
-                            _write_provider_status(
-                                model_service,
+                            _write_provider_status_isolated(
                                 file_id=file_id,
                                 provider_id=provider_id,
                                 status="failed",
@@ -751,7 +770,7 @@ async def _run_reconciliation(
 
                     try:
                         def _mark_ready() -> None:
-                            _write_provider_status(model_service,
+                            _write_provider_status_isolated(
                                 file_id=file_id,
                                 provider_id=provider_id,
                                 status="ready",
@@ -796,7 +815,7 @@ async def _run_reconciliation(
                         # name on block exit, so a closure over it would be a
                         # late-binding landmine if the thread hop outlived it.
                         def _mark_failed(_err: str = str(exc)) -> None:
-                            _write_provider_status(model_service, 
+                            _write_provider_status_isolated(
                                 file_id=file_id,
                                 provider_id=provider_id,
                                 status="failed",

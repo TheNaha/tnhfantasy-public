@@ -323,6 +323,17 @@ def engine_supports_setup(provider: Any) -> bool:
     )
     return _registry_supports_setup(rtype)
 
+def _store_engine(provider_id: str, engine: InProcessEngine) -> InProcessEngine:
+    """Cache `engine` under lock, returning any concurrently created entry."""
+    with _ENGINE_CACHE_LOCK:
+        existing = _ENGINE_CACHE.get(provider_id)
+        if existing is not None:
+            close_engine_when_idle(engine)
+            return existing
+        _ENGINE_CACHE[provider_id] = engine
+        return engine
+
+
 
 def get_engine(provider_id: Any, provider: Optional[Any] = None) -> Optional[InProcessEngine]:
     """
@@ -411,8 +422,7 @@ def get_engine(provider_id: Any, provider: Optional[Any] = None) -> Optional[InP
                 cls_name=cls_name,
                 storage_cls_name=storage_cls_name,
             )
-            _ENGINE_CACHE[provider_id] = engine
-            return engine
+            return _store_engine(provider_id, engine)
 
     # 2. LLM Provider (serverless llama.cpp, hosted APIs, OpenAI-compat local)
     if rtype in ("openai_compat", "ollama", "anthropic", "google", "modal_llm", "modal_vllm"):
@@ -438,13 +448,12 @@ def get_engine(provider_id: Any, provider: Optional[Any] = None) -> Optional[InP
                 app_name=app_name,
                 cls_name=cls_name,
             )
-            _ENGINE_CACHE[provider_id] = engine
-            return engine
+            return _store_engine(provider_id, engine)
 
         # Hosted LLM APIs get their own engines (correct wire protocol).
         # Checked before the OpenAICompat base_url fallback so a stray
         # base_url on the provider can never misroute them.
-        if provider_type == "anthropic":
+        if rtype == "anthropic":
             api_key = (
                 creds.get("api_key")
                 or creds.get("ANTHROPIC_API_KEY")
@@ -465,11 +474,10 @@ def get_engine(provider_id: Any, provider: Optional[Any] = None) -> Optional[InP
                     default_rp_model=config.get("default_rp_model") or config.get("rp_model"),
                     default_util_model=config.get("default_util_model") or config.get("util_model"),
                 )
-                _ENGINE_CACHE[provider_id] = engine
-                return engine
+                return _store_engine(provider_id, engine)
             return None
 
-        if provider_type in ("google", "gemini"):
+        if rtype == "google":
             api_key = (
                 creds.get("api_key")
                 or creds.get("GOOGLE_API_KEY")
@@ -490,7 +498,7 @@ def get_engine(provider_id: Any, provider: Optional[Any] = None) -> Optional[InP
                     default_rp_model=config.get("default_rp_model") or config.get("rp_model"),
                     default_util_model=config.get("default_util_model") or config.get("util_model"),
                 )
-                return engine
+                return _store_engine(provider_id, engine)
             return None
 
         base_url = (
@@ -532,8 +540,7 @@ def get_engine(provider_id: Any, provider: Optional[Any] = None) -> Optional[InP
                 default_rp_model=config.get("default_rp_model") or config.get("rp_model"),
                 default_util_model=config.get("default_util_model") or config.get("util_model"),
             )
-            _ENGINE_CACHE[provider_id] = engine
-            return engine
+            return _store_engine(provider_id, engine)
 
     # 2b. Self-hosted containers for the LLM and TTS categories.
     if rtype in ("remote_llm", "remote_tts"):
@@ -547,13 +554,16 @@ def get_engine(provider_id: Any, provider: Optional[Any] = None) -> Optional[InP
             or os.getenv("REMOTE_AGENT_TOKEN")
         )
         container_url = (
-            config.get("agent_url")
+            config.get("base_url")
+            or config.get("agent_url")
             or config.get("remote_agent_url")
             or config.get("url")
+            or creds.get("base_url")
             or creds.get("agent_url")
             or creds.get("remote_agent_url")
             or env_vars.get("AGENT_URL")
             or env_vars.get("REMOTE_AGENT_URL")
+            or env_vars.get("BASE_URL")
             or os.getenv("AGENT_URL")
             or os.getenv("REMOTE_AGENT_URL")
         )
@@ -585,8 +595,7 @@ def get_engine(provider_id: Any, provider: Optional[Any] = None) -> Optional[InP
                     or ""
                 ),
             )
-        _ENGINE_CACHE[provider_id] = engine
-        return engine
+        return _store_engine(provider_id, engine)
 
     # 2b2. Remote Hybrid Engine (unified Image + LLM + TTS on a single node)
     if rtype == "remote_hybrid":
@@ -652,8 +661,7 @@ def get_engine(provider_id: Any, provider: Optional[Any] = None) -> Optional[InP
                 or "util"
             ),
         )
-        _ENGINE_CACHE[provider_id] = engine
-        return engine
+        return _store_engine(provider_id, engine)
 
     # 2c. Beam LLM/TTS. Shares everything with Beam image except the frame
     # dialect, which lives on the subclass.
@@ -685,8 +693,7 @@ def get_engine(provider_id: Any, provider: Optional[Any] = None) -> Optional[InP
                 or ""
             ),
         )
-        _ENGINE_CACHE[provider_id] = engine
-        return engine
+        return _store_engine(provider_id, engine)
 
     # 2d. Direct ComfyUI speaking the TTS dialect.
     if rtype == "direct_tts":
@@ -726,8 +733,7 @@ def get_engine(provider_id: Any, provider: Optional[Any] = None) -> Optional[InP
             agent_url=agent_url,
             agent_token=agent_token,
         )
-        _ENGINE_CACHE[provider_id] = engine
-        return engine
+        return _store_engine(provider_id, engine)
 
     # 3. Modal Image Provider
     if rtype == "modal":
@@ -762,8 +768,7 @@ def get_engine(provider_id: Any, provider: Optional[Any] = None) -> Optional[InP
                 civitai_token=civitai_token,
                 enable_memory_snapshot=resolve_enable_memory_snapshot(config, env_vars),
             )
-            _ENGINE_CACHE[provider_id] = engine
-            return engine
+            return _store_engine(provider_id, engine)
 
     # 3b. Beam Image Provider (serverless REST + websocket, no modal package)
     if rtype == "beam":
@@ -837,8 +842,7 @@ def get_engine(provider_id: Any, provider: Optional[Any] = None) -> Optional[InP
                     or "RTX4090"
                 ),
             )
-            _ENGINE_CACHE[provider_id] = engine
-            return engine
+            return _store_engine(provider_id, engine)
         return None
 
     # 4. Direct Comfy Provider (plain, or + agent sidecar for remote_comfy)
@@ -932,8 +936,7 @@ def get_engine(provider_id: Any, provider: Optional[Any] = None) -> Optional[InP
                 or ""
             ),
         )
-        _ENGINE_CACHE[provider_id] = engine
-        return engine
+        return _store_engine(provider_id, engine)
 
     return None
 

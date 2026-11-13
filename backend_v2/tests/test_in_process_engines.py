@@ -3905,3 +3905,26 @@ class TestDirectComfyModelChoiceReconciliation:
             assert updated_status.status == "failed"
             assert "not found in ComfyUI" in updated_status.error_message
 
+
+
+class TestGoogleLLMEngineCaching:
+    def test_get_engine_caches_google_llm_engine(self):
+        from types import SimpleNamespace
+        from services.engines.engine_factory import get_engine, invalidate_engine
+
+        provider = SimpleNamespace(
+            id="google-cache-test",
+            type="google",
+            worker_type="llm",
+            capabilities=["llm"],
+            credentials={"api_key": "fake-key"},
+            config={},
+        )
+        invalidate_engine("google-cache-test")
+        try:
+            e1 = get_engine("google-cache-test", provider)
+            e2 = get_engine("google-cache-test", provider)
+            assert e1 is not None
+            assert e1 is e2
+        finally:
+            invalidate_engine("google-cache-test")
