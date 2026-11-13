@@ -487,7 +487,11 @@ def trigger_job_now(job_id: str) -> dict[str, Any]:
     except RuntimeError:
         loop = getattr(scheduler, "_eventloop", None)
         if loop and loop.is_running():
-            asyncio.run_coroutine_threadsafe(_runner(), loop)
+            loop.call_soon_threadsafe(
+                lambda: start_background_task(
+                    _runner(), task_name=f"manual_job:{job_id}", timeout=None
+                )
+            )
         else:
             asyncio.run(_runner())
     return {"status": "triggered", "job_id": job_id}

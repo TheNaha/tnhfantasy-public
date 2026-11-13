@@ -236,6 +236,14 @@ async def _handle_job_completed(websocket: WebSocket, worker, provider_id: str, 
                 status=JobStatus.FAILED,
                 error=str(exc)
             )
+        await resolve_job_future(
+            job_id,
+            error=ProviderCallError(
+                str(exc),
+                provider_id=provider_id,
+                is_retryable=False,
+            ),
+        )
 
         worker.current_job = None
         logger.error("invalid_completed_payload", job_id=job_id, error=str(exc))
@@ -288,6 +296,14 @@ async def _handle_job_completed(websocket: WebSocket, worker, provider_id: str, 
                 )
         except Exception as mark_exc:
             logger.error("job_finalization_failure_mark_failed", job_id=job_id, error=str(mark_exc))
+        await resolve_job_future(
+            job_id,
+            error=ProviderCallError(
+                f"Job finalization failed: {finalize_exc}",
+                provider_id=provider_id,
+                is_retryable=False,
+            ),
+        )
         return
     else:
         await resolve_job_future(job_id, result={
@@ -384,31 +400,31 @@ async def worker_websocket(
     # Accept connection
     await websocket.accept()
     
-    # Register worker
-    worker = await register_worker(provider_id, websocket)
+    worker = None
+    try:
+        # Register worker inside try/finally so handshake errors always unregister.
+        worker = await register_worker(provider_id, websocket)
+        logger.info("worker_connected", provider_id=provider_id)
 
-    logger.info("worker_connected", provider_id=provider_id)
-    
-    # Send welcome message
-    await websocket.send_json(
-        ConnectedMessage(
-            provider_id=provider_id,
-            message="Connected to ComfyUI backend",
-        ).model_dump()
-    )
-    
-    # Push pending downloads immediately on connect. Only when there are any:
-    # the frame is the same one `get_pending_models` replies with, but a
-    # freshly-connected worker with an empty queue never received it.
-    try:
-        pending = await _fetch_pending_models(provider_id)
-        if pending:
-            await _send_pending_models(websocket, pending)
-            logger.info("pending_downloads_pushed", count=len(pending), provider_id=provider_id)
-    except Exception as exc:
-        logger.warning("pending_models_push_failed", provider_id=provider_id, error=str(exc))
-    
-    try:
+        # Send welcome message
+        await websocket.send_json(
+            ConnectedMessage(
+                provider_id=provider_id,
+                message="Connected to ComfyUI backend",
+            ).model_dump()
+        )
+
+        # Push pending downloads immediately on connect. Only when there are any:
+        # the frame is the same one `get_pending_models` replies with, but a
+        # freshly-connected worker with an empty queue never received it.
+        try:
+            pending = await _fetch_pending_models(provider_id)
+            if pending:
+                await _send_pending_models(websocket, pending)
+                logger.info("pending_downloads_pushed", count=len(pending), provider_id=provider_id)
+        except Exception as exc:
+            logger.warning("pending_models_push_failed", provider_id=provider_id, error=str(exc))
+
         # Main message loop
         while True:
             message = parse_worker_message(await websocket.receive_json())
@@ -428,16 +444,16 @@ async def worker_websocket(
         logger.error("worker_error", provider_id=provider_id, error=str(e))
     finally:
         # Cleanup
-        await resolve_job_future(
-            worker.current_job,
-            error=ProviderCallError(
-                f"External worker {provider_id} disconnected during job execution",
-                provider_id=provider_id,
-                is_retryable=True,
-            ),
-        )
-        await unregister_worker(provider_id, worker)
-
+        if worker is not None:
+            await resolve_job_future(
+                worker.current_job,
+                error=ProviderCallError(
+                    f"External worker {provider_id} disconnected during job execution",
+                    provider_id=provider_id,
+                    is_retryable=True,
+                ),
+            )
+            await unregister_worker(provider_id, worker)
 
 # ============================================================================
 # HTTP Endpoints for Worker Status

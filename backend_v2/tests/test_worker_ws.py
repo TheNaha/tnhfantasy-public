@@ -684,3 +684,38 @@ async def test_pending_downloads_are_pushed_on_connect():
         "type": "pending_models",
         "models": [{"name": "sdxl.safetensors"}],
     }
+
+
+@pytest.mark.asyncio
+async def test_job_completed_invalid_payload_resolves_future_with_error():
+    from api.routes.worker_ws import _handle_job_completed
+
+    loop = asyncio.get_running_loop()
+    fut = loop.create_future()
+    pending_job_futures["job-bad-out"] = fut
+
+    websocket = DummyWebSocket()
+    worker = ConnectedWorker(websocket, "provider-a")
+    worker.current_job = "job-bad-out"
+    msg = parse_worker_message({
+        "type": "job_completed",
+        "job_id": "job-bad-out",
+        "result": {"outputs": [{"filename": "../escape.png"}]},
+    })
+
+    job_service = AsyncMock()
+    with patch("api.routes.worker_ws._worker_owns_job", AsyncMock(return_value=True)), \
+         patch("api.routes.worker_ws.get_session_context", side_effect=lambda *a, **k: _fake_session_context(_owned_session())), \
+         patch("api.routes.worker_ws.get_job_service", return_value=job_service):
+        await _handle_job_completed(websocket, worker, "provider-a", msg)
+
+    assert fut.done()
+    with pytest.raises(ProviderCallError):
+        fut.result()
+
+
+def test_provider_has_ws_connection_is_synchronous():
+    import inspect
+    from infrastructure.worker_registry import _provider_has_ws_connection
+
+    assert not inspect.iscoroutinefunction(_provider_has_ws_connection)

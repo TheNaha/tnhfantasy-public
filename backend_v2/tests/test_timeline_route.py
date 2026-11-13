@@ -216,3 +216,7 @@ class TestTimelinePagination:
     def test_limit_capped(self, client):
         resp = client.get("/api/v2/timeline", params={"limit": 9999})
         assert resp.status_code == 422
+
+    def test_negative_limit_rejected(self, client):
+        resp = client.get("/api/v2/timeline", params={"limit": -1})
+        assert resp.status_code == 422

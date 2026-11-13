@@ -2927,6 +2927,10 @@ async def export_chapter_comic(
     )
     await asyncio.to_thread(session.commit)
 
+    job_id = job.id
+    initial_metadata = dict(job.metadata_ or {})
+    chapter_number = chapter.chapter_number
+
     # Run the export in a background task with its own session (the request
     # session will be closed before the task finishes).
     async def _run_export():
@@ -2942,25 +2946,29 @@ async def export_chapter_comic(
                 user_id=(get_config() or {}).get("default_user_id", "default_user"),
             )
             # Mark the job complete with the download info.
-            await asyncio.to_thread(
-                task_job_service.update_job,
-                job.id,
+            updated_job = await task_job_service.update_job(
+                job_id,
                 status=JobStatus.COMPLETED,
                 message="Comic export complete",
                 metadata={
-                    **job.metadata_,
+                    **initial_metadata,
                     "cbz_path": result["cbz_path"],
                     "html_path": result["html_path"],
                     "output_dir": result["output_dir"],
                     "page_count": result["page_count"],
-                    "download_url": f"/api/files?directory=output&file=comics/{story_id}/chapter_{chapter.chapter_number}/story.cbz",
+                    "download_url": f"/api/files?directory=output&file=comics/{story_id}/chapter_{chapter_number}/story.cbz",
                 },
             )
             await asyncio.to_thread(task_session.commit)
+            job_payload = (
+                task_job_service._job_to_dict(updated_job)
+                if updated_job is not None
+                else {"id": job_id, "job_id": job_id, "status": JobStatus.COMPLETED.value}
+            )
             await emit_job_event(
                 EventType.JOB_COMPLETED,
                 {
-                    **task_job_service._job_to_dict(job),
+                    **job_payload,
                     "source": "comic_export",
                     "story_id": story_id,
                     "chapter_id": chapter_id,
@@ -2973,7 +2981,7 @@ async def export_chapter_comic(
             )
             logger.info(
                 "comic_export_job_complete",
-                job_id=job.id,
+                job_id=job_id,
                 story_id=story_id,
                 chapter_id=chapter_id,
             )
@@ -2981,18 +2989,22 @@ async def export_chapter_comic(
             logger.exception("comic_export_failed", story_id=story_id, chapter_id=chapter_id, error=str(exc))
             try:
                 await asyncio.to_thread(task_session.rollback)
-                await asyncio.to_thread(
-                    task_job_service.update_job,
-                    job.id,
+                failed_job = await task_job_service.update_job(
+                    job_id,
                     status=JobStatus.FAILED,
                     error=str(exc),
                     message="Comic export failed",
                 )
                 await asyncio.to_thread(task_session.commit)
+                job_payload = (
+                    task_job_service._job_to_dict(failed_job)
+                    if failed_job is not None
+                    else {"id": job_id, "job_id": job_id, "status": JobStatus.FAILED.value}
+                )
                 await emit_job_event(
                     EventType.JOB_FAILED,
                     {
-                        **task_job_service._job_to_dict(job),
+                        **job_payload,
                         "source": "comic_export",
                         "story_id": story_id,
                         "chapter_id": chapter_id,
@@ -3122,10 +3134,12 @@ async def image_to_story(
     """
     import base64
 
+    from core.upload_validation import MAX_INPUT_SIZE_MB, MB, inspect_image, read_upload_bounded
     from services.llm_workflow import build_llm_workflow
 
-    # Read the image bytes and encode as base64 for vision-capable LLMs
-    image_bytes = await image.read()
+    # Read the image bytes with an upper size bound and validate image headers.
+    image_bytes = await read_upload_bounded(image, max_bytes=MAX_INPUT_SIZE_MB * MB, field="image")
+    await asyncio.to_thread(inspect_image, image_bytes, field="image")
     image_b64 = base64.b64encode(image_bytes).decode("ascii")
 
     # Build a workflow that describes the image and writes a story opening

@@ -6,7 +6,6 @@ back to heuristics or vision model interrogation when available.
 """
 
 import asyncio
-import base64
 import io
 import json
 import os
@@ -18,8 +17,13 @@ from PIL import Image
 from pydantic import BaseModel
 
 from core.exceptions import ValidationError
+from core.upload_validation import (
+    MAX_INPUT_SIZE_MB,
+    MB,
+    decode_base64_bounded,
+    read_upload_bounded,
+)
 from infrastructure.logging import api_logger
-
 logger = api_logger()
 
 router = APIRouter(prefix="/api/generate", tags=["generation"])
@@ -114,15 +118,15 @@ async def interrogate_image(
     img_bytes = None
 
     if file is not None:
-        img_bytes = await file.read()
+        img_bytes = await read_upload_bounded(
+            file, max_bytes=MAX_INPUT_SIZE_MB * MB, field="file"
+        )
     elif request and request.image_data:
-        data_str = request.image_data
-        if "," in data_str:
-            data_str = data_str.split(",", 1)[1]
-        try:
-            img_bytes = base64.b64decode(data_str)
-        except Exception as exc:
-            raise ValidationError(f"Invalid base64 image data: {exc}")
+        img_bytes = decode_base64_bounded(
+            request.image_data,
+            max_bytes=MAX_INPUT_SIZE_MB * MB,
+            field="image_data",
+        )
     elif (request and request.image_path) or image_path:
         path = (request.image_path if request else None) or image_path
 
@@ -138,14 +142,18 @@ async def interrogate_image(
     if not img_bytes:
         raise ValidationError("No image provided. Provide a file upload, image_path, or image_data.")
 
-    try:
-        pil_img = Image.open(io.BytesIO(img_bytes))
-    except Exception as exc:
-        raise ValidationError(f"Could not parse image: {exc}")
+    def _parse_and_extract(raw_bytes: bytes) -> tuple[dict[str, Any], tuple[int, int], str | None]:
+        try:
+            with Image.open(io.BytesIO(raw_bytes)) as pil_img:
+                pil_img.load()
+                info = _extract_embedded_png_info(pil_img)
+                return info, pil_img.size, pil_img.format
+        except Exception as exc:
+            raise ValidationError(f"Could not parse image: {exc}")
 
-    # Extract embedded metadata
-    info_extracted = _extract_embedded_png_info(pil_img)
-
+    info_extracted, (width, height), img_format = await asyncio.to_thread(
+        _parse_and_extract, img_bytes
+    )
     if info_extracted["prompt"]:
         return InterrogateResponse(
             prompt=info_extracted["prompt"],
@@ -156,14 +164,13 @@ async def interrogate_image(
         )
 
     # Fallback heuristic when no embedded metadata is present
-    width, height = pil_img.size
     aspect = "landscape" if width > height else ("portrait" if height > width else "square")
-    fallback_prompt = f"high quality illustration, {aspect} composition, {pil_img.format.lower() if pil_img.format else 'image'}"
+    fallback_prompt = f"high quality illustration, {aspect} composition, {img_format.lower() if img_format else 'image'}"
 
     return InterrogateResponse(
         prompt=fallback_prompt,
         negative_prompt="low quality, blurry",
         tags=["high quality", "illustration", aspect],
         source="heuristics",
-        metadata={"width": width, "height": height, "format": pil_img.format},
+        metadata={"width": width, "height": height, "format": img_format},
     )

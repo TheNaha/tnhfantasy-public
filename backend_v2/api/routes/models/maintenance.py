@@ -642,8 +642,12 @@ async def run_background_resync(sample_size: int | None = None, mode: str = "ful
                     logger.debug("community_images_enrichment_failed", model_id=model_id_str, error=str(enrich_exc))
 
                 def _apply_one():
-                    _apply_civitai_metadata(model, civitai_data, bg_session)
-                    bg_session.commit()
+                    try:
+                        _apply_civitai_metadata(model, civitai_data, bg_session)
+                        bg_session.commit()
+                    except Exception:
+                        bg_session.rollback()
+                        raise
 
                 try:
                     await asyncio.to_thread(_apply_one)
@@ -651,7 +655,6 @@ async def run_background_resync(sample_size: int | None = None, mode: str = "ful
                 except Exception as exc:
                     results["failed"] += 1
                     results["errors"].append({"model_id": model_id_str, "error": str(exc)})
-
                 await report("processing", current_model, index + 1)
 
             await report("completed", "Done", total)
@@ -674,7 +677,7 @@ class ResyncAllRequest(BaseModel):
 
 
 @router.post("/resync-all")
-def resync_all(
+async def resync_all(
     payload: ResyncAllRequest | None = None,
     session: Session = Depends(get_session),
 ):
@@ -697,8 +700,7 @@ def resync_all(
         sample_size = CIVITAI_RANDOM_RESYNC_BATCH_SIZE
 
     repo = get_model_repo_v2(session)
-    models = repo.get_models_for_resync(include_relations=False)
-
+    models = await asyncio.to_thread(repo.get_models_for_resync, include_relations=False)
     if not models:
         return {"status": "no_models", "count": 0}
 

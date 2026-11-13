@@ -15,6 +15,7 @@ senders in this file build outbound frames from the outbound models. See
 import asyncio
 import json
 import os
+import threading
 from datetime import datetime, timezone
 from typing import Annotated, Any, Literal
 
@@ -572,7 +573,7 @@ async def _dispatch_to_local_worker(
         raise exc
 
 
-async def _provider_has_ws_connection(provider_id: str) -> bool:
+def _provider_has_ws_connection(provider_id: str) -> bool:
     """Check the shared Postgres table for a live WS connection."""
     conn = psycopg2.connect(database_url)
     try:
@@ -582,7 +583,7 @@ async def _provider_has_ws_connection(provider_id: str) -> bool:
                 """
                 SELECT 1 FROM provider_ws_connections
                 WHERE provider_id = %s
-                  AND last_heartbeat > NOW() - INTERVAL '%s seconds'
+                  AND last_heartbeat > NOW() - (%s * INTERVAL '1 second')
                 """,
                 (provider_id, WORKER_HEARTBEAT_TIMEOUT_SECONDS),
             )
@@ -751,10 +752,17 @@ async def start_cross_process_dispatch_listener() -> None:
         return
     loop = asyncio.get_running_loop()
     set_main_event_loop(loop)
-    await asyncio.to_thread(_run_notify_listener, loop)
+    stop_event = threading.Event()
+    try:
+        await asyncio.to_thread(_run_notify_listener, loop, stop_event)
+    finally:
+        stop_event.set()
 
 
-def _run_notify_listener(loop: asyncio.AbstractEventLoop) -> None:
+def _run_notify_listener(
+    loop: asyncio.AbstractEventLoop,
+    stop_event: threading.Event | None = None,
+) -> None:
     """Blocking psycopg2 LISTEN loop for the worker_dispatch channel.
 
     Runs in a worker thread via asyncio.to_thread so it never stalls the
@@ -783,7 +791,7 @@ def _run_notify_listener(loop: asyncio.AbstractEventLoop) -> None:
         return
 
     try:
-        while True:
+        while not (stop_event and stop_event.is_set()):
             if _select.select([conn], [], [], 1.0) == ([], [], []):
                 continue
             conn.poll()
@@ -855,9 +863,8 @@ def _run_notify_listener(loop: asyncio.AbstractEventLoop) -> None:
                         pass
                     continue
 
-                future = loop.create_future()
-                asyncio.run_coroutine_threadsafe(
-                    track_job_future(job_id, future), loop
+                future = asyncio.run_coroutine_threadsafe(
+                    _create_and_track_job_future_async(loop, job_id), loop
                 ).result(timeout=5.0)
 
                 try:
@@ -886,6 +893,8 @@ def _run_notify_listener(loop: asyncio.AbstractEventLoop) -> None:
                     import time as _time
                     _deadline = _time.monotonic() + 300.0
                     while not future.done():
+                        if stop_event and stop_event.is_set():
+                            raise TimeoutError("Dispatch listener stopped")
                         if _time.monotonic() > _deadline:
                             raise TimeoutError()
                         _time.sleep(0.5)
@@ -904,6 +913,21 @@ def _run_notify_listener(loop: asyncio.AbstractEventLoop) -> None:
                     except Exception:
                         pass
                     continue
+                except Exception as exc:
+                    asyncio.run_coroutine_threadsafe(
+                        forget_job_future(job_id), loop
+                    ).result(timeout=5.0)
+                    asyncio.run_coroutine_threadsafe(
+                        _release_worker_slot(worker, job_id), loop
+                    ).result(timeout=5.0)
+                    try:
+                        asyncio.run_coroutine_threadsafe(
+                            _write_result_async(job_id, "failed", None, str(exc)),
+                            loop,
+                        ).result(timeout=5.0)
+                    except Exception:
+                        pass
+                    continue
 
                 asyncio.run_coroutine_threadsafe(
                     forget_job_future(job_id), loop
@@ -911,7 +935,6 @@ def _run_notify_listener(loop: asyncio.AbstractEventLoop) -> None:
                 asyncio.run_coroutine_threadsafe(
                     _release_worker_slot(worker, job_id), loop
                 ).result(timeout=5.0)
-
                 status = "done" if result.get("__handled_by_external_worker") else "failed"
                 result_payload = result.get("outputs", {})
                 error_payload = result.get("error")
@@ -946,6 +969,15 @@ def _run_notify_listener(loop: asyncio.AbstractEventLoop) -> None:
 
 # The listener thread runs blocking psycopg2 I/O and needs async helpers for
 # the event-loop-bound operations. These wrappers keep the thread code simple.
+
+async def _create_and_track_job_future_async(
+    loop: asyncio.AbstractEventLoop, job_id: str
+) -> asyncio.Future:
+    """Create and register a job Future on the owning event loop."""
+    future = loop.create_future()
+    await track_job_future(job_id, future)
+    return future
+
 
 
 async def _get_local_provider_ids_async() -> list[str]:

@@ -208,7 +208,7 @@ async def create_job(
 
     # Opt-in idempotency for clients that can safely provide a request key.
     # Default behavior remains unchanged for repeated submissions without the header.
-    if idempotency_key:
+    if idempotency_key and idempotency_key.strip():
         dedup_key = make_key("create_job", idempotency_key.strip())
         return await deduplicated(dedup_key, _create_and_enqueue)
 

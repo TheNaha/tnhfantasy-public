@@ -196,7 +196,7 @@ async def generate(
             logger.info("generate_job_created", job_id=job.id, kind=kind)
             return submission_service.job_service._job_to_dict(job)
 
-        if idempotency_key:
+        if idempotency_key and idempotency_key.strip():
             dedup_key = make_key("generate", idempotency_key.strip())
             return await deduplicated(dedup_key, _create_generation_job)
 
@@ -326,7 +326,7 @@ async def generate_batch(
                 result["failed_count"] = len(failures)
             return result
 
-        if idempotency_key:
+        if idempotency_key and idempotency_key.strip():
             dedup_key = make_key("generate_batch", idempotency_key.strip())
             return await deduplicated(dedup_key, _create_batch_jobs)
 

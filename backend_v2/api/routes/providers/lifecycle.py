@@ -909,6 +909,7 @@ async def shutdown_provider(
         if not active:
             break
         await asyncio.sleep(SHUTDOWN_POLL_INTERVAL_SECONDS)
+        await asyncio.to_thread(session.expire_all)
         waited += SHUTDOWN_POLL_INTERVAL_SECONDS
 
     active = session.exec(

@@ -400,3 +400,56 @@ async def test_run_randomized_background_resync_samples_and_updates_stats(sessio
     assert status["mode"] == "random"
     assert status["total"] == 3
     assert status["results"]["success"] == 3
+
+
+@pytest.mark.asyncio
+async def test_resync_rolls_back_failed_commit_so_later_models_succeed(session, monkeypatch):
+    m1 = make_model(session, 2001, "Fails Commit")
+    m2 = make_model(session, 2002, "Succeeds After Rollback")
+
+    client = FakeHttpClient([
+        lambda: FakeResponse(200, json_data=civitai_payload("Updated One")),
+        lambda: FakeResponse(200, json_data=civitai_payload("Updated Two")),
+    ])
+    orig_commit = session.commit
+    commit_calls = 0
+
+    def flaky_commit():
+        nonlocal commit_calls
+        commit_calls += 1
+        if commit_calls == 1:
+            raise RuntimeError("simulated commit error")
+        return orig_commit()
+
+    async def fake_broadcast(evt, data):
+        pass
+
+    monkeypatch.setattr(maintenance, "get_http_client", lambda: client)
+    monkeypatch.setattr(maintenance, "broadcast_to_all", fake_broadcast)
+    monkeypatch.setattr(maintenance, "get_session_context", lambda: fake_session_context(session))
+    monkeypatch.setattr(session, "commit", flaky_commit)
+
+    results = await maintenance.run_background_resync()
+    assert results["failed"] == 1
+    assert results["success"] == 1
+    session.refresh(m2)
+    assert m2.name == "Updated Two"
+    assert m1.id != m2.id
+
+
+def test_resync_all_route_starts_background_task_on_event_loop(client, session, monkeypatch):
+    make_model(session, 3001, "Route Triggered Model")
+    started = []
+
+    def fake_start_background_task(coro, **kwargs):
+        coro.close()
+        started.append(kwargs.get("task_name"))
+        return None
+
+    monkeypatch.setattr("infrastructure.background_tasks.start_background_task", fake_start_background_task)
+    resp = client.post("/api/v2/models/maintenance/resync-all", json={"mode": "full"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "processing"
+    assert body["count"] == 1
+    assert started == ["civitai_resync_full"]

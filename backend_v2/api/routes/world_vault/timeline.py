@@ -51,7 +51,7 @@ def get_timeline(
     location: str | None = Query(default=None, max_length=MAX_FILTER_LENGTH),
     world_id: str | None = Query(default=None, max_length=64),
     types: str | None = Query(default=None, max_length=MAX_FILTER_LENGTH),
-    limit: int = Query(default=100, le=500),
+    limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0, le=MAX_TIMELINE_OFFSET),
     session: Session = Depends(get_session),
 ):
