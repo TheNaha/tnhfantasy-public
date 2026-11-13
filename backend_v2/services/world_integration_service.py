@@ -310,6 +310,7 @@ async def _handle_scene_graph(job_data: dict[str, Any]):
     spec = apply_scene_spec_limits(spec)
 
     should_fallback_prompt = False
+    queued = False
     try:
         async with get_session_context() as session:
             from core.entities import Chat
@@ -381,10 +382,13 @@ async def _handle_scene_graph(job_data: dict[str, Any]):
                         "scene_graph_issues": [i.model_dump() for i in issues],
                     },
                 )
+                queued = True
                 logger.info("scene_graph_image_job_queued", job_id=img_job.id, chat_id=chat_id)
     except Exception as exc:
         logger.error("scene_graph_chain_failed", job_id=job_data.get("id"), error=str(exc), exc_info=True)
-        should_fallback_prompt = True
+        if not queued:
+            should_fallback_prompt = True
+
     if should_fallback_prompt:
         await _handle_scene_prompt(job_data)
 
