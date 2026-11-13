@@ -2065,10 +2065,7 @@ from ram_manager import RamModelManager
 comfy_dir = os.path.join(WORKSPACE_ROOT, "ComfyUI")
 nvme_cache_base = os.path.join(WORKSPACE_ROOT, "models", "nvme_cache")
 nvme_ckpt_dir = f"{nvme_cache_base}/checkpoints"
-nvme_lora_dir = os.path.join(nvme_cache_base, "loras")
 os.makedirs(nvme_ckpt_dir, exist_ok=True)
-os.makedirs(nvme_lora_dir, exist_ok=True)
-os.makedirs(f"{nvme_cache_base}/vae", exist_ok=True)
 os.makedirs(f"{nvme_cache_base}/llm", exist_ok=True)
 
 if cache_tier == "ram":
@@ -2356,8 +2353,6 @@ tnh_nvme_cache:
     base_path: {nvme_cache_base}
     is_default: true
     checkpoints: checkpoints
-    loras: loras
-    vae: vae
 gdrive_storage:
     base_path: {gdrive_base}
     is_default: false
@@ -2372,15 +2367,23 @@ gdrive_storage:
         pass
 
 def sync_tier2_warm_cache():
+    \"\"\"Maintain lean Tier 2 warm cache on NVMe SSD.
+
+    Strict policy: Only cache checkpoints (at most 1 secondary/recent checkpoint,
+    capped at <= 12 GB total). Never copy LoRAs, VAEs, or speculative multi-checkpoint
+    batches into local NVMe to avoid saturating Colab scratch disk and page-cache RAM.
+    \"\"\"
     if not (is_colab and enable_nvme_cache and mode_key in ("hybrid", "model")):
         return
     time.sleep(6)
     tier1_base = os.path.basename(active_ckpt_path) if active_ckpt_path else ""
     synced_count = 0
-    print("\\n🔄 [Tier 2 Background Sync] Checking non-Flux checkpoints and top LoRAs for local NVMe caching...")
 
-    ckpt_candidates = all_non_flux_ckpts if all_non_flux_ckpts else recent_recs_30d
+    ckpt_candidates = recent_recs_30d if recent_recs_30d else (all_non_flux_ckpts or [])
+    # Cap candidate evaluation to at most 1 secondary checkpoint to preserve scratch disk
     for item in ckpt_candidates:
+        if synced_count >= 1:
+            break
         fn = item.get("filename") or ""
         if not fn or fn == tier1_base:
             continue
@@ -2389,8 +2392,8 @@ def sync_tier2_warm_cache():
 
         try:
             free_gb = shutil.disk_usage(WORKSPACE_ROOT).free / (1024**3)
-            if free_gb < 20.0:
-                print(f"   ⚠️ [Tier 2] Local NVMe free space is {free_gb:.1f} GB (<20 GB limit); stopping warm cache sync.")
+            if free_gb < 25.0:
+                print(f"   ℹ️ [Tier 2] Local NVMe free space is {free_gb:.1f} GB; skipping secondary checkpoint cache.")
                 break
         except Exception:
             pass
@@ -2406,14 +2409,14 @@ def sync_tier2_warm_cache():
         c_ver = item.get("civitai_version_id")
         civitai_done = False
         if civitai_strat_key == "direct" and (dl_url or c_ver):
-            print(f"📦 [Tier 2 Background Sync] Downloading non-Flux checkpoint {fn} directly from CivitAI CDN...")
-            civitai_done = download_civitai_model(fn, dl_url=dl_url, civitai_ver=c_ver, target_path=dest_file, label="Non-Flux Checkpoint")
+            print(f"📦 [Tier 2 Background Sync] Downloading secondary checkpoint {fn} directly from CivitAI CDN...")
+            civitai_done = download_civitai_model(fn, dl_url=dl_url, civitai_ver=c_ver, target_path=dest_file, label="Secondary Checkpoint")
             if civitai_done:
                 synced_count += 1
                 if cache_tier == "nvme":
                     try: ram_mgr.ensure_in_ram(dest_file, model_id=fn, role="image_secondary", is_anchor=False)
                     except Exception: pass
-                continue
+                break
 
         # Otherwise copy from Google Drive
         src_file = os.path.join(gdrive_ckpt_dir, fn) if os.path.exists(gdrive_ckpt_dir) else ""
@@ -2430,7 +2433,7 @@ def sync_tier2_warm_cache():
                 continue
             try:
                 sz_gb = src_sz / (1024**3)
-                print(f"📦 [Tier 2 Background Sync] Caching {fn} ({sz_gb:.2f} GB) from Drive to local NVMe SSD...")
+                print(f"📦 [Tier 2 Background Sync] Caching secondary checkpoint {fn} ({sz_gb:.2f} GB) to NVMe SSD...")
                 tmp_file = dest_file + ".syncing"
                 with open(src_file, "rb") as fsrc, open(tmp_file, "wb") as fdst:
                     shutil.copyfileobj(fsrc, fdst, length=16 * 1024 * 1024)
@@ -2442,109 +2445,26 @@ def sync_tier2_warm_cache():
                 if cache_tier == "nvme":
                     try: ram_mgr.ensure_in_ram(dest_file, model_id=fn, role="image_secondary", is_anchor=False)
                     except Exception: pass
-                print(f"✅ [Tier 2 Background Sync] Cached {fn} to local NVMe SSD!")
+                print(f"✅ [Tier 2 Background Sync] Cached secondary checkpoint {fn} to local NVMe SSD!")
+                break
             except Exception as exc:
                 print(f"⚠️ [Tier 2 Background Sync] Notice while caching {fn}: {exc}")
                 if os.path.exists(dest_file + ".syncing"):
                     try: os.remove(dest_file + ".syncing")
                     except Exception: pass
         elif (dl_url or c_ver) and not civitai_done:
-            # Drive missing, download from CivitAI as fallback
             print(f"📦 [Tier 2 Background Sync] Checkpoint {fn} missing on Drive; downloading from CivitAI CDN...")
-            if download_civitai_model(fn, dl_url=dl_url, civitai_ver=c_ver, target_path=dest_file, label="Non-Flux Checkpoint"):
+            if download_civitai_model(fn, dl_url=dl_url, civitai_ver=c_ver, target_path=dest_file, label="Secondary Checkpoint"):
                 synced_count += 1
                 if cache_tier == "nvme":
                     try: ram_mgr.ensure_in_ram(dest_file, model_id=fn, role="image_secondary", is_anchor=False)
                     except Exception: pass
+                break
 
-    # LoRA Tier 2 Warm Cache Mirroring:
-    # Priority 1: Top frequently used LoRAs from backend catalog (top_loras_30d)
-    # Priority 2: Recently modified LoRAs from Google Drive
-    preloaded_loras = set()
-    if top_loras_30d:
-        for lora_item in top_loras_30d:
-            try:
-                free_gb = shutil.disk_usage(WORKSPACE_ROOT).free / (1024**3)
-                if free_gb < 15.0 or len(preloaded_loras) >= 16:
-                    break
-            except Exception:
-                pass
-            l_fn = lora_item.get("filename") or ""
-            if not l_fn or l_fn in preloaded_loras:
-                continue
-            dest_file = os.path.join(nvme_lora_dir, l_fn)
-            if os.path.exists(dest_file) and os.path.getsize(dest_file) > 1_000_000:
-                preloaded_loras.add(l_fn)
-                continue
-            # Check Google Drive first
-            gdrive_src = os.path.join(gdrive_lora_dir, l_fn) if os.path.exists(gdrive_lora_dir) else ""
-            if gdrive_src and os.path.exists(gdrive_src):
-                try:
-                    tmp_file = dest_file + ".syncing"
-                    with open(gdrive_src, "rb") as fsrc, open(tmp_file, "wb") as fdst:
-                        shutil.copyfileobj(fsrc, fdst, length=8 * 1024 * 1024)
-                    os.replace(tmp_file, dest_file)
-                    synced_count += 1
-                    preloaded_loras.add(l_fn)
-                    evict_file_from_page_cache(gdrive_src)
-                    evict_file_from_page_cache(dest_file)
-                    print(f"📦 [Tier 2 LoRA Sync] Cached top library LoRA {l_fn} to NVMe!")
-                except Exception:
-                    pass
-            elif lora_item.get("download_url") or lora_item.get("civitai_version_id"):
-                if download_civitai_model(l_fn, dl_url=lora_item.get("download_url"), civitai_ver=lora_item.get("civitai_version_id"), target_path=dest_file, label="Top LoRA"):
-                    synced_count += 1
-                    preloaded_loras.add(l_fn)
-
-    if len(preloaded_loras) < 16 and os.path.exists(gdrive_lora_dir):
-        try:
-            lora_candidates = []
-            for root, _, files in os.walk(gdrive_lora_dir):
-                for f in files:
-                    if f.endswith((".safetensors", ".pt", ".ckpt")):
-                        fp = os.path.join(root, f)
-                        try:
-                            st = os.stat(fp)
-                            rel_name = os.path.relpath(fp, gdrive_lora_dir)
-                            if rel_name not in preloaded_loras:
-                                lora_candidates.append((fp, rel_name, st.st_size, st.st_mtime))
-                        except Exception:
-                            pass
-            lora_candidates.sort(key=lambda x: x[3], reverse=True)
-            slots_left = 16 - len(preloaded_loras)
-            for src_file, rel_name, src_sz, _ in lora_candidates[:slots_left]:
-                try:
-                    free_gb = shutil.disk_usage(WORKSPACE_ROOT).free / (1024**3)
-                    if free_gb < 15.0:
-                        break
-                except Exception:
-                    pass
-                dest_file = os.path.join(nvme_lora_dir, rel_name)
-                os.makedirs(os.path.dirname(dest_file), exist_ok=True)
-                if os.path.exists(dest_file) and os.path.getsize(dest_file) == src_sz:
-                    preloaded_loras.add(rel_name)
-                    continue
-                try:
-                    tmp_file = dest_file + ".syncing"
-                    with open(src_file, "rb") as fsrc, open(tmp_file, "wb") as fdst:
-                        shutil.copyfileobj(fsrc, fdst, length=8 * 1024 * 1024)
-                    os.replace(tmp_file, dest_file)
-                    synced_count += 1
-                    preloaded_loras.add(rel_name)
-                    evict_file_from_page_cache(src_file)
-                    evict_file_from_page_cache(dest_file)
-                    if synced_count % 4 == 0:
-                        drop_page_cache()
-                    print(f"📦 [Tier 2 LoRA Sync] Cached recently modified LoRA {rel_name} ({src_sz / (1024*1024):.1f} MB) to NVMe!")
-                except Exception:
-                    if os.path.exists(dest_file + ".syncing"):
-                        try: os.remove(dest_file + ".syncing")
-                        except Exception: pass
-        except Exception as exc:
-            print(f"⚠️ [Tier 2 LoRA Sync] Error scanning LoRAs: {exc}")
     if synced_count > 0:
         drop_page_cache()
-        print(f"✨ [Tier 2 Background Sync] Warm cache synchronization finished ({synced_count} models/LoRAs cached on NVMe).")
+        print(f"✨ [Tier 2 Background Sync] Lean NVMe cache ready ({synced_count} secondary checkpoint cached).")
+
 def sync_output_to_drive():
     \"\"\"Replicate finished ComfyUI output images from local NVMe to Google Drive asynchronously.\"\"\"
     if not (is_colab and os.path.exists(gdrive_path)):
@@ -2878,7 +2798,7 @@ def start_remote_agent():
         RAM_CACHE_DIR=active_cache_dir,
         CACHE_TIER=cache_tier,
         RAM_CACHE_BUDGET_GB=str(int(cache_budget_gb)),
-        CACHE_IN_RAM="1" if cache_tier in ("ram", "nvme") else "0",
+        CACHE_IN_RAM="1" if cache_tier == "ram" else "0",
         COMFY_GPU_DEVICE=str(comfy_gpu_device),
         LLM_GPU_DEVICE=str(llm_gpu_device),
         LAYA_GPU_DEVICE=str(laya_gpu_device),
