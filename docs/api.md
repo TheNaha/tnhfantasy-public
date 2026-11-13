@@ -8,7 +8,7 @@ TNHFantasy exposes REST and WebSocket APIs for job lifecycle, model management, 
 > router; `tests/test_api_docs_contract.py` fails on drift). Read `/openapi.json`
 > (or `/docs`) for the whole surface.
 >
-> Every entry in the generated index was checked against `app.openapi()["paths"]` on 2026-09-29,
+> Every entry in the generated index was checked against `app.openapi()["paths"]` on 2026-11-09,
 > after this file was found to carry 26 endpoints that do not exist — two whole
 > sections under the wrong URL prefix, plus invented model routes. A green test
 > suite says nothing about whether a document matches the code; that check is
@@ -47,10 +47,12 @@ reverse proxy. `docs/deployment.md` has the router table.
 TNHFantasy is designed for trusted/self-hosted environments. If exposed publicly, enforce authentication at the reverse-proxy layer.
 
 That mitigation is in effect for the shipped compose file, in the sense that
-nothing is published: the backend has no host port and is reached by Traefik on
-the `proxy` Docker network, under an ACL the reverse proxy enforces. If you add a
-host port or a public router, the whole API becomes unauthenticated and reachable
-— `PATCH /api/v2/providers/{id}` and `DELETE /api/jobs` included.
+the backend is published only on named addresses — `127.0.0.1:8002` and
+`${COMFY_BACKEND_BIND:-100.150.0.4}:8002` — never on a wildcard, and Traefik
+reaches it on the `proxy` Docker network under an ACL the reverse proxy
+enforces. If you add a host port or a public router, the whole API becomes
+unauthenticated and reachable — `PATCH /api/v2/providers/{id}` and
+`DELETE /api/jobs` included.
 
 ## Idempotency-Key
 

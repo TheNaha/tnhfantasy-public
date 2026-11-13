@@ -81,7 +81,7 @@ from core.entities import Asset, AssetLora, AssetTag
 from core.entities import Session as GenerationSession
 from core.entities import SessionAsset
 from core.exceptions import NotFoundError, ValidationError
-from core.sql_search import LIKE_ESCAPE_CHAR, like_contains
+from services.asset_metadata_index import asset_search_condition
 from infrastructure.logging import get_logger
 from services import tag_service
 from services.tag_service import NOT_TOMBSTONED_ASSET_IDS
@@ -471,12 +471,8 @@ def build_asset_query(
     if filters.story_id:
         statement = statement.where(Asset.story_id == filters.story_id)
     if filters.search:
-        like = like_contains(filters.search)
-        # Identical to files.py `_list_assets_sync`: filename OR the cast
-        # metadata document.
         statement = statement.where(
-            (Asset.filename.ilike(like, escape=LIKE_ESCAPE_CHAR))
-            | (Asset.metadata_.cast(String).ilike(like, escape=LIKE_ESCAPE_CHAR))
+            asset_search_condition(filters.search, Asset.filename, Asset.metadata_)
         )
 
     column = _date_column(filters)

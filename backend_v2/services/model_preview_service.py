@@ -59,6 +59,11 @@ def _get_cache_meta_path(cache_path: str) -> str:
     return f"{cache_path}.meta"
 
 
+def _safe_index(image_index: int, length: int) -> int:
+    """Clamp an image index into [0, length - 1], or 0 when empty."""
+    return min(max(image_index, 0), length - 1) if length else 0
+
+
 def _get_failure_marker_path(cache_path: str) -> str:
     return f"{cache_path}.fail"
 
@@ -154,7 +159,7 @@ def _select_preview_url(model_data: dict[str, Any], version_id: int | None, imag
     if not image_candidates:
         return None
 
-    safe_image_index = min(max(image_index, 0), len(image_candidates) - 1)
+    safe_image_index = _safe_index(image_index, len(image_candidates))
     return image_candidates[safe_image_index].get('url')
 
 
@@ -322,7 +327,7 @@ async def fetch_civitai_preview(
                                 select(ModelImage).where(ModelImage.version_id == v_target.id).order_by(ModelImage.sort_order)
                             ).all()
                             if images:
-                                safe_idx = min(max(image_index, 0), len(images) - 1)
+                                safe_idx = _safe_index(image_index, len(images))
                                 image_url = images[safe_idx].url
                 except Exception as db_exc:
                     logger.debug("preview_db_lookup_fallback", error=str(db_exc))

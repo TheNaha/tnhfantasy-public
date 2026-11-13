@@ -26,9 +26,9 @@ def _idle_sim_model(chat, session) -> str:
     entirely — so an idle reply and a normal reply could resolve to two
     different models in the same chat.
     """
-    from services.llm_config import model_for_kind
+    from services.llm_config import resolve_chat_reply_model
 
-    return model_for_kind("chat_reply", chat.llm_model, session)
+    return resolve_chat_reply_model(chat, session)
 
 IDLE_SIM_ACTIVITY_AGE_MINUTES = 30
 IDLE_SIM_IN_FLIGHT_LOOKBACK_MINUTES = 120

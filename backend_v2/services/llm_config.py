@@ -117,13 +117,10 @@ def resolve_default_provider(session: Session) -> tuple[str, str] | None:
     providers = session.exec(
         select(Provider)
         .where(Provider.worker_type.in_(["llm", "hybrid"]), Provider.enabled == True)  # noqa: E712
-        # No ORDER BY means Postgres makes no ordering promise, so `providers[0]`
-        # — the fallback whenever no provider matches the preferred-type test —
-        # was whatever the plan happened to return. `resolve_default_provider()`
-        # could then pick a different provider for two consecutive chat messages
-        # with identical configuration, and every caller would have no way to
-        # tell it was not a stable choice. A tie on `priority` breaks on `id`,
-        # which is unique, so the fallback is deterministic.
+        # ORDER BY makes the fallback deterministic: a tie on `priority` breaks
+        # on `id`, which is unique, so `providers[0]` is the same provider for
+        # two consecutive calls with identical configuration. Without it Postgres
+        # makes no ordering promise and the fallback could drift between calls.
         .order_by(Provider.priority, Provider.id)
     ).all()
 
@@ -285,6 +282,17 @@ def model_for_kind(kind: str | None, override: str | None, session) -> str:
     than which default was reached for.
     """
     return resolve_model_for_kind(kind, session=session, override=override)
+
+
+def resolve_chat_reply_model(chat, session) -> str:
+    """The model a chat reply for this chat should run on.
+
+    Single authority for every reply path (idle simulation, impersonation
+    chaining, and the normal chats.py path): the per-chat pin first, then the
+    rp/util router, then the default. Keeping it here keeps idle simulation and
+    impersonation from drifting onto a different model than a normal reply.
+    """
+    return model_for_kind("chat_reply", chat.llm_model, session)
 
 
 def model_scopes_for_kind(

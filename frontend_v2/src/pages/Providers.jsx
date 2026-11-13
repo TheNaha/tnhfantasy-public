@@ -171,7 +171,10 @@ export default function Providers() {
         catch (error) { toast.error(`Toggle failed: ${error.message}`); }
     };
     const handleSaveProvider = async (provider, payload) => {
-        await saveProvider(provider, payload);
+        try {
+            await saveProvider(provider, payload);
+            toast.success('Provider saved');
+        } catch (error) { toast.error(`Save failed: ${error.message}`); }
     };
     const handleCleanupState = async () => {
         try {

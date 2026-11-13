@@ -11,9 +11,10 @@ and then the **most recent** maintenance audit, which is
 consolidated engine picture, `docs/audit-2026-11-01.md` remains the prior
 reference. Earlier audits (`docs/audit-2026-10-*.md`) are not present in this
 checkout. Each audit supersedes its predecessors for everything it marks fixed;
-reading an older one tells you about defects that no longer exist. The other
-planning documents that used to sit at the repo root are historical and live in
-`docs/archive/` — they are kept for provenance, not for guidance.
+reading an older one tells you about defects that no longer exist. Historical
+planning documents that used to sit at the repo root live in `docs/features/`;
+they are kept for provenance, not for guidance. There is no `docs/archive/`
+directory in this checkout.
 
 ## What this is
 
@@ -137,10 +138,12 @@ check and this pass's hover-reveal block both failed by being one.
 > here: `http://localhost:5174` → 200, the backend → healthy with all 9
 > containers running.
 >
-> **There is no `http://localhost:8002` check in that list any more, and that is
-> the point.** The backend used to be published on `0.0.0.0:8002`; it no longer
-> is, so the host answers `000`. Verify it from inside the container instead:
-> `docker compose exec backend_v2 curl -s localhost:8002/api/live`.
+The backend is published from the host on two named addresses —
+`127.0.0.1:8002` and `${COMFY_BACKEND_BIND:-100.150.0.4}:8002` — never a
+wildcard, so `http://localhost:8002` answers `200` from the host. Verify from
+inside the container as a fallback: `docker compose exec backend_v2 curl -s
+localhost:8002/api/live`. The 0.0.0.0 publish that exposed `DELETE /api/jobs`
+to the LAN is gone; see `docs/api.md:23-32` and `docs/deployment.md`.
 >
 > That hot-reload is also a hazard worth knowing about: editing
 > `infrastructure/database.py` re-resolves the DSN within a second of the save,
@@ -202,8 +205,7 @@ two Dockerfiles (plus `backend_v2/requirements.txt` and
 there because GitHub has no job-level `paths:` — `on.<event>.paths` filters the
 whole workflow — and it is a few minutes on a Dockerfile change.
 
-`docs/api.md` documents **294 of 297** live paths (98.8%) on the **387**-operation
-router. It had 26 endpoints that did not exist until 2026-09-29, including two
+`docs/api.md` is generated from `app.openapi()` and drift-checked in both directions; its own header ("301 paths / 389 operations as of 2026-11-09") is the current figure, regenerated with `scripts/generate_api_docs.py` after any router change. It had 26 endpoints that did not exist until 2026-09-29, including two
 whole sections under the wrong URL prefix. It is checked against
 `app.openapi()["paths"]`, not against itself — but the check's assertion is
 `pair & {real_paths, real_ops}`, so one of the two matching is enough for it to

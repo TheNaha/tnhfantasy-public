@@ -12,7 +12,10 @@
 8. [SillyTavern Card Compatibility](sillytavern-compatibility.md)
 9. [LLM Provider Handoff](llm-provider-handoff.md) — llama.cpp design brief
 10. [Status and open work](STATUS.md)
-11. [Audits](.audit/) — documentation audits; [maintenance/](maintenance/) — codebase maintenance audits
+11. [Host scripts](scripts.md) — preflight.sh, deploy.sh, generate_api_docs.py, and the backend maintenance scripts
+12. [Audits](.audit/) — documentation audits; [maintenance/](maintenance/) — codebase maintenance audits
+13. [Remote Agent](../remote_agent/README.md) — standalone worker runtime for Colab, remote ComfyUI, or a hosted agent
+14. [Deployables](../deployables/README.md) — cloud worker source for Modal and Beam providers
 
 ## Introduction
 

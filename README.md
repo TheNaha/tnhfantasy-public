@@ -6,7 +6,7 @@ An open-source **AI fantasy engine** combining image generation, roleplay chat, 
 
 ## Features
 
-- **Image Generation** — In-process ComfyUI nodes + distributed compute via Modal, Beam, or remote agents
+- **Image Generation** — In-process provider engines dispatching ComfyUI workflows to Modal, Beam, or remote-agent workers (the backend never runs ComfyUI itself)
 - **Roleplay Engine** — Multi-turn conversation with character coherence, SillyTavern card compatibility
 - **Story Sandbox** — Interactive narrative generation with persistent world state
 - **Unified Data Layer** — PostgreSQL + pgvector for semantic character/world indexing
@@ -19,7 +19,7 @@ An open-source **AI fantasy engine** combining image generation, roleplay chat, 
 - [Deployment Guide](docs/deployment.md) — Production setup and scaling
 - [API Reference](docs/api.md) — REST endpoints and WebSocket schema
 - [Provider Setup](docs/provider-architecture.md) — Add custom compute backends
-- [Conventions](.github/copilot-instructions.md) — Development workflow and conventions
+- [Conventions](AGENTS.md) — Development workflow and conventions
 
 ## Tech Stack
 
@@ -117,7 +117,7 @@ scripts/             Setup, build, and utility scripts
 docker exec tnhfantasy-backend python -m pytest -q tests/test_job_service.py
 
 # Frontend (from frontend_v2/)
-bun run test --run
+bun run test -- --run
 ```
 
 ### Code Guidelines
@@ -126,7 +126,7 @@ bun run test --run
 - Emit domain events via `core/events.py` helpers (not direct WebSocket sends)
 - Use `core/exceptions.py` for domain errors (not ad-hoc HTTPException)
 - Keep state ownership strict: Zustand for client/realtime, React Query for server-fetched data
-- See `.github/copilot-instructions.md` for detailed conventions
+- See `AGENTS.md` for detailed conventions (`.github/copilot-instructions.md` is a legacy mirror)
 
 ## Deployment
 
@@ -146,7 +146,7 @@ Contributions welcome! Please:
 3. Run the full test suite before opening a PR
 4. Write clear commit messages
 
-See [.github/copilot-instructions.md](.github/copilot-instructions.md) for architecture guidelines and [VISION.md](VISION.md) for the long-term roadmap.
+See [`AGENTS.md`](AGENTS.md) for architecture guidelines and [VISION.md](VISION.md) for the long-term roadmap.
 
 ## License
 

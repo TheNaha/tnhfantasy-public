@@ -476,9 +476,9 @@ def _impersonation_reply_model(chat, session) -> str:
     router — so the one reply the user never typed could resolve to a different
     model than the ones they did.
     """
-    from services.llm_config import model_for_kind
+    from services.llm_config import resolve_chat_reply_model
 
-    return model_for_kind("chat_reply", chat.llm_model, session)
+    return resolve_chat_reply_model(chat, session)
 
 
 async def _handle_chat_reply(job_data: dict[str, Any], session: Any = None):

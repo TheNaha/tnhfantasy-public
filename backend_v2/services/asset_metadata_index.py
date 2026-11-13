@@ -59,6 +59,8 @@ import logging
 import re
 from typing import Any
 
+from sqlalchemy import String
+
 from services.asset_reconciler import _coerce_float, _coerce_int
 
 logger = logging.getLogger(__name__)
@@ -314,6 +316,22 @@ def normalise_checkpoints(metadata: dict | None) -> list[dict]:
         if compact:
             out.append(compact)
     return out
+
+
+def asset_search_condition(term: str, filename_column, metadata_column):
+    """`filename` OR the cast `metadata_` document contains `term` literally.
+
+    Shared so every gallery/facet search path builds the same escaped
+    `ilike` clause — filename OR the cast metadata document — instead of
+    repeating the three-part expression at each call site.
+    """
+    from core.sql_search import LIKE_ESCAPE_CHAR, like_contains
+
+    like = like_contains(term)
+    return (
+        filename_column.ilike(like, escape=LIKE_ESCAPE_CHAR)
+        | metadata_column.cast(String).ilike(like, escape=LIKE_ESCAPE_CHAR)
+    )
 
 
 def extract_tag_vocabulary(metadata: dict | None) -> set[str]:

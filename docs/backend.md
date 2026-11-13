@@ -117,6 +117,18 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build -V -d
 - `jobs_cleanup` (`max_age_hours`, `auto_cleanup`, `cleanup_interval`) is defined in `config.py`, validated, exposed via Settings, and tested, but no scheduler consumes `get_jobs_cleanup_*` — the knobs are inert today (maintenance audit D-02). Do not assume enabling `auto_cleanup` cleans anything yet.
 - `charGen*` prompts (8 of them) are in `DEFAULT_CONFIG` and whitelisted in Settings, but no character-generation path reads them (maintenance audit D-03). Wiring them in is a feature, not a config change.
 
+### Error handling
+
+All domain errors come from the `ComfyError` hierarchy in `core/exceptions.py` (`NotFoundError`, `ValidationError`, `ProviderError`, `JobError`, `DownloadError`, `ConfigurationError`, `ServiceUnavailableError`, …), never from ad hoc `HTTPException`. Registered exception handlers (`api/error_handlers.py`) normalize the shape:
+
+- `NotFoundError` → 404; domain `ValidationError` → 400; `UploadValidationError` → 400; `ProviderError`/`ContainerError`/`DownloadError` → 502; `JobError`/`ConfigurationError` → 500; `ServiceUnavailableError` → 503; base `ComfyError` → 500. Bodies carry `{"error": "<message>", "code": "<CODE>"}` plus any exception-specific fields (e.g. `field`, `service`).
+- Request validation failure (FastAPI's `RequestValidationError`, handled in `api/main.py`) → HTTP 422 with
+  `{"error": "Request validation failed", "code": "REQUEST_VALIDATION_ERROR", "detail": [{"field": "<loc>", "message": "<msg>"}]}`. The request body is neither logged nor echoed back, so user content never leaks through validation errors.
+- Unhandled exceptions → 500 `{"error": "An unexpected error occurred", "code": "INTERNAL_SERVER_ERROR"}`; the handler logs `exc_info=True` (fixed after a ~22 s locals-rendering DoS in `infrastructure/logging.py`).
+- `metadata` on Python models is stored as `metadata_` and aliased to `metadata` in API payloads.
+
+Routes raise `ComfyError` subclasses; handlers do not catch-and-rethrow as `HTTPException`. `RequestValidationError → 422`; domain `ValidationError → 400`.
+
 ### Logging
 
 The backend uses **structlog** (`infrastructure/logging.py`) for structured logging. Conventions:
@@ -124,6 +136,7 @@ The backend uses **structlog** (`infrastructure/logging.py`) for structured logg
 - Log through the module logger; use keyword arguments for fields (`logger.info("msg", key=value)`), not f-strings, so fields stay queryable.
 - Swallowed exceptions should at least emit `logger.debug(..., exc_info=True)` rather than `pass` (see maintenance audit D-2/D-3 precedent).
 - Retries, provider calls, and job lifecycle emit at `info`/`warning`; per-request noise stays at `debug`.
+- Every HTTP request is logged with `request_id`, method, path, status, and `duration_ms` by the `log_requests` middleware (`api/app_setup.py`); `/api/live`, `/api/ready`, and `/metrics` probes are skipped so orchestrator polling does not drown out real traffic. The same middleware emits Prometheus metrics via `infrastructure/metrics.py`.
 
 ### Remote agent (`remote_agent/`)
 
@@ -134,3 +147,49 @@ Separate stack with its own compose file, `agentctl.sh`/`agentctl.bat`, and bina
 Registered at startup (see `startup_application`): provider-host refresh (60s), DB vacuum (24h), model-preview prefetch, data cleanup (1h), job reaper (5min), idle simulation (opt-in, default 10min), CivitAI full resync (172800s / 48h) + randomized incremental resync (300s, batch size 5), in-process reconciliation, provider telemetry polling, provider monitor, WebSocket broadcast, asset migration (one-shot background thread), cross-process dispatch listener, world integration. Intervals come from `COMFY_CIVITAI_FULL_RESYNC_INTERVAL_SECONDS`, `COMFY_CIVITAI_RANDOM_RESYNC_INTERVAL_SECONDS`, `COMFY_CIVITAI_RANDOM_RESYNC_BATCH_SIZE` (see `.env.example`).
 
 `GET /api/settings/scheduler` exposes status and run history, plus live worker pools, active background tasks, and the CivitAI resync snapshot. `POST /api/settings/scheduler/{job_id}/run` triggers an immediate run and `PATCH /api/settings/scheduler/{job_id}` adjusts the interval or pauses/resumes a job. The frontend owns the surface: the Settings Scheduled Tasks panel links to the **BackgroundTasks** control centre at `/tasks` (`frontend_v2/src/pages/BackgroundTasks.jsx`).
+
+## Writing backend tests
+
+The suite lives in `backend_v2/tests/`, runs under pytest with xdist
+(`addopts = -n auto` in `pytest.ini`, one worker per core), and is the full
+backend test command:
+
+```bash
+cd backend_v2 && .venv/bin/python -m pytest -q
+```
+
+The full suite (~4,200 tests) has OOM'd this host — run targeted files
+(`docker exec tnhfantasy-backend python -m pytest -q tests/test_job_service.py`)
+and never run vitest at the same time as backend pytest.
+
+### Session fixtures (read this first)
+
+Tests that create DB sessions must override **both** `api.deps.get_session`
+and `infrastructure.database.get_session` (see `tests/conftest.py`). An autouse
+fixture redirects `get_session_sync()` and rebinds it in every module that
+already imported it. **Use the `session` fixture and never open your own
+session**, or the test hits the real DB. Postgres/pgvector tests
+(`test_migration_indexes_exist.py`, `test_pgvector_integration.py`, …) run only
+when `PGVECTOR_TEST_URL` is set, as it is in CI.
+
+### Environment-contract and API-docs contract tests
+
+`tests/test_env_contracts.py` fails if code reads a variable that appears in no
+`.env.example*` file, so the env reference cannot silently fall behind the code.
+It expects a checkout layout (`REPO = parents[2]`); from the container's `/app`
+bind-mount that resolves to `/` and the env-contract tests fail spuriously —
+run these two from the checkout root, or treat container failures as layout
+artefacts. `tests/test_api_docs_contract.py` checks `docs/api.md` against
+`app.openapi()["paths"]` and goes through `repo_paths.require_repo_root()`, so
+it skips cleanly in a container.
+
+Tests that read files outside `backend_v2` (`docs/`, `frontend_v2/e2e/`,
+`remote_agent/`) locate the repo root through `tests/repo_paths.py`:
+ancestors, then `TNH_REPO_ROOT`, then `/comfyui`.
+
+### Lint
+
+`ruff.toml` selects `F` only, and F401 is on. Every `# noqa: F401` needs a
+stated reason (a re-export, a star-import consumer, or a `patch()` string
+target). Never blanket-ignore a rule. Run `ruff check .` from `backend_v2/`
+(the repo root reports ~450 unrelated errors).

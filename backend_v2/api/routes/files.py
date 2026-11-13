@@ -54,7 +54,7 @@ from core.exceptions import (
     ServiceUnavailableError,
     ValidationError,
 )
-from core.sql_search import LIKE_ESCAPE_CHAR, like_contains
+from services.asset_metadata_index import asset_search_condition
 from core.upload_validation import (
     ALLOWED_UPLOAD_EXTENSIONS,
     IMAGE_EXTENSIONS,
@@ -738,7 +738,7 @@ def _query_gallery_files(
     `generated_at` (true image time) falling back to `created_at`. Sort options:
     date_desc (default), date_asc, name_asc, name_desc.
     """
-    from sqlalchemy import String, func
+    from sqlalchemy import func
     from sqlalchemy import func as sqlfunc
 
     from services.asset_reconciler import _asset_as_file_data
@@ -753,16 +753,8 @@ def _query_gallery_files(
         if story_id:
             q = q.where(Asset.story_id == story_id)
         if search:
-            like = like_contains(search)
-            # `String`, NOT the builtin `str`: `Column.cast()` takes a TypeEngine
-            # and the builtin made it raise `TypeError: Object '' associated with
-            # '.type' attribute is not a TypeEngine class or object` — which the
-            # caller's `except` turned into a 503 "File listing is unavailable".
-            # So every gallery search, for every term, was a hard failure on the
-            # live site; the sibling call sites below already used `String`.
             q = q.where(
-                (Asset.filename.ilike(like, escape=LIKE_ESCAPE_CHAR))
-                | (Asset.metadata_.cast(String).ilike(like, escape=LIKE_ESCAPE_CHAR))
+                asset_search_condition(search, Asset.filename, Asset.metadata_)
             )
 
         if sort in ("name_asc", "name_desc"):
@@ -982,10 +974,8 @@ def _list_assets_sync(
         if story_id:
             q = q.where(Asset.story_id == story_id)
         if search:
-            like = like_contains(search)
             q = q.where(
-                (Asset.filename.ilike(like, escape=LIKE_ESCAPE_CHAR))
-                | (Asset.metadata_.cast(String).ilike(like, escape=LIKE_ESCAPE_CHAR))
+                asset_search_condition(search, Asset.filename, Asset.metadata_)
             )
         if sort.startswith("random"):
             from sqlalchemy import cast
