@@ -408,16 +408,17 @@ class BeamLLMEngine(_BeamLLMEngineBase):
     async def list_models(self, directory: str = "") -> list[dict[str, Any]]:
         if not self.gpu_url:
             return []
-        try:
-            client = self.get_http_client()
-            resp = await client.post(self._http_url("/list-models"), json={"directory": directory}, timeout=15.0)
-            if resp.status_code == 200:
-                data = resp.json()
-                return data if isinstance(data, list) else []
-            return []
-        except Exception as exc:
-            logger.warning("beam_llm_list_models_failed", provider_id=self.provider_id, error=str(exc))
-            return []
+        client = self.get_http_client()
+        resp = await client.post(self._http_url("/list-models"), json={"directory": directory}, timeout=15.0)
+        if resp.status_code in (401, 403):
+            raise EngineAuthError(
+                f"Beam LLM rejected credentials for /list-models: HTTP {resp.status_code}",
+                status_code=resp.status_code,
+            )
+        if resp.status_code != 200:
+            raise RuntimeError(f"Beam LLM /list-models failed: HTTP {resp.status_code} {resp.text[:200]}")
+        data = resp.json()
+        return data if isinstance(data, list) else []
 
     async def download_file(
         self,
@@ -453,9 +454,14 @@ class BeamLLMEngine(_BeamLLMEngineBase):
             json={"directory": directories, "delete_invalid": delete_invalid},
             timeout=60.0,
         )
-        if resp.status_code == 200:
-            return resp.json()
-        return {}
+        if resp.status_code in (401, 403):
+            raise EngineAuthError(
+                f"Beam LLM rejected credentials for /validate-models: HTTP {resp.status_code}",
+                status_code=resp.status_code,
+            )
+        if resp.status_code != 200:
+            raise RuntimeError(f"Beam LLM /validate-models failed: HTTP {resp.status_code} {resp.text[:200]}")
+        return resp.json()
 
     async def validate_all_models(
         self, directories: Optional[list[str]] = None, delete_invalid: bool = False

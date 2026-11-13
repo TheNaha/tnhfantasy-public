@@ -309,86 +309,85 @@ async def _handle_scene_graph(job_data: dict[str, Any]):
     issues = validate_scene_spec(spec)
     spec = apply_scene_spec_limits(spec)
 
-    async with get_session_context() as session:
-        from core.entities import Chat
-        from services.image_submission import submit_image_job
-        from services.model_availability_service import ModelAvailabilityService
+    should_fallback_prompt = False
+    try:
+        async with get_session_context() as session:
+            from core.entities import Chat
+            from services.image_submission import submit_image_job
+            from services.model_availability_service import ModelAvailabilityService
 
-        chat = session.get(Chat, chat_id) if chat_id else None
-        budget = getattr(chat, "scene_graph_budget", None) if chat else None
-        if budget is None:
-            budget = DEFAULT_SCENE_GRAPH_BUDGET
-        cost = scene_spec_cost(spec)
-        if cost > budget:
-            logger.info(
-                "scene_graph_budget_exceeded",
-                job_id=job_data.get("id"),
-                chat_id=chat_id,
-                cost=cost,
-                budget=budget,
-                falling_back="prompt_text",
-            )
-            await _handle_scene_prompt(job_data)
-            return
-
-        # The model names the spec named, checked against what is installed.
-        # A name that is not installed is dropped rather than passed through:
-        # the job's availability check runs at dispatch, which is after it has
-        # been billed.
-        availability = ModelAvailabilityService(session)
-        lora_name = None
-        if spec.lora is not None:
-            lora_name = availability.get_available_lora(spec.lora.name)
-            if not lora_name:
-                issues.append(_dropped_issue("lora.name", spec.lora.name, "not installed"))
-                spec = spec.model_copy(update={"lora": None})
-
-        detailer_model = None
-        if spec.detailer.enabled and spec.detailer.model:
-            # The detailer model is an UNet, not a LoRA.
-            installed_unets = availability.get_available_models("unet")
-            detailer_model = (
-                spec.detailer.model if spec.detailer.model in installed_unets else None
-            )
-            if not detailer_model:
-                issues.append(
-                    _dropped_issue("detailer.model", spec.detailer.model, "not installed")
+            chat = session.get(Chat, chat_id) if chat_id else None
+            budget = getattr(chat, "scene_graph_budget", None) if chat else None
+            if budget is None:
+                budget = DEFAULT_SCENE_GRAPH_BUDGET
+            cost = scene_spec_cost(spec)
+            if cost > budget:
+                logger.info(
+                    "scene_graph_budget_exceeded",
+                    job_id=job_data.get("id"),
+                    chat_id=chat_id,
+                    cost=cost,
+                    budget=budget,
+                    falling_back="prompt_text",
                 )
-                spec = spec.model_copy(
-                    update={"detailer": spec.detailer.model_copy(update={"enabled": False})}
+                should_fallback_prompt = True
+            else:
+                availability = ModelAvailabilityService(session)
+                lora_name = None
+                if spec.lora is not None:
+                    lora_name = availability.get_available_lora(spec.lora.name)
+                    if not lora_name:
+                        issues.append(_dropped_issue("lora.name", spec.lora.name, "not installed"))
+                        spec = spec.model_copy(update={"lora": None})
+
+                detailer_model = None
+                if spec.detailer.enabled and spec.detailer.model:
+                    installed_unets = availability.get_available_models("unet")
+                    detailer_model = (
+                        spec.detailer.model if spec.detailer.model in installed_unets else None
+                    )
+                    if not detailer_model:
+                        issues.append(
+                            _dropped_issue("detailer.model", spec.detailer.model, "not installed")
+                        )
+                        spec = spec.model_copy(
+                            update={"detailer": spec.detailer.model_copy(update={"enabled": False})}
+                        )
+
+                logger.info(
+                    "scene_graph_chaining",
+                    job_id=job_data.get("id"),
+                    chat_id=chat_id,
+                    cost=cost,
+                    budget=budget,
+                    issues=len(issues),
                 )
 
-        logger.info(
-            "scene_graph_chaining",
-            job_id=job_data.get("id"),
-            chat_id=chat_id,
-            cost=cost,
-            budget=budget,
-            issues=len(issues),
-        )
+                img_job = await submit_image_job(
+                    session,
+                    prompt=spec.prompt,
+                    negative_prompt=spec.negative_prompt,
+                    checkpoint=preferred_checkpoint,
+                    source="scene_illustrate",
+                    workspace="chat",
+                    chat_id=chat_id,
+                    character_id=character_id,
+                    branch_id=branch_id,
+                    spec=spec,
+                    extra_metadata={
+                        "image_context": spec.prompt,
+                        "scene_graph": True,
+                        "scene_graph_cost": cost,
+                        "scene_graph_issues": [i.model_dump() for i in issues],
+                    },
+                )
+                logger.info("scene_graph_image_job_queued", job_id=img_job.id, chat_id=chat_id)
+    except Exception as exc:
+        logger.error("scene_graph_chain_failed", job_id=job_data.get("id"), error=str(exc), exc_info=True)
+        return
 
-        img_job = await submit_image_job(
-            session,
-            prompt=spec.prompt,
-            negative_prompt=spec.negative_prompt,
-            checkpoint=preferred_checkpoint,
-            source="scene_illustrate",
-            workspace="chat",
-            chat_id=chat_id,
-            character_id=character_id,
-            branch_id=branch_id,
-            spec=spec,
-            extra_metadata={
-                # The prompt travels with the job, because that is what the
-                # IMAGE message is built from.
-                "image_context": spec.prompt,
-                "scene_graph": True,
-                "scene_graph_cost": cost,
-                "scene_graph_issues": [i.model_dump() for i in issues],
-            },
-        )
-        logger.info("scene_graph_image_job_queued", job_id=img_job.id, chat_id=chat_id)
-
+    if should_fallback_prompt:
+        await _handle_scene_prompt(job_data)
 
 def _dropped_issue(field: str, value: Any, problem: str):
     """A scene-graph issue for something that was dropped rather than clamped."""
@@ -890,7 +889,6 @@ async def _append_swipe_alternative(job_data, session, content, msg_metadata, me
     active_index = len(alternates) - 1
 
     target_msg.content = content
-    target_msg.tool_calls = _first_output_tool_calls(job_data)
     target_meta.update(msg_metadata)
     target_meta.update({"alternates": alternates, "active_index": active_index})
     target_msg.message_metadata = target_meta

@@ -26,7 +26,18 @@ from services.provider_utils import (
 logger = provider_logger()
 
 # Provider types that are always LLM workers regardless of id/name.
-LLM_PROVIDER_TYPES = {"openai_compat", "openai", "anthropic", "google", "gemini", "ollama", "modal_llm"}
+LLM_PROVIDER_TYPES = {
+    "openai_compat",
+    "openai",
+    "anthropic",
+    "google",
+    "gemini",
+    "ollama",
+    "modal_llm",
+    "modal_vllm",
+    "beam_llm",
+    "remote_llm",
+}
 TTS_PROVIDER_TYPES = {"modal_tts", "direct_tts", "beam_tts", "remote_tts"}
 
 def _normalize_capabilities(

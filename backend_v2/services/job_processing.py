@@ -929,6 +929,7 @@ async def _finalize_llm_job(
         load_balancer=load_balancer,
         process_image_background_fn=None,
         event_extra=event_extra,
+        await_completion=job_type in ("chat_reply", "narrator"),
     )
 
     if job_type in ("chat_reply", "narrator"):

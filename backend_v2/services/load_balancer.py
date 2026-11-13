@@ -733,9 +733,8 @@ class LoadBalancer:
             if preferred_provider_id:
                 provider = self.repo.get(preferred_provider_id)
                 if provider and provider.enabled and provider.id not in excluded:
-                    # Check if preferred provider is in eligible list (if filtering)
-                    if required_models and provider.id not in [p.id for p in providers]:
-                        # Preferred provider doesn't have required models
+                    # Check if preferred provider is in eligible list (serves task_type, models, sampler/scheduler)
+                    if provider.id not in {p.id for p in providers}:
                         return None
                     await self._track_job(provider.id)
                     return provider
@@ -752,7 +751,7 @@ class LoadBalancer:
         if preferred_provider_id:
             provider = self.repo.get(preferred_provider_id)
             if provider and provider.enabled and provider.id not in excluded:
-                if required_models and provider.id not in [p.id for p in providers]:
+                if provider.id not in {p.id for p in providers}:
                     return None
                 candidates = [provider]
             else:

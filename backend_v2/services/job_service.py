@@ -1161,7 +1161,7 @@ class JobService:
         durations = []
         for job in completed_jobs:
             if job.started_at and job.completed_at:
-                duration = (job.completed_at - job.started_at).total_seconds()
+                duration = (as_utc(job.completed_at) - as_utc(job.started_at)).total_seconds()
                 if duration > 0:
                     durations.append(duration)
         
@@ -1204,7 +1204,7 @@ class JobService:
             by_status[status_str] = by_status.get(status_str, 0) + 1
             if started_at and completed_at:
                 durations.setdefault(status_str, []).append(
-                    (completed_at - started_at).total_seconds()
+                    (as_utc(completed_at) - as_utc(started_at)).total_seconds()
                 )
         
         avg_durations = {

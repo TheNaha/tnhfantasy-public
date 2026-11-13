@@ -250,6 +250,8 @@ async def prune_stale_providers() -> None:
                 if last_seen and isinstance(last_seen, str):
                     try:
                         seen = datetime.fromisoformat(last_seen)
+                        if seen.tzinfo is None:
+                            seen = seen.replace(tzinfo=timezone.utc)
                         if seen < cutoff:
                             logger.info("pruning_stale_provider", provider_id=p.id, last_seen=last_seen)
                             repo.delete(p.id)

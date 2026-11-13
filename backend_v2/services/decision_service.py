@@ -49,8 +49,9 @@ class DecisionService:
         active = get_active_models()
         return active.get("decisions") or "laya_multilingual"
 
-    def _find_remote_agent_target(self) -> Optional[tuple[str, str, str]]:
-        """Return `(provider_id, agent_url, agent_token)` for an enabled remote worker."""
+    def _find_remote_agent_targets(self) -> List[tuple[str, str, str]]:
+        """Return `[(provider_id, agent_url, agent_token), ...]` for enabled remote workers."""
+        targets: List[tuple[str, str, str]] = []
         try:
             from services.engines.engine_factory import get_engine
 
@@ -71,10 +72,10 @@ class DecisionService:
                 agent_url = getattr(engine, "agent_url", None) or getattr(engine, "base_url", None)
                 agent_token = getattr(engine, "agent_token", None) or ""
                 if agent_url:
-                    return provider.id, str(agent_url).rstrip("/"), str(agent_token)
+                    targets.append((provider.id, str(agent_url).rstrip("/"), str(agent_token)))
         except Exception as exc:
             logger.warning("director_remote_agent_lookup_failed", error=str(exc))
-        return None
+        return targets
 
     async def _try_remote_agent(
         self,
@@ -86,56 +87,55 @@ class DecisionService:
         state_snapshot: Optional[Dict[str, Any]] = None,
     ) -> Optional[DirectorDecisionResult]:
         """Tier 1: Dispatch to `remote_agent` `/v1/decisions` on CPU/RAM."""
-        target = self._find_remote_agent_target()
-        if not target:
+        targets = self._find_remote_agent_targets()
+        if not targets:
             return None
-        provider_id, agent_url, agent_token = target
-        headers: Dict[str, str] = {"Content-Type": "application/json"}
-        if agent_token:
-            headers["X-Worker-Token"] = agent_token
-            headers["Authorization"] = f"Bearer {agent_token}"
+        for provider_id, agent_url, agent_token in targets:
+            headers: Dict[str, str] = {"Content-Type": "application/json"}
+            if agent_token:
+                headers["X-Worker-Token"] = agent_token
+                headers["Authorization"] = f"Bearer {agent_token}"
 
-        started = time.perf_counter()
-        try:
-            async with httpx.AsyncClient(timeout=DIRECTOR_TIMEOUT_SECONDS) as client:
-                resp = await client.post(
-                    f"{agent_url}/v1/decisions",
-                    headers=headers,
-                    json={
-                        "model": model_id,
-                        "context": context_text,
-                        "questions": questions,
-                    },
+            started = time.perf_counter()
+            try:
+                async with httpx.AsyncClient(timeout=DIRECTOR_TIMEOUT_SECONDS) as client:
+                    resp = await client.post(
+                        f"{agent_url}/v1/decisions",
+                        headers=headers,
+                        json={
+                            "model": model_id,
+                            "context": context_text,
+                            "questions": questions,
+                        },
+                    )
+                if resp.status_code >= 400:
+                    logger.warning(
+                        "director_remote_agent_unavailable",
+                        provider_id=provider_id,
+                        status_code=resp.status_code,
+                    )
+                    continue
+                payload = resp.json()
+                answers = payload.get("answers") or payload
+                latency_ms = float(payload.get("latency_ms") or ((time.perf_counter() - started) * 1000))
+                agent_engine = str(payload.get("engine_used") or f"remote_laya_{payload.get('device', 'cpu')}")
+                engine_used_str = agent_engine if ":" in agent_engine else f"{agent_engine}:{provider_id}"
+                return parse_director_result(
+                    answers,
+                    engine_used=engine_used_str,
+                    model_id=str(payload.get("model_id") or model_id),
+                    latency_ms=latency_ms,
+                    allow_image_generation=allow_image_generation,
+                    state_snapshot=state_snapshot,
+                    context_text=context_text,
                 )
-            if resp.status_code >= 400:
+            except Exception as exc:
                 logger.warning(
-                    "director_remote_agent_unavailable",
+                    "director_remote_agent_call_failed",
                     provider_id=provider_id,
-                    status_code=resp.status_code,
+                    error=str(exc),
                 )
-                return None
-            payload = resp.json()
-            answers = payload.get("answers") or payload
-            latency_ms = float(payload.get("latency_ms") or ((time.perf_counter() - started) * 1000))
-            agent_engine = str(payload.get("engine_used") or f"remote_laya_{payload.get('device', 'cpu')}")
-            engine_used_str = agent_engine if ":" in agent_engine else f"{agent_engine}:{provider_id}"
-            return parse_director_result(
-                answers,
-                engine_used=engine_used_str,
-                model_id=str(payload.get("model_id") or model_id),
-                latency_ms=latency_ms,
-                allow_image_generation=allow_image_generation,
-                state_snapshot=state_snapshot,
-                context_text=context_text,
-            )
-        except Exception as exc:
-            logger.warning(
-                "director_remote_agent_call_failed",
-                provider_id=provider_id,
-                error=str(exc),
-            )
-            return None
-
+        return None
     async def _try_modal_laya(
         self,
         *,

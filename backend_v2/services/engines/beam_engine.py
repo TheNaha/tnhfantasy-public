@@ -278,7 +278,12 @@ class BeamEngine(InProcessEngine):
                             task.cancel()
                             return
                 finally:
-                    task.cancel()
+                    if not task.done():
+                        task.cancel()
+                        try:
+                            await task
+                        except (asyncio.CancelledError, Exception):
+                            pass
         except TimeoutError:
             yield {
                 "event": "failed",
