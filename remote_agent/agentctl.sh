@@ -41,7 +41,7 @@ elif [ -x "$SCRIPT_DIR/dist/tnhfantasy-agent" ]; then
   EXEC="$SCRIPT_DIR/dist/tnhfantasy-agent"
 else
   echo "error: agent executable not found at $SCRIPT_DIR/tnhfantasy-agent or $SCRIPT_DIR/dist/tnhfantasy-agent" >&2
-  echo "hint: build it with  cd remote_agent && pyinstaller --noconfirm --distpath ./dist tnhfantasy-agent.spec" >&2
+  echo "hint: build it with  cd remote_agent && pyinstaller --noconfirm --distpath ./dist tnhcomfy-agent.spec" >&2
   exit 1
 fi
 

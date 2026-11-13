@@ -221,8 +221,12 @@ class RamModelManager:
 
     def _rescan_ram_dir(self) -> None:
         """Discover any files already resident in ram_dir and its role subfolders."""
-        if not self.ram_dir.exists():
-            return
+        with self._lock:
+            if not self.ram_dir.exists():
+                return
+            self._rescan_ram_dir_unlocked()
+
+    def _rescan_ram_dir_unlocked(self) -> None:
         seen_inodes = set()
         active_rp = os.getenv("ACTIVE_RP_MODEL") or os.getenv("DEFAULT_RP_MODEL", "")
         active_util = os.getenv("ACTIVE_UTIL_MODEL") or os.getenv("DEFAULT_UTIL_MODEL", "")
@@ -302,7 +306,9 @@ class RamModelManager:
     def current_usage_bytes(self) -> int:
         total = 0
         seen_inodes = set()
-        for e in self.entries.values():
+        with self._lock:
+            entries_snapshot = list(self.entries.values())
+        for e in entries_snapshot:
             try:
                 p = Path(e.ram_path)
                 if p.exists() and p.is_file():
@@ -481,9 +487,14 @@ class RamModelManager:
             subfolder_dir = self.ram_dir / subfolder if subfolder else self.ram_dir
             subfolder_dir.mkdir(parents=True, exist_ok=True)
 
-            dest_filename = f"{mid}_{src.name}" if not src.name.startswith(mid) else src.name
-            dest_path = subfolder_dir / dest_filename
-            flat_dest_path = self.ram_dir / dest_filename
+            safe_mid = Path(mid).name
+            if not safe_mid or safe_mid in (".", "..") or safe_mid != mid:
+                raise ValueError(f"Unsafe model_id path component: {mid!r}")
+            dest_filename = f"{safe_mid}_{src.name}" if not src.name.startswith(safe_mid) else src.name
+            dest_path = (subfolder_dir / dest_filename).resolve()
+            dest_path.relative_to(self.ram_dir.resolve())
+            flat_dest_path = (self.ram_dir / dest_filename).resolve()
+            flat_dest_path.relative_to(self.ram_dir.resolve())
 
             # 2. Check if file already exists on disk in subfolder, flat ram_dir, or if src itself is already in RAM cache
             is_src_in_ram = False
@@ -716,7 +727,11 @@ class RamModelManager:
             raise FileNotFoundError(f"Source model directory does not exist: {source_dir}")
 
         subfolder = "decisions" if role == "decisions" else role
-        dest_dir = self.ram_dir / subfolder / model_id
+        safe_model_id = Path(model_id).name
+        if not safe_model_id or safe_model_id in (".", "..") or safe_model_id != model_id:
+            raise ValueError(f"Unsafe model_id path component: {model_id!r}")
+        dest_dir = (self.ram_dir / subfolder / safe_model_id).resolve()
+        dest_dir.relative_to(self.ram_dir.resolve())
         dest_dir.parent.mkdir(parents=True, exist_ok=True)
 
         total_bytes = sum(f.stat().st_size for f in src.rglob("*") if f.is_file())

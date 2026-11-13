@@ -292,7 +292,7 @@ if [ "$PUBLIC_MODE" = "netbird" ]; then
 
   if ! netbird status >/dev/null 2>&1; then
     mkdir -p /var/log/netbird /var/run /var/lib/netbird
-    pkill -9 -f 'netbird' || true
+    pkill -9 -x 'netbird' || true
     rm -f /var/run/netbird.sock
     netbird service run --log-file /var/log/netbird/client.log \
       ${NETBIRD_MANAGEMENT_URL:+--management-url "$NETBIRD_MANAGEMENT_URL"} \

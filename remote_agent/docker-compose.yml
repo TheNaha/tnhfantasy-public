@@ -17,8 +17,8 @@ services:
         CUDA_RUNTIME: ${CUDA_RUNTIME:-runtime-slim}
     container_name: tnhfantasy-remote-agent
     env_file:
-      # Only .env.agent.example is tracked. Copy it first:
-      #   cp .env.agent.example .env.agent
+      # Only .env.example is tracked. Copy it first:
+      #   cp .env.example .env.agent
       #
       # This populates the CONTAINER environment, and only the container
       # environment. It cannot satisfy the `${DATA_DIR:?...}` interpolation in
@@ -94,7 +94,7 @@ services:
       # backend read, and the worker only ever reads it. Mounted rather than
       # baked in so an operator can edit it on the box and recreate, which is the
       # workflow `deployables/modal/llm/app.py` documents for the Modal side.
-      - ./models.json:/app/modal_llm/models.json:ro
+      - ../backend_v2/modal_llm/models.json:/app/modal_llm/models.json:ro
     ports:
       - "8001:8001"
     restart: unless-stopped

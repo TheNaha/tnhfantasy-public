@@ -265,3 +265,19 @@ def test_ram_manager_nvme_backing_and_in_place_registration(tmp_path):
     assert mgr.is_cached("illustrious_v1")
     assert mgr.entries["illustrious_v1"].ram_path == str(direct_file)
     assert mgr.entries["illustrious_v1"].is_anchor is True
+
+
+def test_ram_manager_rejects_unsafe_model_id_traversal(temp_env):
+    ram_dir, source_dir = temp_env
+    mgr = RamModelManager(ram_dir=str(ram_dir))
+    src = source_dir / "model.gguf"
+    src.write_bytes(b"X" * 1024)
+
+    with pytest.raises(ValueError, match="Unsafe model_id"):
+        mgr.ensure_in_ram(str(src), model_id="../escape", role="rp")
+
+    sub = source_dir / "laya_dir"
+    sub.mkdir()
+    (sub / "weights.bin").write_bytes(b"Y" * 1024)
+    with pytest.raises(ValueError, match="Unsafe model_id"):
+        mgr.ensure_dir_in_ram(str(sub), model_id="../../escape", role="decisions")

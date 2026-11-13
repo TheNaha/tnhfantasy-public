@@ -221,10 +221,13 @@ class Registry:
         """
         distinct: List[Model] = []
         for role in self.roles:
-            model = self.primary(role)
+            try:
+                model = self.primary(role)
+            except LookupError:
+                continue
             if model.engine_type != "gguf":
                 continue
-            if model.id not in {m.id for m in distinct}:
+            if not any(d.volume_dir == model.volume_dir for d in distinct):
                 distinct.append(model)
         return distinct
 
@@ -265,7 +268,7 @@ def load(path: Optional[Path] = None) -> Optional[Registry]:
         "engine_type": "gguf", "mmproj": None, "mmproj_repo": None, "dir": None, "ctx": 32768,
         "parallel": 1, "kv": None, "sampler": {}, "extra_args": [], "enabled": True,
     }
-    meta_keys = {"role", "enabled", "_note", "_comment"}
+    meta_keys = {"role", "_note", "_comment"}
 
     models: Dict[str, Model] = {}
     for model_id, spec in models_raw.items():

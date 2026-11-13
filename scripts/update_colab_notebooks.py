@@ -26,14 +26,9 @@ import sys
 import subprocess
 
 # 1. Automatic Environment & Persistent Storage Detection
-IS_COLAB = False
+import importlib.util
+IS_COLAB = importlib.util.find_spec("google.colab") is not None
 IS_MODAL = False
-
-try:
-    import google.colab
-    IS_COLAB = True
-except Exception:
-    pass
 
 if not IS_COLAB:
     if os.path.exists("/mnt/data") or "MODAL_IMAGE_ID" in os.environ or "MODAL_ENVIRONMENT" in os.environ:
@@ -78,7 +73,7 @@ elif IS_MODAL or os.path.exists("/mnt/data"):
     ]
     for d in modal_subdirs:
         os.makedirs(d, exist_ok=True)
-    print(f"✅ Modal Volume active at /mnt/data (shared with Modal image worker comfy-storage!)")
+    print("✅ Modal Volume active at /mnt/data (shared with Modal image worker comfy-storage!)")
 else:
     print("💻 Detected generic Linux container / cloud VM environment.")
     PERSISTENT_ROOT = os.path.expanduser("~/tnhfantasy_storage")
@@ -420,12 +415,8 @@ import os
 import sys
 
 is_modal = os.path.exists("/mnt/data") or ("MODAL_ENVIRONMENT" in os.environ)
-is_colab = False
-try:
-    import google.colab
-    is_colab = True
-except Exception:
-    pass
+import importlib.util
+is_colab = importlib.util.find_spec("google.colab") is not None
 
 # The workspace root, derived from the ENVIRONMENT - see cell 3 for why
 # "whichever of /content and /root happens to exist" is not the same thing
@@ -1331,8 +1322,8 @@ import urllib.parse
 import urllib.error
 import uuid
 import ssl
+from pathlib import Path
 from IPython.display import display, HTML
-
 mode_key = (
     "storage" if ("storage" in WORKER_MODE or "models_only" in WORKER_MODE)
     else ("hybrid" if "hybrid" in WORKER_MODE
@@ -1343,12 +1334,8 @@ tunnel_key = "netbird" if "netbird" in TUNNEL_METHOD else "cloudflared"
 policy_key = "auto" if "auto" in CONCURRENCY_POLICY else ("exclusive" if "exclusive" in CONCURRENCY_POLICY else ("semi_concurrent" if "semi_concurrent" in CONCURRENCY_POLICY else "concurrent"))
 # 0. Persistent Storage & Multi-GPU Topology
 is_modal = os.path.exists("/mnt/data") or ("MODAL_ENVIRONMENT" in os.environ)
-is_colab = False
-try:
-    import google.colab
-    is_colab = True
-except Exception:
-    pass
+import importlib.util
+is_colab = importlib.util.find_spec("google.colab") is not None
 
 # The workspace root, derived from the ENVIRONMENT - see cell 3 for why
 # "whichever of /content and /root happens to exist" is not the same thing
@@ -1390,9 +1377,9 @@ if device_count >= 2:
     laya_gpu_device = 1
     is_multi_gpu = True
     print(f"⚡ Multi-GPU Parallel Mode Active ({device_count} GPUs detected):")
-    print(f"   • GPU 0: ComfyUI (Image Generation)")
-    print(f"   • GPU 1: llama-server (LLM) & Laya System 1 (Director)")
-    print(f"   • Cooperative cross-eviction is BYPASSED for zero switching latency!")
+    print("   • GPU 0: ComfyUI (Image Generation)")
+    print("   • GPU 1: llama-server (LLM) & Laya System 1 (Director)")
+    print("   • Cooperative cross-eviction is BYPASSED for zero switching latency!")
 else:
     comfy_gpu_device = 0
     llm_gpu_device = 0
@@ -1952,7 +1939,7 @@ for mid in distinct_active_llm:
     if storage_strat_key == "direct":
         if can_direct_download_to_ram:
             target_folder = os.path.join(ram_llm_dir, vol_dir)
-            download_target_desc = f"RAM cache (/dev/shm) [⚡ Zero-NVMe direct stream]"
+            download_target_desc = "RAM cache (/dev/shm) [⚡ Zero-NVMe direct stream]"
         else:
             target_folder = os.path.join(llm_local_dir, vol_dir)
             download_target_desc = f"local NVMe SSD ({target_folder}) [RAM constrained ({tot_ram_gb:.1f} GB)]"
@@ -2295,7 +2282,7 @@ if tier1_candidate_name:
             print(f"📁 [Tier 3 Library] Found checkpoint in ComfyUI models: {comfy_candidate} ({sz_gb:.2f} GB)")
             active_ckpt_path = comfy_candidate
         else:
-            print(f"ℹ️ Checkpoint not found in local RAM, NVMe, or Google Drive library.")
+            print("ℹ️ Checkpoint not found in local RAM, NVMe, or Google Drive library.")
 
 print("=" * 65 + "\\n")
 
@@ -2549,7 +2536,7 @@ def sync_tier2_warm_cache():
                     if synced_count % 4 == 0:
                         drop_page_cache()
                     print(f"📦 [Tier 2 LoRA Sync] Cached recently modified LoRA {rel_name} ({src_sz / (1024*1024):.1f} MB) to NVMe!")
-                except Exception as exc:
+                except Exception:
                     if os.path.exists(dest_file + ".syncing"):
                         try: os.remove(dest_file + ".syncing")
                         except Exception: pass
@@ -2888,9 +2875,7 @@ def start_remote_agent():
         CIVITAI_TOKEN=str(globals().get("CIVITAI_TOKEN") or os.environ.get("CIVITAI_TOKEN", "")).strip(),
         HF_TOKEN=str(globals().get("HF_TOKEN") or os.environ.get("HF_TOKEN", "")).strip(),
         LLM_DATA_DIR=str(globals().get("GDRIVE_LLM_PATH") or os.environ.get("GDRIVE_LLM_PATH", "/content/drive/MyDrive/tnhfantasy/llm_models")).strip(),
-        LLM_UPSTREAM_BASE=f"http://127.0.0.1:{llm_port}/v1",
         RAM_CACHE_DIR=active_cache_dir,
-        NVME_CACHE_DIR=nvme_cache_base,
         CACHE_TIER=cache_tier,
         RAM_CACHE_BUDGET_GB=str(int(cache_budget_gb)),
         CACHE_IN_RAM="1" if cache_tier in ("ram", "nvme") else "0",
@@ -2907,6 +2892,10 @@ def start_remote_agent():
         PROVIDER_DOWNLOAD_SCRATCH_DIR=scratch_downloads,
         REMOTE_AGENT_DOWNLOAD_MAX_CONCURRENT="1",
     )
+    if mode_key not in ("hybrid", "llm"):
+        env_agent["LLM_UPSTREAM_BASE"] = f"http://127.0.0.1:{llm_port}/v1"
+    elif os.environ.get("LLM_UPSTREAM_BASE"):
+        env_agent["LLM_UPSTREAM_BASE"] = os.environ["LLM_UPSTREAM_BASE"]
     if mode_key in ("hybrid", "llm"):
         env_agent["LD_LIBRARY_PATH"] = ld_path
         env_agent["PATH"] = "/usr/local/llama.cpp:/usr/local/bin:" + os.environ.get("PATH", "")
@@ -3080,7 +3069,7 @@ def launch_llm_track():
                 print(f"  ⚠️ Low free VRAM ({free_vram_gb:.1f} GB free for {weight_gb:.1f} GB model); running on CPU RAM cache: -ngl 0")
             else:
                 ngl = 0
-                print(f"  ⚠️ Model weights not found on disk/RAM; running fallback model on CPU: -ngl 0")
+                print("  ⚠️ Model weights not found on disk/RAM; running fallback model on CPU: -ngl 0")
     except Exception as exc:
         ngl = 35
         print(f"  Notice: VRAM layer budgeting fallback ({exc}); using safe -ngl 35")
@@ -3267,7 +3256,7 @@ for attempt in range(health_attempts):
             req = urllib.request.Request(f"http://127.0.0.1:{s_port}{s_path}")
             # `/info` is authenticated (it discloses paths), unlike `/health`.
             if s_path == "/info":
-                req.add_header("X-Provider-Token", agent_token)
+                req.add_header("Authorization", f"Bearer {agent_token}")
             with urllib.request.urlopen(req, timeout=1) as res:
                 if res.status not in (200, 307):
                     continue
@@ -3805,12 +3794,8 @@ import urllib.error
 from IPython.display import display, HTML
 
 is_modal = os.path.exists("/mnt/data") or ("MODAL_ENVIRONMENT" in os.environ)
-is_colab = False
-try:
-    import google.colab
-    is_colab = True
-except Exception:
-    pass
+import importlib.util
+is_colab = importlib.util.find_spec("google.colab") is not None
 
 # The workspace root, derived from the ENVIRONMENT - see cell 3 for why
 # "whichever of /content and /root happens to exist" is not the same thing
@@ -4112,11 +4097,8 @@ def build_cell_7_source() -> list[str]:
 import os
 
 is_colab = False
-try:
-    import google.colab
-    is_colab = True
-except Exception:
-    pass
+import importlib.util
+is_colab = importlib.util.find_spec("google.colab") is not None
 
 if is_colab:
     from IPython.display import Audio, display

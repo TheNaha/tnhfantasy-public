@@ -26,7 +26,7 @@ if exist "%SCRIPT_DIR%.env" (
     for /f "usebackq tokens=1,* delims==" %%A in ("%SCRIPT_DIR%.env") do (
         set "key=%%A"
         set "val=%%B"
-        if /I "!key:~0,7!"=="export " set "key=!key:~8!"
+        if /I "!key:~0,7!"=="export " set "key=!key:~7!"
         set "key=!key: =!"
         if "!val:~0,1!"=="\"" set "val=!val:~1,-1!"
         if "!val:~0,1!"=="'" set "val=!val:~1,-1!"
@@ -40,7 +40,7 @@ if not defined HOST set "HOST=0.0.0.0"
 
 if not exist "%EXEC%" (
     echo error: agent executable not found at %EXEC%
-    echo Build it on Windows with: pyinstaller --distpath "%SCRIPT_DIR%" --specpath "%SCRIPT_DIR%" tnhfantasy-agent.spec
+    echo Build it on Windows with: pyinstaller --distpath "%SCRIPT_DIR%" --specpath "%SCRIPT_DIR%" tnhcomfy-agent.spec
     exit /b 1
 )
 

@@ -212,3 +212,24 @@ def _write_fixture():
         },
     }), encoding="utf-8")
     return path
+
+
+def test_disabled_models_are_excluded_and_shared_volume_dir_deduped(tmp_path):
+    path = tmp_path / "models.json"
+    path.write_text(json.dumps({
+        "roles": {
+            "rp": {"fallback": ["disabled_rp", "active_rp"]},
+            "util": {"fallback": ["shared_util"]},
+            "empty_role": {"fallback": ["disabled_only"]},
+        },
+        "models": {
+            "disabled_rp": {"role": "rp", "repo": "r/d", "gguf": "d.gguf", "enabled": False},
+            "active_rp": {"role": "rp", "repo": "r/a", "gguf": "a.gguf"},
+            "shared_util": {"role": "util", "repo": "r/a", "gguf": "a.gguf", "dir": "active_rp"},
+            "disabled_only": {"role": "empty_role", "repo": "r/e", "gguf": "e.gguf", "enabled": False},
+        },
+    }), encoding="utf-8")
+    reg = load(path)
+    assert reg.get("disabled_rp").enabled is False
+    assert reg.primary("rp").id == "active_rp"
+    assert [m.id for m in reg.distinct_primaries()] == ["active_rp"]

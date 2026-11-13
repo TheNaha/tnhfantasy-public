@@ -3,6 +3,7 @@ import asyncio
 import atexit
 import base64
 import json
+import re
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -650,27 +651,36 @@ async def setup():
             return
         token = determine_download_token(url, HF_TOKEN, CIVITAI_TOKEN)
 
-        def _do() -> None:
-            download_model_to_path(
+        def _do() -> Optional[str]:
+            res = download_model_to_path(
                 url=url, full_path=full_path, path=path, token=token,
                 hf_token=HF_TOKEN, civitai_token=CIVITAI_TOKEN,
                 log=print, log_prefix="Setup",
-                # Same value /download-model passes (below). A seed that cannot
-                # finish inside it gives up instead of holding a thread open
-                # indefinitely.
                 request_timeout_seconds=DOWNLOAD_TIMEOUT,
             )
+            if isinstance(res, dict) and res.get("status") in ("error", "failed"):
+                return str(res.get("error") or res.get("message") or "download failed")
+            return None
 
-        # The semaphore wraps the `await`, not the `to_thread` body: holding it
-        # here is what keeps the queued seeds in the coroutine rather than
-        # occupying executor threads.
         async with seed_semaphore:
             try:
-                await _bounded_to_thread(_do)
+                err = await _bounded_to_thread(_do)
+                if err:
+                    logger.warning(f"[setup] failed to seed {path}: {err}")
+                    return f"{path}: {err}"
             except Exception as e:
                 logger.warning(f"[setup] failed to seed {path}: {e}")
+                return f"{path}: {e}"
+        return None
 
-    await asyncio.gather(*[_seed(u, p) for u, p in zip(default_models, default_paths)])
+    seed_results = await asyncio.gather(*[_seed(u, p) for u, p in zip(default_models, default_paths)])
+    seed_errors = [err for err in seed_results if err]
+    if seed_errors:
+        return ok(
+            f"Setup completed with {len(seed_errors)} seed download warning(s)",
+            directories=directories,
+            seed_errors=seed_errors,
+        )
     return ok("Setup complete", directories=directories)
 
 
@@ -719,7 +729,8 @@ async def _download_registry_model(model_id: str):
         target = os.path.join(DATA_ROOT, model.volume_dir)
         os.makedirs(target, exist_ok=True)
         print(f"[{model.id}] {model.repo} (System 1 Laya directory)", flush=True)
-        snapshot_download(
+        await _bounded_to_thread(
+            snapshot_download,
             model.repo,
             local_dir=target,
             token=HF_TOKEN or None,
@@ -757,7 +768,8 @@ async def _download_registry_model(model_id: str):
         target = os.path.join(DATA_ROOT, model.volume_dir)
         os.makedirs(target, exist_ok=True)
         print(f"[{model.id}] {repo} :: {filename}", flush=True)
-        snapshot_download(
+        await _bounded_to_thread(
+            snapshot_download,
             repo,
             allow_patterns=[filename],
             local_dir=target,
@@ -1140,28 +1152,38 @@ async def get_file(
     out-of-memory kill of the agent, and a weights file is not what this route is
     for.
     """
-    full_path = _data_path(os.path.join(subfolder, path) if subfolder else path)
+    if subfolder:
+        base_dir = _data_path(subfolder)
+        try:
+            full_path = get_safe_path(base_dir, path)
+        except ValueError:
+            raise HTTPException(status_code=403, detail="Access denied: path outside allowed directory")
+    else:
+        full_path = _data_path(path)
     if not os.path.isfile(full_path):
         raise HTTPException(status_code=404, detail=f"File not found: {path}")
 
     # High-speed WAN path: Convert PNG/JPEG images to high-quality WebP on the fly
     # when requested, reducing payload size by ~80% for fast network transfer.
     if format == "webp" and full_path.lower().endswith((".png", ".jpg", ".jpeg")):
-        try:
+        def _encode_webp() -> bytes:
             from io import BytesIO
             from PIL import Image
 
             with Image.open(full_path) as im:
                 buf = BytesIO()
                 im.save(buf, format="WEBP", quality=98)
-                return Response(
-                    content=buf.getvalue(),
-                    media_type="image/webp",
-                    headers={"Content-Disposition": f'inline; filename="{os.path.basename(full_path)}.webp"'},
-                )
+                return buf.getvalue()
+
+        try:
+            webp_bytes = await _bounded_to_thread(_encode_webp)
+            return Response(
+                content=webp_bytes,
+                media_type="image/webp",
+                headers={"Content-Disposition": f'inline; filename="{os.path.basename(full_path)}.webp"'},
+            )
         except Exception as exc:
             logger.warning(f"get_file webp conversion failed for {path}: {exc}")
-
     max_bytes = get_file_size_cap()
     try:
         size = os.path.getsize(full_path)
@@ -1210,9 +1232,11 @@ async def upload_file(req: UploadFileRequest, http_request: Request):
     # heavy call here already went through `_bounded_to_thread`; this one was the
     # only one that missed it.
     target_dir = _data_path(req.directory)
-    os.makedirs(target_dir, exist_ok=True)
-    path = _data_path(os.path.join(req.directory, req.filename))
-
+    try:
+        path = get_safe_path(target_dir, req.filename)
+    except ValueError:
+        raise HTTPException(status_code=403, detail="Access denied: invalid filename path")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
     def _decode_and_write():
         content = base64.b64decode(req.content_base64)
         with open(path, "wb") as handle:
@@ -1343,9 +1367,6 @@ if WORKER_MODE in ("llm", "hybrid"):
     #: myself", which is the whole parity claim: the tree this worker manages is
     #: then the tree that answers, and there is nothing to reconcile.
     UPSTREAM_OVERRIDE = os.getenv("LLM_UPSTREAM_BASE", "").strip().rstrip("/")
-    if not UPSTREAM_OVERRIDE and WORKER_MODE == "hybrid":
-        # In hybrid mode on Colab/self-hosted, llama-server runs on :8003
-        UPSTREAM_OVERRIDE = "http://127.0.0.1:8003/v1"
 
     #: The local stack, launched from the registry when there is no override.
     STACK = LlamaStack(models_dir=DATA_ROOT)
@@ -1354,24 +1375,17 @@ if WORKER_MODE in ("llm", "hybrid"):
         # An explicit upstream wins and no local model is loaded: the operator
         # runs their own server, and this worker is the authenticated proxy.
         UPSTREAM_BASE = UPSTREAM_OVERRIDE
-        # `extra=`, not a bare keyword: `Logger.info(**kwargs)` forwards them to
-        # `_log`, whose signature is (level, msg, args, exc_info, extra,
-        # stack_info, stacklevel) — so `base=...` raises TypeError at the FIRST
-        # log line on a worker at INFO, which is every deployment. backend_v2
-        # uses the `key=value` style everywhere because `infrastructure/logging.py`
-        # wraps it; this sidecar deliberately imports nothing from backend_v2 and
-        # gets a plain stdlib Logger, so the style does not transfer.
         logger.info("llm_upstream_configured", extra={"base": UPSTREAM_BASE})
-        # The arbiter must not ALSO start a JIT llama-server: it would load
-        # the same 19.5 GB of weights onto the same card that the operator's
-        # server is already using, and every request goes to the operator's
-        # port anyway.
         try:
             from vram_manager import get_vram_manager
 
             get_vram_manager().llm_served_externally = True
         except Exception:
             pass
+    elif WORKER_MODE == "hybrid":
+        # Hybrid mode uses VRAMManager's Just-In-Time llama-server on :8003,
+        # so UPSTREAM_BASE points at :8003 while llm_served_externally stays False.
+        UPSTREAM_BASE = "http://127.0.0.1:8003/v1"
     elif REGISTRY is None:
         # No registry and no override. There is nothing to serve and nothing to
         # proxy, which is a configuration error rather than an empty answer.
@@ -1480,12 +1494,9 @@ if WORKER_MODE in ("llm", "hybrid"):
             from vram_manager import get_vram_manager
             target_model = payload.get("model")
             vmgr = get_vram_manager()
-            await _bounded_to_thread(vmgr.prepare_for_workload, "llm", target_model)
-            # `prepare_for_workload` took the lease. Taking it AGAIN here is
-            # what left `in_flight_count` permanently at 1 — one acquire, one
-            # release, and the counter never returned to zero. The lease is
-            # released once, below, when the request finishes.
-            lease_acquired = True
+            prep = await _bounded_to_thread(vmgr.prepare_for_workload, "llm", target_model)
+            # `prepare_for_workload` took the lease only when `lease_acquired` is True.
+            lease_acquired = bool(isinstance(prep, dict) and prep.get("lease_acquired"))
         except Exception:
             if WORKER_MODE == "hybrid":
                 try:
@@ -1562,7 +1573,15 @@ if WORKER_MODE in ("llm", "hybrid"):
                 "retryable": True,
             }
             return Response(content=json.dumps(err_payload), status_code=502, media_type="application/json")
-
+        except BaseException:
+            if lease_acquired:
+                try:
+                    from vram_manager import get_vram_manager
+                    await _bounded_to_thread(get_vram_manager().release_lease, "llm")
+                except Exception:
+                    pass
+            await client.aclose()
+            raise
         if upstream_resp.status_code != 200:
             err_bytes = await upstream_resp.aread()
             await upstream_resp.aclose()
@@ -1607,7 +1626,13 @@ if WORKER_MODE in ("llm", "hybrid"):
         """Proxy models list to the upstream llama-server / vLLM."""
         from fastapi.responses import Response
 
-        base = UPSTREAM_BASE or "http://127.0.0.1:8003/v1"
+        if UPSTREAM_BASE:
+            base = UPSTREAM_BASE
+        elif STACK.servers:
+            first_srv = next(iter(STACK.servers.values()))
+            base = f"http://127.0.0.1:{first_srv.port}/v1"
+        else:
+            base = "http://127.0.0.1:8003/v1"
 
         def _forward() -> tuple[int, bytes, str]:
             url = f"{base}/models" if base.endswith("/v1") else f"{base}/v1/models"
@@ -2112,10 +2137,15 @@ if WORKER_MODE in ("tts", "hybrid"):
 
         target_dir = os.path.join(_ensure_data_dir(), AUDIO_DIR)
         os.makedirs(target_dir, exist_ok=True)
-        suffix = (req.format or "wav").lstrip(".")
+        raw_suffix = (req.format or "wav").lstrip(".").strip()
+        if not re.fullmatch(r"[A-Za-z0-9]{1,8}", raw_suffix):
+            raise HTTPException(status_code=400, detail="Invalid audio format")
+        suffix = raw_suffix.lower()
         filename = f"tts-{os.urandom(8).hex()}.{suffix}"
-        output_path = os.path.join(target_dir, filename)
-
+        try:
+            output_path = get_safe_path(target_dir, filename)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid output path")
         env = dict(os.environ)
         env.update({
             "TTS_TEXT": req.text,

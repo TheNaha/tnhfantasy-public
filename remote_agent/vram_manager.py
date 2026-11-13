@@ -779,12 +779,12 @@ class VRAMManager:
                 # The lease is taken HERE, and released by whoever does the
                 # work — the route, or the backend over HTTP. Exactly one
                 # acquire, exactly one release.
-                if not self.acquire_lease(workload, timeout=timeout):
+                lease_taken = self.acquire_lease(workload, timeout=timeout)
+                if not lease_taken:
                     logger.warning(
                         f"{workload}_lease_timeout",
                         extra={"timeout": timeout, "active_lease": self.active_lease},
                     )
-
                 # Multi-GPU optimization: ComfyUI (GPU 0) and LLM (GPU 1) run concurrently without eviction!
                 if self.is_multi_gpu:
                     return {
@@ -853,6 +853,7 @@ class VRAMManager:
                     "vram": self.get_vram_info(),
                     "free_mb": free_mb,
                     "target_free_mb": target_free,
+                    "lease_acquired": lease_taken,
                 }
 
             # ==============================================================
@@ -867,12 +868,12 @@ class VRAMManager:
                 # The lease is taken HERE and released by whoever does the
                 # work. Exactly one acquire, exactly one release — see the
                 # image branch for why.
-                if not self.acquire_lease("llm", timeout=timeout):
+                lease_taken = self.acquire_lease("llm", timeout=timeout)
+                if not lease_taken:
                     logger.warning(
                         "llm_lease_timeout",
                         extra={"timeout": timeout, "active_lease": self.active_lease},
                     )
-
                 if self.is_multi_gpu:
                     # Multi-GPU: Skip ComfyUI eviction completely! ComfyUI models stay resident on GPU 0.
                     actions_taken.append("bypassed_comfy_eviction_multi_gpu")
@@ -986,6 +987,7 @@ class VRAMManager:
                                 "workload": "llm",
                                 "actions_taken": actions_taken,
                                 "vram": self.get_vram_info(device_idx=self.llm_gpu_device),
+                                "lease_acquired": lease_taken,
                             }
 
                 return {
@@ -993,6 +995,7 @@ class VRAMManager:
                     "workload": "llm",
                     "actions_taken": actions_taken,
                     "vram": self.get_vram_info(device_idx=self.llm_gpu_device),
+                    "lease_acquired": lease_taken,
                 }
 
             # ==============================================================
