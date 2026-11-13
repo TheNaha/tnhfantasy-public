@@ -665,7 +665,7 @@ async def _run_reconciliation(
                     )
 
                     def _mark_download_start() -> None:
-                        _write_provider_status(model_service,
+                        _write_provider_status_isolated(
                             file_id=file_id,
                             provider_id=provider_id,
                             status="downloading",
