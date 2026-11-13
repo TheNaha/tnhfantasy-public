@@ -139,6 +139,11 @@ from provider_core.utils import get_safe_path, is_model_candidate  # noqa: E402
 #: local checkout packages the checkout's registry and the Modal container
 #: packages the copy it already has at `/app/modal_llm`.
 _REGISTRY_SRC = _LOCAL_REGISTRY_DIR or _REMOTE_LLM_DIR
+_PROVIDER_CORE_SRC = (
+    (_REPO_ROOT / "remote_agent" / "provider_core")
+    if _REPO_ROOT
+    else (Path("/root/provider_core") if Path("/root/provider_core").is_dir() else Path("/provider_core"))
+)
 
 APP_NAME = "tnh-llm"
 app = modal.App(APP_NAME)
@@ -165,6 +170,7 @@ image = (
     # runs, so without this the container has `app.py` and nothing else.
     # `_REGISTRY_SRC` rather than `_HERE`: this file no longer sits beside them.
     .add_local_dir(_REGISTRY_SRC, "/app/modal_llm")
+    .add_local_dir(_PROVIDER_CORE_SRC, "/root/provider_core")
 )
 
 #: The DOWNLOAD image, deliberately not the server image. Downloading is network
@@ -173,9 +179,10 @@ image = (
 #: uses. A debian_slim base starts in seconds.
 download_image = (
     modal.Image.debian_slim(python_version="3.12")
-    .pip_install("huggingface_hub[hf_transfer]", "laya>=0.4.10")
+    .pip_install("huggingface_hub[hf_transfer]", "laya>=0.4.10", "requests")
     .env({"HF_HUB_ENABLE_HF_TRANSFER": "1"})
     .add_local_dir(_REGISTRY_SRC, "/app/modal_llm")
+    .add_local_dir(_PROVIDER_CORE_SRC, "/root/provider_core")
 )
 
 registry = load(REGISTRY_PATH)
@@ -1117,8 +1124,23 @@ async def list_models_with_metadata(directory: str) -> list:
 async def download_model(url: str, path: str, token: str | None = None,
                          preview_url: str | None = None, metadata: dict | None = None):
     """Fetch one file into the volume. The engine's universal download entry."""
-    await download_model_to_path(url, get_safe_path(STORAGE_ROOT, path), token=token)
-    return {"ok": True, "path": path, **(metadata or {})}
+    import asyncio
+
+    full_path = get_safe_path(STORAGE_ROOT, path)
+    os.makedirs(os.path.dirname(full_path), exist_ok=True)
+    res = await asyncio.to_thread(
+        download_model_to_path,
+        url=url,
+        full_path=full_path,
+        path=path,
+        token=token,
+        preview_url=preview_url,
+        metadata=metadata,
+    )
+    vol.commit()
+    if isinstance(res, dict) and res.get("status") == "error":
+        return res
+    return {"ok": True, "path": path, **(res if isinstance(res, dict) else {}), **(metadata or {})}
 
 
 @app.function(

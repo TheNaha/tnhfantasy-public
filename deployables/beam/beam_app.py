@@ -32,6 +32,7 @@ syncing the whole checkout (add to `.beamignore` if that matters). See the
 from beta9 import asgi, realtime, Image, Volume, QueueDepthAutoscaler, rest_api
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
+import binascii
 import os
 import json
 import subprocess
@@ -282,7 +283,7 @@ async def _run_inference_realtime(workflow: Dict[str, Any]):
     The @realtime handler will send each yielded string through the WebSocket.
     """
     # Ensure ComfyUI is running (should already be from on_start/checkpoint)
-    _ensure_comfyui_running()
+    await asyncio.to_thread(_ensure_comfyui_running)
     
     async for update in _execute_workflow(workflow, _comfy_port):
         
@@ -485,6 +486,13 @@ async def list_models(request: Request):
     # it in the same dialect; both stay true.
     return ok(f"Listed {len(files)} models in {directory or '/'}", files=files)
 
+def _safe_storage_path(rel_path: str | None) -> str:
+    try:
+        return get_safe_path("/mnt/data", rel_path)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 
 @storage_app.post("/delete-model", dependencies=[Depends(verify_beam_token)])
 async def delete_model(request: Request):
@@ -492,7 +500,7 @@ async def delete_model(request: Request):
     import shutil
     data = await request.json()
     path = data.get("path")
-    full_path = get_safe_path("/mnt/data", path)
+    full_path = _safe_storage_path(path)
 
     def _do_delete():
         if not os.path.exists(full_path) and not list(pending_download_paths(full_path)):
@@ -537,7 +545,7 @@ async def get_file(request: Request):
     """
     data = await request.json()
     path = data.get("path")
-    full_path = get_safe_path("/mnt/data", path)
+    full_path = _safe_storage_path(path)
 
     if not os.path.exists(full_path) or not os.path.isfile(full_path):
         raise HTTPException(status_code=404, detail=f"Not found: {path}")
@@ -569,7 +577,7 @@ async def delete_file(request: Request):
     import shutil
     data = await request.json()
     path = data.get("path")
-    full_path = get_safe_path("/mnt/data", path)
+    full_path = _safe_storage_path(path)
 
     def _do_delete():
         # Same sweep as /delete-model, and for the same reason. This route removed
@@ -605,26 +613,41 @@ async def upload_file(request: Request):
     filename = data.get("filename")
     content_base64 = data.get("content_base64")
     directory = data.get("directory")
-    if not directory:
-        raise HTTPException(status_code=400, detail="directory is required")
-    
-    content = base64.b64decode(content_base64)
-    # The backend's own pre-check (api/routes/files.py) is route-local; this is
-    # the container-side half of the PROVIDER_UPLOAD_MAX_BYTES contract that
-    # services/engines/base.get_upload_size_cap documents. Cap 0 = disabled.
+    if not directory or not filename or not isinstance(content_base64, str):
+        raise HTTPException(status_code=400, detail="directory, filename, and content_base64 are required")
+
     cap = get_upload_size_cap()
+    if cap and len(content_base64) > ((cap + 2) // 3) * 4 + 64:
+        raise HTTPException(
+            status_code=413,
+            detail=f"file exceeds the {cap}-byte upload limit",
+        )
+
+    target_dir = _safe_storage_path(directory)
+    try:
+        full_path = get_safe_path(target_dir, filename)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    try:
+        content = await asyncio.to_thread(base64.b64decode, content_base64, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid base64 payload: {exc}") from exc
+
     if cap and len(content) > cap:
         raise HTTPException(
             status_code=413,
             detail=f"file exceeds the {cap}-byte upload limit",
         )
-    full_path = get_safe_path("/mnt/data", f"{directory}/{filename}")
-    os.makedirs(os.path.dirname(full_path), exist_ok=True)
-    
-    with open(full_path, "wb") as f:
-        f.write(content)
-    
-    return ok("File uploaded", path=f"{directory}/{filename}", size=len(content))
+
+    def _write() -> None:
+        os.makedirs(os.path.dirname(full_path), exist_ok=True)
+        with open(full_path, "wb") as f:
+            f.write(content)
+
+    await asyncio.to_thread(_write)
+    rel_path = os.path.relpath(full_path, "/mnt/data").replace("\\", "/")
+    return ok("File uploaded", path=rel_path, size=len(content))
 
 
 @storage_app.post("/validate-models", dependencies=[Depends(verify_beam_token)])
@@ -651,85 +674,52 @@ async def validate_models(request: Request):
         valid_models = []
         invalid_models = []
         partial_downloads = []
-        with os.scandir(target_dir) as entries:
-            for entry in entries:
-                name = entry.name
-                full_path = entry.path
+        indeterminate_models = []
+        for root, _, entries in os.walk(target_dir):
+            for name in entries:
+                full_path = os.path.join(root, name)
+                rel_name = os.path.relpath(full_path, target_dir).replace("\\", "/")
                 if is_transient_artifact(name):
-                    # Reported, never deleted. Unlinking an in-flight temp leaves
-                    # its writer holding a live descriptor: it finishes the
-                    # transfer and then fails at os.replace, which reconciliation
-                    # reports as a failed download. Unlinking a `.lock` is
-                    # worse — it removes the flock a concurrent downloader
-                    # holds, so a second downloader takes a *different* lock and
-                    # the interleaving corruption the lock exists to prevent
-                    # happens. See `provider_core/utils.py`.
-                    #
-                    # ORDER MATTERS, and it was wrong here. This block sat AFTER
-                    # `if not is_model_file(name): continue`, and `is_model_file`
-                    # is false for every `.lock` and `.downloading` name — so the
-                    # branch was unreachable, `partial_downloads` was permanently
-                    # `[]`, and `total_partial` was permanently 0 on this engine.
-                    # Reconciliation step 0 is the only step that reads it, so it
-                    # ran blind here while the image Modal app and the LLM app
-                    # both classified correctly. Same three-line order as
-                    # `deployables/modal/image/modal_app.py` (list_models_with_metadata_internal).
-                    if not entry.is_file():
+                    if not os.path.isfile(full_path):
                         continue
                     partial_downloads.append({
-                        "name": name,
-                        "size": entry.stat().st_size,
+                        "name": rel_name,
+                        "size": os.path.getsize(full_path),
                         "format": "partial",
                         "issues": ["Incomplete download (temp file)"],
                     })
                     continue
-                # `is_model_candidate`, not `is_model_file`: this sweep runs with
-                # delete_invalid=True, so it must also skip the non-model assets
-                # that legitimately live in a model directory — `.txt` wildcards
-                # and embeddings, `.yaml` poses. `is_model_file` only excludes
-                # pipeline-owned and sidecar names, so a 200-byte wildcard list
-                # was validated, failed MIN_MODEL_SIZE, and was deleted. The
-                # remote agent had the identical defect.
                 if not is_model_candidate(name):
                     continue
-                if not entry.is_file():
+                if not os.path.isfile(full_path):
                     continue
-                file_size = entry.stat().st_size
+                file_size = os.path.getsize(full_path)
                 validation = validate_downloaded_file(full_path)
                 model_info = {
-                    "name": name,
+                    "name": rel_name,
                     "size": file_size,
                     "size_mb": round(file_size / (1024 * 1024), 1),
                     "format": validation.get("format", "unknown")
                 }
                 if not validation["valid"]:
                     model_info["issues"] = [validation["error"]]
-                    invalid_models.append(model_info)
-                    # `indeterminate` means the read FAILED (EIO, ENOMEM, a
-                    # gcsfuse stall) — not that the file is bad. Reconciliation
-                    # runs this every 2h with `delete_invalid=True` on a network
-                    # volume, so deleting here destroyed healthy 7 GB checkpoints
-                    # on a transient read error, together with their .json and
-                    # .preview.png sidecars. There is no way to recover a
-                    # multi-GB download that was removed on a guess, so an
-                    # unreadable file is reported and left alone; the next tick
-                    # reads it again.
-                    if delete_invalid and not validation.get("indeterminate"):
-                        os.remove(full_path)
-                        for ext in [".json", ".preview.png", ".sha256"]:
-                            side_file = os.path.splitext(full_path)[0] + ext
-                            if os.path.exists(side_file):
-                                os.remove(side_file)
+                    if validation.get("indeterminate"):
+                        indeterminate_models.append(model_info)
+                    else:
+                        invalid_models.append(model_info)
+                        if delete_invalid:
+                            os.remove(full_path)
+                            for ext in [".json", ".preview.png", ".sha256"]:
+                                side_file = os.path.splitext(full_path)[0] + ext
+                                if os.path.exists(side_file):
+                                    os.remove(side_file)
                 else:
                     valid_models.append(model_info)
-        return valid_models, invalid_models, partial_downloads
+        return valid_models, invalid_models, partial_downloads, indeterminate_models
 
-    valid_models, invalid_models, partial_downloads = await asyncio.to_thread(_validate_dir)
-            
-    total = len(valid_models) + len(invalid_models) + len(partial_downloads)
-    # The envelope, not a bare `{directory, total, valid, ...}`. The client adopts
-    # this body verbatim through `from_upstream`, which is exactly the case that
-    # needs `status`/`success` present rather than inferred.
+    valid_models, invalid_models, partial_downloads, indeterminate_models = await asyncio.to_thread(_validate_dir)
+
+    total = len(valid_models) + len(invalid_models) + len(partial_downloads) + len(indeterminate_models)
     return ok(
         f"Validated {total} files in {directory}",
         directory=directory,
@@ -740,6 +730,8 @@ async def validate_models(request: Request):
         invalid_count=len(invalid_models),
         partial=partial_downloads,
         partial_count=len(partial_downloads),
+        indeterminate=indeterminate_models,
+        indeterminate_count=len(indeterminate_models),
         deleted=delete_invalid,
     )
 
@@ -772,13 +764,19 @@ async def validate_all_models(request: Request):
     # that, and step 0 of reconciliation then proceeded with `total_invalid=0` —
     # orphan detection silently degraded to "nothing is invalid", which is the
     # worst possible failure direction for it.
-    payloads = await asyncio.gather(*[
-        validate_models(DummyRequest({"directory": directory, "delete_invalid": delete_invalid}))
-        for directory in MODEL_DIRECTORIES
-    ])
+    payloads = await asyncio.gather(
+        *[
+            validate_models(DummyRequest({"directory": directory, "delete_invalid": delete_invalid}))
+            for directory in MODEL_DIRECTORIES
+        ],
+        return_exceptions=True,
+    )
 
     for directory, res in zip(MODEL_DIRECTORIES, payloads):
         dir_key = directory.replace("models/", "")
+        if isinstance(res, Exception) or not isinstance(res, dict):
+            results["by_directory"][dir_key] = {"valid": 0, "invalid": 0, "partial": 0, "error": str(res)}
+            continue
         results["by_directory"][dir_key] = {
             "valid": res.get("valid_count", 0),
             "invalid": res.get("invalid_count", 0),

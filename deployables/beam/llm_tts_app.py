@@ -136,19 +136,13 @@ tts_image = (
 
 
 def _token_ok(provided: Any) -> bool:
-    """Constant-time payload-token check.
-
-    The token is absent or the deployment is wide open, which is a configuration
-    error worth failing loudly on rather than serving free inference from.
-    """
-    import hmac
+    """Constant-time payload-token check."""
+    from provider_core.auth import token_matches
 
     expected = os.getenv("BEAM_API_KEY", "").strip()
     if not expected:
         return False
-    if not isinstance(provided, str):
-        return False
-    return hmac.compare_digest(provided, expected)
+    return token_matches(provided if isinstance(provided, str) else None, expected)
 
 
 async def _reject(websocket: WebSocket, message: str, retryable: bool = False) -> None:
@@ -491,6 +485,9 @@ async def chat_completions(request: Request):
     except RuntimeError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
 
+    for backend_key, upstream_key in _SAMPLER_KEYS.items():
+        if backend_key in body and body[backend_key] is not None and upstream_key not in body:
+            body[upstream_key] = body.pop(backend_key)
     stream = body.get("stream", False)
     if stream:
         async def _stream_generator():
@@ -549,6 +546,8 @@ async def evaluate_decisions(req: DecisionsRequest):
 
 @llm_app.post("/download-model", dependencies=[Depends(verify_beam_token)])
 async def download_model(req: DownloadRequest):
+    import asyncio
+
     if req.model_id:
         from remote_agent.llama_server import load as load_registry
         reg = load_registry()
@@ -560,20 +559,24 @@ async def download_model(req: DownloadRequest):
         target = f"{MODELS_ROOT}/{model.volume_dir}"
         os.makedirs(target, exist_ok=True)
         if getattr(model, "engine_type", "gguf") == "system1_laya":
-            snapshot_download(model.repo, local_dir=target)
+            await asyncio.to_thread(snapshot_download, model.repo, local_dir=target)
         else:
             patterns = [model.gguf]
             if model.mmproj:
                 patterns.append(model.mmproj)
-            snapshot_download(model.repo, allow_patterns=patterns, local_dir=target)
+            await asyncio.to_thread(snapshot_download, model.repo, allow_patterns=patterns, local_dir=target)
         return {"ok": True, "model_id": req.model_id, "fetched": [target]}
 
     # Direct URL download
     from provider_core.downloads import download_model_to_path
     from provider_core.utils import get_safe_path
-    full_path = get_safe_path(MODELS_ROOT, req.path)
+    try:
+        full_path = get_safe_path(MODELS_ROOT, req.path)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     os.makedirs(os.path.dirname(full_path), exist_ok=True)
-    res = download_model_to_path(
+    res = await asyncio.to_thread(
+        download_model_to_path,
         url=req.url,
         full_path=full_path,
         path=req.path,
@@ -586,9 +589,12 @@ async def download_model(req: DownloadRequest):
 
 @llm_app.post("/list-models", dependencies=[Depends(verify_beam_token)])
 async def list_models(req: ListModelsRequest):
-    from provider_core.utils import is_model_candidate
+    from provider_core.utils import get_safe_path, is_model_candidate
     from pathlib import Path
-    target_dir = Path(MODELS_ROOT) / (req.directory.lstrip("/")) if req.directory else Path(MODELS_ROOT)
+    try:
+        target_dir = Path(get_safe_path(MODELS_ROOT, req.directory)) if req.directory else Path(MODELS_ROOT)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not target_dir.is_dir():
         return []
     items = []

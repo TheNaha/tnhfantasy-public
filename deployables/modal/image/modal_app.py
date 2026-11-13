@@ -204,20 +204,20 @@ async def execute_comfy_workflow(workflow_json: Dict[str, Any], port: int = 8188
     server_address = f"http://127.0.0.1:{port}"
     ws_url = f"ws://127.0.0.1:{port}/ws?clientId={client_id}"
     websocket, websockets_mod = await _connect_with_retry(ws_url, max_retries=5, initial_retry_delay_seconds=1.0, logger_obj=logger)
-    
-    prompt_id, queue_error = await _queue_prompt(server_address, workflow_json, client_id)
-    if queue_error:
-        yield queue_error; return
-    
-    yield {"status": "queued", "prompt_id": prompt_id}
-    effective_stall_timeout = max(float(stall_timeout_seconds), 1.0)
-    last_prompt_node = None
-    last_preview_time: float = 0.0
-    last_preview_step: int = -1
-    current_step: int = 0
-    total_steps: int = 0
-    
     try:
+        prompt_id, queue_error = await _queue_prompt(server_address, workflow_json, client_id)
+        if queue_error:
+            yield queue_error
+            return
+
+        yield {"status": "queued", "prompt_id": prompt_id}
+        effective_stall_timeout = max(float(stall_timeout_seconds), 1.0)
+        last_prompt_node = None
+        last_preview_time: float = 0.0
+        last_preview_step: int = -1
+        current_step: int = 0
+        total_steps: int = 0
+
         while True:
             try: message = await asyncio.wait_for(websocket.recv(), timeout=effective_stall_timeout)
             except asyncio.TimeoutError:
@@ -455,10 +455,11 @@ async def list_models_with_metadata_internal(base_path: str, directory: str) -> 
         # this one never had the flag do anything, so the flag is gone rather than
         # left accepted and ignored.
         res = {"name": name, "path": fpath, "type": "file", "size": size, "sha256": None}
-        if f"{os.path.splitext(name)[0]}.preview.png" in entry_set: res["preview"] = f"/api/view/{directory}/{os.path.splitext(name)[0]}.preview.png"
+        view_prefix = f"/api/view/{directory}" if directory else "/api/view"
+        if f"{os.path.splitext(name)[0]}.preview.png" in entry_set: res["preview"] = f"{view_prefix}/{os.path.splitext(name)[0]}.preview.png"
         meta_name = f"{os.path.splitext(name)[0]}.json"
         if meta_name in entry_set:
-            res["metadata_url"] = f"/api/view/{directory}/{meta_name}"
+            res["metadata_url"] = f"{view_prefix}/{meta_name}"
             try:
                 async with aiofiles.open(os.path.join(target_dir, meta_name), 'r') as f: res["metadata"] = json.loads(await f.read())
             except: pass
@@ -974,25 +975,23 @@ class ComfyUINodeExtractor:
         logger.info("[ComfyUINodeExtractor] Starting CPU-only server...")
         cmd = ["comfy", "launch", "--", "--listen", "0.0.0.0", "--port", str(self.port), "--cpu"]
         server_process = subprocess.Popen(cmd)
-        
-        # Wait for ready
-        deadline = time.time() + 60
-        ready = False
-        while time.time() < deadline:
-            try:
-                response = requests.get(f"http://127.0.0.1:{self.port}", timeout=2)
-                if response.status_code == 200:
-                    ready = True
-                    break
-            except requests.exceptions.RequestException:
-                pass
-            time.sleep(1)
-            
-        if not ready:
-            raise RuntimeError("ComfyUI failed to start in CPU mode for extraction.")
-            
-        # Fetch object_info
         try:
+            # Wait for ready
+            deadline = time.time() + 60
+            ready = False
+            while time.time() < deadline:
+                try:
+                    response = requests.get(f"http://127.0.0.1:{self.port}", timeout=2)
+                    if response.status_code == 200:
+                        ready = True
+                        break
+                except requests.exceptions.RequestException:
+                    pass
+                time.sleep(1)
+
+            if not ready:
+                raise RuntimeError("ComfyUI failed to start in CPU mode for extraction.")
+
             response = requests.get(f"http://127.0.0.1:{self.port}/object_info", timeout=60)
             response.raise_for_status()
             data = response.json()
@@ -1005,7 +1004,6 @@ class ComfyUINodeExtractor:
                 server_process.wait(timeout=10)
             except subprocess.TimeoutExpired:
                 server_process.kill()
-            
         return data
 
 

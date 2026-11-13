@@ -348,7 +348,7 @@ class TTSWorker:
         # graph fails on a file it can see is there.
         await safe_vol_reload_aio()
 
-        if MAX_CONTAINERS >= 1 and self._completed_runs >= MAX_RUNS_BEFORE_RESTART:
+        if MAX_CONTAINERS >= 1 and MAX_RUNS_BEFORE_RESTART > 0 and self._completed_runs >= MAX_RUNS_BEFORE_RESTART:
             # Matches the image worker's restart cadence. A ComfyUI container
             # accumulates state across runs and eventually stalls; a restart is
             # cheaper than a timeout and cheaper than debugging a hung graph.
@@ -415,6 +415,11 @@ class TTSWorker:
                 history = {}
             entry = history.get(prompt_id)
             if entry:
+                status_info = entry.get("status") or {}
+                if status_info.get("status_str") == "error":
+                    err_msg = status_info.get("messages") or "TTS execution failed"
+                    yield {"status": "error", "prompt_id": prompt_id, "message": str(err_msg), "retryable": False}
+                    return
                 outputs = self._collect_outputs(entry)
                 yield {"status": "success", "prompt_id": prompt_id, "outputs": outputs}
                 return
@@ -537,6 +542,11 @@ class TTSFileStorage:
 
     @modal.method()
     def put_file(self, path: str, content: bytes) -> int:
+        from provider_core.http_client import get_upload_size_cap
+
+        cap = get_upload_size_cap()
+        if cap and len(content) > cap:
+            raise ValueError(f"file exceeds the {cap}-byte upload limit")
         full_path = self._resolve(path)
         os.makedirs(os.path.dirname(full_path) or "/mnt/data", exist_ok=True)
         with open(full_path, "wb") as handle:
@@ -546,11 +556,17 @@ class TTSFileStorage:
 
     @modal.method()
     def delete_file(self, path: str) -> bool:
+        from provider_core.downloads import pending_download_paths, pipeline_artifacts
+
         safe_vol_reload()
         full_path = self._resolve(path)
-        if not os.path.isfile(full_path):
+        if not os.path.isfile(full_path) and not list(pending_download_paths(full_path)):
             return False
-        os.remove(full_path)
+        if os.path.isfile(full_path):
+            os.remove(full_path)
+        for stale in pipeline_artifacts(full_path):
+            if os.path.exists(stale):
+                os.remove(stale)
         vol.commit()
         return True
 

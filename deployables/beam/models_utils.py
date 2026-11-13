@@ -65,13 +65,14 @@ async def list_models_with_metadata_internal(base_path: str, directory: str, com
             "size": file_size
         }
         
+        view_prefix = f"/api/view/{directory}" if directory else "/api/view"
         preview_name = f"{os.path.splitext(name)[0]}.preview.png"
         if preview_name in entry_set:
-            file_data["preview"] = f"/api/view/{directory}/{preview_name}"
-            
+            file_data["preview"] = f"{view_prefix}/{preview_name}"
+
         meta_name = f"{os.path.splitext(name)[0]}.json"
         if meta_name in entry_set:
-            file_data["metadata_url"] = f"/api/view/{directory}/{meta_name}"
+            file_data["metadata_url"] = f"{view_prefix}/{meta_name}"
             try:
                 async with aiofiles.open(os.path.join(target_dir, meta_name), 'r') as f:
                     content = await f.read()

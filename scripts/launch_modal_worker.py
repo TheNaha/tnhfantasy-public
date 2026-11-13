@@ -139,7 +139,7 @@ def worker(token: str = "", netbird_setup_key: str = "", backend_url: str = ""):
     sys.path.insert(0, f"{repo_dir}/remote_agent")
     env = dict(
         os.environ,
-        DATA_DIR="/mnt/data/models",
+        DATA_DIR="/mnt/data",
         WORKER_MODE="hybrid",
         PORT="8001",
         HOST="0.0.0.0",
