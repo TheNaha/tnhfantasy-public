@@ -127,7 +127,7 @@ def resolve_model_filename(
             pass
 
     try:
-        from api.deps import get_session_sync
+        from infrastructure.deps import get_session_sync
         from sqlmodel import select, or_, func
         from core.entities import ModelFile, ModelV2, ModelVersion
 

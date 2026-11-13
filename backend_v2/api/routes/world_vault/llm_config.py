@@ -1,5 +1,6 @@
 import asyncio
-
+import time
+from typing import Any
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlmodel import Session, select
@@ -294,6 +295,42 @@ def set_default_provider_endpoint(request: UpdateProviderRequest, session: Sessi
     set_default_provider(request.provider_id, request.model_id)
     return {"status": "success"}
 
+def _normalize_model_entries(files: Any) -> list[dict[str, str]]:
+    models: list[dict[str, str]] = []
+    for m in files or []:
+        if isinstance(m, str):
+            models.append({"id": m, "name": m})
+        elif isinstance(m, dict):
+            model_id = m.get("id") or m.get("path") or m.get("name")
+            if model_id:
+                models.append({"id": str(model_id), "name": str(m.get("name") or model_id)})
+    return models
+
+
+def _extract_model_ids(files: Any) -> list[str]:
+    models: list[str] = []
+    for m in files or []:
+        if isinstance(m, dict):
+            models.append(str(m.get("id") or m.get("path") or m.get("name", "?")))
+        elif isinstance(m, str):
+            models.append(m)
+    return models
+
+
+async def _fetch_remote_list_models(base_url: str) -> list[Any]:
+    client = get_http_client()
+    resp = await client.get(f"{base_url}/list-models", timeout=10.0)
+    if resp.status_code != 200:
+        return []
+    data = resp.json()
+    files: Any = []
+    if isinstance(data, dict):
+        files = data.get("files") or data.get("models") or []
+        if isinstance(files, dict):
+            files = files.get("files", [])
+    return files if isinstance(files, list) else []
+
+
 @router.get("/available-models")
 async def get_available_models(session: Session = Depends(get_session)):
     """Return models available from the default LLM provider.
@@ -314,15 +351,7 @@ async def get_available_models(session: Session = Depends(get_session)):
 
             engine = get_engine(provider.id, provider)
             if engine is not None:
-                files = await engine.list_models("")
-                models = []
-                for m in files or []:
-                    if isinstance(m, str):
-                        models.append({"id": m, "name": m})
-                    elif isinstance(m, dict):
-                        model_id = m.get("id") or m.get("path") or m.get("name")
-                        if model_id:
-                            models.append({"id": model_id, "name": m.get("name") or model_id})
+                models = _normalize_model_entries(await engine.list_models(""))
                 if models:
                     return models
         except Exception as exc:
@@ -333,31 +362,12 @@ async def get_available_models(session: Session = Depends(get_session)):
         return []
 
     base_url = runtime.worker_url.rstrip("/")
-    client = get_http_client()
-
     try:
-        resp = await client.get(f"{base_url}/list-models", timeout=10.0)
-        if resp.status_code == 200:
-            data = resp.json()
-            files = []
-            if isinstance(data, dict):
-                files = data.get("files") or data.get("models") or []
-                if isinstance(files, dict):
-                    files = files.get("files", [])
-            if isinstance(files, list):
-                models = []
-                for m in files:
-                    if isinstance(m, str):
-                        models.append({"id": m, "name": m})
-                    elif isinstance(m, dict):
-                        model_id = m.get("id") or m.get("path") or m.get("name")
-                        if model_id:
-                            models.append({"id": model_id, "name": m.get("name") or model_id})
-                if models:
-                    return models
+        models = _normalize_model_entries(await _fetch_remote_list_models(base_url))
+        if models:
+            return models
     except Exception as exc:
         logger.debug("provider_model_fetch_failed", provider_id=provider.id, error=str(exc))
-
     # Fallback: return provider record itself as a selectable "model"
     return [{"id": "default", "name": f"{provider.id} (default)"}]
 
@@ -425,12 +435,7 @@ async def test_llm_provider(provider_id: str, session: Session = Depends(get_ses
             health = await engine.check_health()
             healthy = health.get("status") in ("healthy", "ok") or bool(health.get("ready", False))
             try:
-                files = await engine.list_models("")
-                for m in files or []:
-                    if isinstance(m, dict):
-                        models.append(m.get("id") or m.get("path") or m.get("name", "?"))
-                    elif isinstance(m, str):
-                        models.append(m)
+                models = _extract_model_ids(await engine.list_models(""))
             except Exception as exc:
                 logger.debug("llm_list_models_fetch_failed", provider_id=provider.id, error=str(exc))
         except Exception as e:
@@ -456,17 +461,7 @@ async def test_llm_provider(provider_id: str, session: Session = Depends(get_ses
     # Fetch models if healthy
     if healthy:
         try:
-            resp = await client.get(f"{base_url}/list-models", timeout=10.0)
-            if resp.status_code == 200:
-                data = resp.json()
-                files = data.get("files", []) if isinstance(data, dict) else []
-                if isinstance(files, list):
-                    models = [
-                        m.get("id") or m.get("path") or m.get("name", "?")
-                        for m in files if isinstance(m, dict)
-                    ]
-                    if not models:
-                        models = [m for m in files if isinstance(m, str)]
+            models = _extract_model_ids(await _fetch_remote_list_models(base_url))
         except Exception as exc:
             logger.debug("llm_list_models_fetch_failed", url=base_url, error=str(exc))
 
@@ -508,17 +503,12 @@ async def _check_single_provider_health(provider: Provider) -> dict:
                         "worker_url": None,
                         "latency_ms": None,
                     }
-                started = __import__("time").perf_counter()
+                started = time.perf_counter()
                 health = await engine.check_health()
-                latency_ms = round((__import__("time").perf_counter() - started) * 1000, 1)
+                latency_ms = round((time.perf_counter() - started) * 1000, 1)
                 healthy = health.get("status") in ("healthy", "ok") or bool(health.get("ready", False))
                 try:
-                    files = await engine.list_models("")
-                    for m in files or []:
-                        if isinstance(m, dict):
-                            models.append(m.get("id") or m.get("path") or m.get("name", "?"))
-                        elif isinstance(m, str):
-                            models.append(m)
+                    models = _extract_model_ids(await engine.list_models(""))
                 except Exception as exc:
                     logger.debug("llm_list_models_fetch_failed", provider_id=provider.id, error=str(exc))
                 return {
@@ -562,28 +552,18 @@ async def _check_single_provider_health(provider: Provider) -> dict:
         latency_ms = None
 
         client = get_http_client()
-        started = __import__("time").perf_counter()
+        started = time.perf_counter()
         try:
             resp = await client.get(f"{base_url}/health", timeout=10.0)
-            latency_ms = round((__import__("time").perf_counter() - started) * 1000, 1)
+            latency_ms = round((time.perf_counter() - started) * 1000, 1)
             healthy = resp.status_code == 200
         except Exception as e:
             error = f"Health check failed: {e}"
-            latency_ms = round((__import__("time").perf_counter() - started) * 1000, 1)
+            latency_ms = round((time.perf_counter() - started) * 1000, 1)
 
         if healthy:
             try:
-                resp = await client.get(f"{base_url}/list-models", timeout=10.0)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    files = data.get("files", []) if isinstance(data, dict) else []
-                    if isinstance(files, list):
-                        models = [
-                            m.get("id") or m.get("path") or m.get("name", "?")
-                            for m in files if isinstance(m, dict)
-                        ]
-                        if not models:
-                            models = [m for m in files if isinstance(m, str)]
+                models = _extract_model_ids(await _fetch_remote_list_models(base_url))
             except Exception as exc:
                 logger.debug("llm_list_models_fetch_failed", url=base_url, error=str(exc))
 
@@ -617,10 +597,11 @@ async def get_providers_health(session: Session = Depends(get_session)):
     Runs checks in parallel across every registered LLM/hybrid provider.
     Returns per-provider status including health, available models, latency, and errors.
     """
-    providers = session.exec(
-        select(Provider).where(Provider.worker_type.in_(["llm", "hybrid"]))  # noqa: E712
-    ).all()
-
+    providers = await asyncio.to_thread(
+        lambda: session.exec(
+            select(Provider).where(Provider.worker_type.in_(["llm", "hybrid"]))  # noqa: E712
+        ).all()
+    )
     results = await asyncio.gather(
         *[_check_single_provider_health(p) for p in providers],
         return_exceptions=False,
@@ -643,14 +624,18 @@ def list_agents_with_variants(session: Session = Depends(get_session)):
         select(AgentProfile).order_by(AgentProfile.is_builtin.desc(), AgentProfile.created_at.asc())
     ).all()
 
+    all_variants = session.exec(
+        select(AgentPromptVariant).order_by(
+            AgentPromptVariant.is_active.desc(), AgentPromptVariant.name.asc()
+        )
+    ).all()
+    variants_by_agent: dict[str, list[AgentPromptVariant]] = {}
+    for v in all_variants:
+        variants_by_agent.setdefault(v.agent_id, []).append(v)
+
     result: list[dict] = []
     for profile in profiles:
-        variants = session.exec(
-            select(AgentPromptVariant)
-            .where(AgentPromptVariant.agent_id == profile.id)
-            .order_by(AgentPromptVariant.is_active.desc(), AgentPromptVariant.name.asc())
-        ).all()
-
+        variants = variants_by_agent.get(profile.id, [])
         resolved = resolve_agent(session, profile.slug, require_enabled=False)
         active_variant_slug = resolved.variant_slug if resolved else None
         resolved_template = resolved.prompt_template if resolved else profile.system_prompt_template

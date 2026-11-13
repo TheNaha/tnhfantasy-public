@@ -8,7 +8,6 @@ from config import get_worker_backend_url
 from core.entities import ModelFile, ModelV2, ModelVersion, ProviderVersionStatus
 from core.events import redact_secrets
 from infrastructure.logging import get_logger
-from services.model_service import ModelServiceV2
 from services.provider_runtime import resolve_provider_runtime_async
 from services.provider_service import ProviderService
 
@@ -136,9 +135,8 @@ class ProviderStatusService:
         been asked to install anything was reported as holding the entire
         library in a queue.
         """
-        service = ModelServiceV2(self.session)
         stmt = (
-            select(ModelFile, ModelVersion, ModelV2)
+            select(ModelFile, ModelVersion, ModelV2, ProviderVersionStatus)
             .join(ModelVersion, ModelFile.version_id == ModelVersion.id)
             .join(ModelV2, ModelVersion.model_id == ModelV2.id)
             .join(ProviderVersionStatus, ProviderVersionStatus.file_id == ModelFile.id)
@@ -150,16 +148,11 @@ class ProviderStatusService:
         )
 
         rows = self.session.exec(stmt).all()
-        status_map = service.repo.get_provider_statuses_for_files(
-            [file.id for file, _version, _model in rows],
-            provider_id,
-        )
 
         stats = _empty_sync_stats()
         models = []
 
-        for file, _version, model in rows:
-            provider_status = status_map.get(file.id)
+        for file, _version, model, provider_status in rows:
             status = provider_status.status if provider_status else "pending"
             normalized_status = "installed" if status == "ready" else status
             if normalized_status in stats:

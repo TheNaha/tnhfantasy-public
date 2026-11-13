@@ -70,7 +70,7 @@ def embedding_file_exists(name: str) -> bool:
 
     # Fallback to DB catalog for remote/cloud providers where models are not mounted locally
     try:
-        from api.deps import get_session_sync
+        from infrastructure.deps import get_session_sync
         from sqlmodel import select
         from core.entities import ModelFile, ModelV2, ModelVersion
 
@@ -120,7 +120,7 @@ def resolve_embedding_filename(name: str) -> str:
                 return name
 
     try:
-        from api.deps import get_session_sync
+        from infrastructure.deps import get_session_sync
         from sqlmodel import select, or_, func
         from core.entities import ModelFile, ModelV2, ModelVersion
 

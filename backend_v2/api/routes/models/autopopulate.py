@@ -151,7 +151,7 @@ async def autopopulate_all_models(
     repo: ModelRepositoryV2 = Depends(get_model_repo_v2),
     session: Session = Depends(get_session)
 ):
-    models_to_process = _get_models_needing_population(repo)
+    models_to_process = await asyncio.to_thread(_get_models_needing_population, repo)
 
     if not models_to_process:
         return {
