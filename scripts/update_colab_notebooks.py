@@ -2068,6 +2068,17 @@ nvme_ckpt_dir = f"{nvme_cache_base}/checkpoints"
 os.makedirs(nvme_ckpt_dir, exist_ok=True)
 os.makedirs(f"{nvme_cache_base}/llm", exist_ok=True)
 
+# One-time reclaim: Clean up any legacy mirrored loras/vae on NVMe to immediately recover Colab disk
+for legacy_sub in ("loras", "vae"):
+    legacy_dir = os.path.join(nvme_cache_base, legacy_sub)
+    if os.path.exists(legacy_dir):
+        try:
+            reclaim_bytes = sum(os.path.getsize(os.path.join(r, f)) for r, _, fs in os.walk(legacy_dir) for f in fs)
+            shutil.rmtree(legacy_dir, ignore_errors=True)
+            if reclaim_bytes > 0:
+                print(f"🧹 [NVMe Cleanup] Removed legacy {legacy_sub} cache ({reclaim_bytes / (1024**3):.2f} GB reclaimed)!")
+        except Exception:
+            pass
 if cache_tier == "ram":
     active_cache_dir = "/dev/shm/tnh_ram_cache"
     cache_budget_gb = min(56.0, float(int(tot_ram_gb * 0.70)))
