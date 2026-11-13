@@ -384,8 +384,7 @@ async def _handle_scene_graph(job_data: dict[str, Any]):
                 logger.info("scene_graph_image_job_queued", job_id=img_job.id, chat_id=chat_id)
     except Exception as exc:
         logger.error("scene_graph_chain_failed", job_id=job_data.get("id"), error=str(exc), exc_info=True)
-        return
-
+        should_fallback_prompt = True
     if should_fallback_prompt:
         await _handle_scene_prompt(job_data)
 

@@ -4,7 +4,52 @@ All notable changes to TNHFantasy are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased] — 2026-11-11
+## [Unreleased] — 2026-11-13
+
+### Fixed
+- **Comic Export Lifecycle (`backend_v2/api/routes/world_vault/stories.py`)**:
+  - Awaited `JobService.update_job` directly in `_run_export` instead of discarding an unawaited coroutine through `asyncio.to_thread`.
+  - Snapshotted `job.id`, `job.metadata_`, and `chapter.chapter_number` before spawning background export, eliminating `DetachedInstanceError` reads on closed request sessions.
+- **Cross-Process Worker Registry (`backend_v2/infrastructure/worker_registry.py`)**:
+  - Converted `_provider_has_ws_connection` from `async def` to synchronous `def` with parameterized SQL intervals.
+  - Caught exceptions on `future.result()` in `_run_notify_listener` to write failed outbox results and prevent listener thread crashes.
+  - Added `threading.Event` shutdown flag to stop the notification listener loop cleanly on process termination.
+- **Model Metadata Resync (`backend_v2/api/routes/models/maintenance.py`)**:
+  - Converted `resync_all` to `async def` so `start_background_task` runs on the active event loop.
+  - Added `bg_session.rollback()` on model commit failures in `run_background_resync` to prevent `PendingRollbackError` cascades.
+- **Worker WebSocket Lifecycle (`backend_v2/api/routes/worker_ws.py`)**:
+  - Resolved pending job futures with `ProviderCallError` on output validation or finalization failure.
+  - Moved `register_worker` inside `try...finally` so handshake failures always unregister cleanly.
+- **In-Process Engine & Reconciliation Lifecycle (`backend_v2/services/`)**:
+  - Replaced dead `token`/`status` TaskEvent checks in `world_onboarding_service.py` with canonical `delta`/`completed` event parsing.
+  - Tracked active job IDs on child engines in `HybridRemoteEngine` so `cancel_job` propagates aborts and interrupts to ComfyUI/LLM workers.
+  - Isolated thread-scoped database sessions for concurrent status updates in `in_process_reconciliation.py`.
+  - Synchronized `_ENGINE_CACHE` writes under lock and cached `GoogleLLMEngine` to avoid connection leaks.
+  - Awaited `chat_reply` and `narrator` message persistence before running post-turn memory/director stages in `job_processing.py`.
+  - Propagated errors in `BeamLLMEngine.list_models` and `validate_models` instead of swallowing failures as empty volumes.
+  - Enforced `serves()` and capability filtering on `preferred_provider_id` in `LoadBalancer`.
+  - Awaited cancelled fetcher tasks in `BeamEngine.inference`.
+  - Normalized naive and aware timestamps using `as_utc()` in `job_service.py` and `lifecycle.py`.
+- **Worker Runtimes & Cloud Deployables (`remote_agent/`, `deployables/`)**:
+  - Configured `remote_agent` hybrid mode to allow JIT `llama-server` startup on `:8003`.
+  - Tracked `lease_acquired` in `vram_manager.py` and ensured clean lease release and client close on `CancelledError`.
+  - Concurred and offloaded model downloads in `deployables/modal/llm/app.py` with correct kwargs and volume commit.
+  - Confined paths in `remote_agent` and `deployables/beam` storage operations and mapped invalid paths to HTTP 400.
+  - Enforced upload size caps and pipeline artifact cleanup across modal and beam deployables.
+- **Frontend Reliability & Lifecycle (`frontend_v2/src/`)**:
+  - Passed `createEdge.mutateAsync` to `LinkDialog` in `RelationshipGraph.jsx`, fixing edge creation failures.
+  - Handled parameter-reuse failures with error toasts in `Dashboard.jsx`.
+  - Added `onError` error toasts across `useWorldVaultSearch`, `useAssetTags`, `useLLMProviderStatus`, `useChats`, `useLorebooks`, and `useFavorites`.
+  - Revoked `blob:` preview URLs in `ImageToStory.jsx`, `LLMStudio.jsx`, and `Characters.jsx`.
+  - Cleaned up reconnect timers in `websocket.js` and transient feedback/ping timers across components.
+  - Cached source image instances and added unmount/error guards in `InpaintCanvas.jsx`.
+  - Routed image interrogation through `api.post` in `pngInfoReader.js`.
+
+### Changed
+- Deduplicated `llm_config` model listing and pre-fetched agent prompt variants to eliminate N+1 queries.
+- Switched `core/workflow_builder.py` and `core/workflow_postprocess.py` session imports from `api.deps` to `infrastructure.deps`.
+
+## [2.1.0] — 2026-11-13
 
 ### Fixed
 - **Database Migrations (`backend_v2/infrastructure/migrations/steps.py`)**:
